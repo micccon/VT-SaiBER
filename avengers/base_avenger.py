@@ -6,9 +6,9 @@ from this class and implement the `execute` method. This ensures a consistent
 interface for the Agent Controller to interact with.
 """
 from abc import ABC, abstractmethod
-from core.schemas import Task, AgentResult
+from blueprints.schemas import Task, AgentResult
 
-class BaseAgent(ABC):
+class BaseAvenger(ABC):
     """
     Abstract Base Class for an agent.
     It defines the standard interface for agent execution.
