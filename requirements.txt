@@ -1,0 +1,6 @@
+# These can definitely change
+fastapi
+uvicorn[standard]
+pydantic
+httpx
+pyyaml

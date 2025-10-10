@@ -1,0 +1,17 @@
+{
+  "NmapScannerAgent": {
+    "description": "An agent that uses the Nmap tool to perform network and port scanning.",
+    "module_path": "agents.nmap_scanner_agent",
+    "class_name": "NmapScannerAgent",
+    "capabilities": [
+      {
+        "action": "scan_ports",
+        "description": "Scans a target for open TCP ports. Can specify common ports or a range.",
+        "parameters": {
+          "target": "string (IP address or hostname)",
+          "ports": "string (e.g., '22,80,443' or '1-1024')"
+        }
+      }
+    ]
+  }
+}
