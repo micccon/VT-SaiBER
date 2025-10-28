@@ -5,12 +5,14 @@ This class is basically an async wrapper for our synchronous vision.py
 This module is responsible for
 1. Hosting the methods that will be exposed to our LLM
 2. using an event loop so the nmap processes don't overlap
+
+THIS IS NOT FINISHED YET WE NEED TO FIGURE OUT THE STUFF
 """
 
 import asyncio
 from typing import Optional
-from vision_scan_result import VisionScanResult
-from vision import VisionNmapScanner
+from tools.vision.vision_scan_result import VisionScanResult
+from tools.vision.vision_tool import VisionNmapScanner
 
 # Intended to be an async wrapper tool for use with mcp
 class VisionMcpTool:
@@ -60,10 +62,10 @@ class VisionMcpTool:
         return await self.scan(target, "stealth", "-sS")
 
 # =============================================================================
+if __name__ == "__main__":
+    async def test_mcp_scan():
+        scanner = VisionMcpTool(timeout=60)
+        result = await scanner.quick_scan("scanme.nmap.org")
+        print(result.to_json())
 
-async def test_mcp_scan():
-    scanner = VisionMcpTool(timeout = 60)
-    result = await scanner.quick_scan("scanme.nmap.org")
-    print(result.to_json())
-
-asyncio.run(test_mcp_scan())
+    asyncio.run(test_mcp_scan())

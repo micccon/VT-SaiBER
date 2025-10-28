@@ -4,3 +4,5 @@ uvicorn[standard]
 pydantic
 httpx
 pyyaml
+python-nmap
+mcp

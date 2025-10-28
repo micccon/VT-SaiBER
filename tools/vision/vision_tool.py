@@ -6,8 +6,8 @@ this module is responsible for:
 2.  Returning a vision scan result object from scans
 """
 import subprocess 
-from vision_scan_result import VisionScanResult
-from vision_parser import VisionParser
+from tools.vision.vision_scan_result import VisionScanResult
+from tools.vision.vision_parser import VisionParser
 
 
 # class that the MCP class uses to complete scans
@@ -57,6 +57,7 @@ class VisionNmapScanner:
             if result.returncode != 0:
                 return VisionScanResult(
                     success= False,
+                    tool_name="nmap",
                     target = target,
                     scan_type = scan_type,
                     hosts = [],
@@ -71,6 +72,7 @@ class VisionNmapScanner:
             # returns a vision scan result object (lfg)
             return VisionScanResult(
                 success=True,
+                tool_name="nmap",
                 target=target,
                 scan_type=scan_type,
                 hosts=parsed_data.get("hosts", []),
@@ -81,6 +83,7 @@ class VisionNmapScanner:
         except subprocess.TimeoutExpired:
             return VisionScanResult(
                 success=False,
+                tool_name="nmap",
                 target=target,
                 scan_type=scan_type,
                 hosts=[],
@@ -91,6 +94,7 @@ class VisionNmapScanner:
         except Exception as e:
             return VisionScanResult(
                 success=False,
+                tool_name="nmap",
                 target=target,
                 scan_type=scan_type,
                 hosts=[],

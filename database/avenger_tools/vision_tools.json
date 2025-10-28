@@ -1,0 +1,98 @@
+[
+  {
+    "name": "ping_scan",
+    "description": "Network discovery using ICMP/ARP requests to identify live hosts without port scanning. Fastest and least intrusive option for initial reconnaissance. Uses -sn flag.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Single IP (192.168.1.1), hostname, IP range (192.168.1.1-254), or CIDR (192.168.1.0/24)"
+        }
+      },
+      "required": ["target"]
+    }
+  },
+  {
+    "name": "quick_scan",
+    "description": "Scans top 100 common ports (HTTP, SSH, FTP, SMB, RDP, etc.) with aggressive timing. Completes in seconds to minutes. Best starting point for most assessments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Single IP address or hostname"
+        }
+      },
+      "required": ["target"]
+    }
+  },
+  {
+    "name": "port_scan",
+    "description": "Targeted scan of specific ports or ranges. Use when you know which services to investigate. More efficient than full scans.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Single IP address or hostname"
+        },
+        "ports": {
+          "type": "string",
+          "description": "Port spec: single ('80'), list ('22,80,443'), range ('1-1000'), or mixed ('22,80-443,8000-9000')"
+        }
+      },
+      "required": ["target", "ports"]
+    }
+  },
+  {
+    "name": "service_scan",
+    "description": "Probes open ports for exact service versions (e.g., 'Apache 2.4.41' vs 'http'). Critical for CVE matching and vulnerability assessment. Uses -sV flag.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Single IP address or hostname"
+        },
+        "ports": {
+          "type": "string",
+          "description": "Optional: limit to specific ports for faster scans. Default scans top 1000 ports."
+        }
+      },
+      "required": ["target"]
+    }
+  },
+  {
+    "name": "comprehensive_scan",
+    "description": "Full aggressive scan: OS detection, version detection, NSE scripts, and traceroute. Most thorough option but highly visible and slow (minutes to hours). Requires authorization.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Single IP or hostname (not recommended for large ranges)"
+        }
+      },
+      "required": ["target"]
+    }
+  },
+  {
+    "name": "stealth_scan",
+    "description": "TCP SYN scan that never completes handshake for reduced logging. Harder to detect but not invisible to modern IDS/IPS. REQUIRES ROOT/ADMIN privileges.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Single IP address or hostname"
+        },
+        "ports": {
+          "type": "string",
+          "description": "Optional: specific ports to scan. Default scans top 1000 ports."
+        }
+      },
+      "required": ["target"]
+    }
+  }
+]
