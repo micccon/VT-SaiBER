@@ -13,15 +13,18 @@ from urllib.parse import urlparse, urlunparse, quote, unquote
 
 # Config
 MAX_INPUT_LEN = 500
-DANGEROUS_PATTERN = re.compile(r"[;&|$`<>\\\^\*]")  # chars to remove or neutralize
+# chars to remove or neutralize
+DANGEROUS_PATTERN = re.compile(r"[;&|$`<>\\\^\*]")  
 URL_SCHEME_WHITELIST = {"http", "https"}
+
+
 # Example allowlist: either explicit hostnames or CIDR ranges
 # could be a seperated textbox for user to input first
 ALLOWED_HOSTNAMES = {"example.com", "internal.example.local"}
 ALLOWED_CIDRS = ["10.0.0.0/8", "192.168.0.0/16"]
-
 # Pre-compile cidr networks
 ALLOWED_NETWORKS = [ipaddress.ip_network(c) for c in ALLOWED_CIDRS]
+
 
 def is_ip_address(s: str):
     try:
@@ -31,7 +34,6 @@ def is_ip_address(s: str):
         return False
 
 def normalize_domain(domain: str) -> str:
-    # IDN / punycode normalization
     try:
         domain = domain.strip().lower()
         # Convert unicode domain to punycode (ACE)
@@ -50,12 +52,19 @@ def strip_dangerous_chars(s: str) -> str:
     # either remove or replace dangerous characters
     return DANGEROUS_PATTERN.sub(" ", s)
 
-def parse_and_validate_target(raw: str):
+def sanitize_query(prompt: str):
     """
-    Returns a dict: {type: "ip"|"domain"|"url", value: normalized_value}
-    Raises ValueError on invalid or out-of-scope targets.
+    sanitizes the user's input query to prevent prompt injection
+    raises ValueError on invalid or out-of-scope targets.
+
+    args:
+        prompt: The raw user input string
+
+    returns:
+        the sanitized dict: {type: "ip"|"domain"|"url", value: normalized_value}
     """
-    s = raw.strip()
+    print(f"Sanitizing query: '{prompt}'")
+    s = prompt.strip()
     if len(s) == 0:
         raise ValueError("Empty input")
     if len(s) > MAX_INPUT_LEN:
@@ -72,7 +81,8 @@ def parse_and_validate_target(raw: str):
         return {"type":"ip", "value": str(ipaddress.ip_address(s))}
 
     # Try URL parse
-    parsed = urlparse(s if "://" in s else "http://" + s)  # help parse domain-only strings
+    # help parse domain-only strings
+    parsed = urlparse(s if "://" in s else "http://" + s)  
     if parsed.hostname:
         hostname = normalize_domain(parsed.hostname)
         # Check allowed hostnames (exact) OR resolve and check IP range
@@ -80,7 +90,7 @@ def parse_and_validate_target(raw: str):
             clean_url = urlunparse((parsed.scheme if parsed.scheme in URL_SCHEME_WHITELIST else "http",
                                      hostname, parsed.path or "/", "", "", ""))
             return {"type":"url", "value": clean_url}
-        # try resolve
+        # try resolve when not in ALLOWED_HOSTNAMES Whitelist
         try:
             answers = socket.getaddrinfo(hostname, None)
             ips = {a[4][0] for a in answers}
@@ -95,24 +105,3 @@ def parse_and_validate_target(raw: str):
             raise ValueError("Unable to resolve hostname")
     raise ValueError("Unrecognized target format")
 
-def sanitize_query(prompt: str) -> str:
-    """
-    sanitizes the user's input query to prevent prompt injection
-    and remove potentially malicious payloads
-
-    args:
-        prompt: The raw user input string
-
-    returns:
-        the sanitized string
-    """
-    print(f"Sanitizing query: '{prompt}'")
-    sanitized = prompt.strip()
-
-    # In a real application, you would add more robust checks here:
-    # - Check for known injection patterns (e.g., "ignore previous instructions").
-    # - Use a library to filter out malicious code snippets.
-    # - Potentially use a separate, smaller LLM to classify the intent of the prompt.
-
-    print(f"Sanitized query: '{sanitized}'")
-    return sanitized
