@@ -6,3 +6,4 @@ httpx
 pyyaml
 python-nmap
 mcp
+streamlit
