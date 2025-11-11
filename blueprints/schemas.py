@@ -40,5 +40,5 @@ class AvengerResult(BaseModel):
 class FinalReport(BaseModel):
     """The final report presented to the user."""
     summary: str = Field(..., description="A natural language summary of the findings.")
-    results: List[AgentResult] = Field(..., description="A detailed list of results from each agent task.")
+    results: List[AvengerResult] = Field(..., description="A detailed list of results from each agent task.")
     session_id: str
