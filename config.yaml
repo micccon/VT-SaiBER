@@ -9,7 +9,7 @@ llm:
 
 # DB paths: logging, session data, agent registry, and reports
 database:
-  agent_registry_path: "./database/agent_registry.json"
+  agent_registry_path: "./database/avenger_registry.json"
   logs_dir: "./database/logs/"
   sessions_dir: "./database/sessions/"
   reports_dir: "./database/reports/"

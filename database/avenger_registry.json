@@ -1,15 +1,52 @@
 {
-  "NmapScannerAgent": {
-    "description": "An agent that uses the Nmap tool to perform network and port scanning.",
-    "module_path": "agents.nmap_scanner_agent",
-    "class_name": "NmapScannerAgent",
+  "VisionAgent": {
+    "description": "Network reconnaissance agent using Nmap for port scanning, service detection, and host discovery",
+    "module_path": "avengers.vision_agent",
+    "class_name": "VisionAgent",
     "capabilities": [
       {
-        "action": "scan_ports",
-        "description": "Scans a target for open TCP ports. Can specify common ports or a range.",
+        "action": "ping_scan",
+        "description": "Performs host discovery without port scanning",
+        "parameters": {
+          "target": "string (IP address, hostname, or CIDR range)"
+        }
+      },
+      {
+        "action": "quick_scan",
+        "description": "Fast scan of top 100 most common ports",
+        "parameters": {
+          "target": "string (IP address or hostname)"
+        }
+      },
+      {
+        "action": "port_scan",
+        "description": "Scans specific ports or port ranges",
         "parameters": {
           "target": "string (IP address or hostname)",
-          "ports": "string (e.g., '22,80,443' or '1-1024')"
+          "ports": "string (e.g., '22,80,443' or '1-1000')"
+        }
+      },
+      {
+        "action": "service_scan",
+        "description": "Detects service versions on open ports",
+        "parameters": {
+          "target": "string (IP address or hostname)",
+          "ports": "string (optional, specific ports to scan)"
+        }
+      },
+      {
+        "action": "comprehensive_scan",
+        "description": "Aggressive scan with OS detection, version detection, script scanning, and traceroute",
+        "parameters": {
+          "target": "string (IP address or hostname)"
+        }
+      },
+      {
+        "action": "stealth_scan",
+        "description": "SYN stealth scan to avoid detection (requires root privileges)",
+        "parameters": {
+          "target": "string (IP address or hostname)",
+          "ports": "string (optional, specific ports to scan)"
         }
       }
     ]

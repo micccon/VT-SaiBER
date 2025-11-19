@@ -6,7 +6,7 @@ from this class and implement the `execute` method. This ensures a consistent
 interface for the Agent Controller to interact with.
 """
 from abc import ABC, abstractmethod
-from blueprints.schemas import Task, AgentResult
+from blueprints.schemas import Task, AvengerResult
 
 class BaseAvenger(ABC):
     """
@@ -15,7 +15,7 @@ class BaseAvenger(ABC):
     """
 
     @abstractmethod
-    async def execute(self, task: Task) -> AgentResult:
+    async def execute(self, task: Task) -> AvengerResult:
         """
         The main execution method for the agent.
 
@@ -26,6 +26,6 @@ class BaseAvenger(ABC):
             task: The task object containing details about the action to perform.
 
         Returns:
-            An AgentResult object with the status and output of the task.
+            An AvengerResult object with the status and output of the task.
         """
         pass
