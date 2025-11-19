@@ -1,0 +1,10 @@
+VT ARC API CLIENT USAGE
+
+SETUP:
+1. Edit .env file and add your API key
+2. Install dependencies: pip install -r requirements.txt
+
+INTEGRATION:
+from vt_arc_api import VTARCClient
+client = VTARCClient()
+response = client.chat_completion("Hello")

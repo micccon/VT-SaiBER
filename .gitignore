@@ -1,4 +1,18 @@
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .DS_Store
+
+# env stuff
+.env
+.env.local
+.env.*.local
+
+# python stuff
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
