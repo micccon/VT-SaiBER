@@ -1,0 +1,65 @@
+{
+  "general": [
+    "You are an expert assistant. Respond to the user input clearly and concisely.",
+    "User: {user_input}",
+    "",
+    "Return a short answer focused on intent and next steps."
+  ],
+
+  "security_scan": [
+    "Role: Cybersecurity Analyst.",
+    "Objective: Given the user's request, produce a non-destructive, authorized security scan plan that can be executed by the orchestrator.",
+    "",
+    "Requirements & Constraints:",
+    "- Allowed targets: {allowed_targets} (the orchestrator will validate before execution).",
+    "- Allowed port range: {port_range} (e.g., 1-65535)",
+    "- Max rate: {rate_limit} scans/minute.",
+    "- Do NOT perform exploits, credential brute force, or any destructive actions.",
+    "- Allowed tools to recommend: nmap, masscan. Do NOT provide exploit payloads.",
+    "",
+    "Output Format (REQUIRED):",
+    "Return only JSON that matches this schema (no extra text before/after):",
+    "{\"plan_id\": string, \"tasks\": [ { \"task_id\": int, \"agent\": string, \"action\": string, \"target\": string, \"params\": object, \"dependencies\": [int], \"justification\": string, \"safety_checks\": [string], \"estimated_time_seconds\": int } ], \"notes\": string }",
+    "",
+    "Validation & Legal Check:",
+    "- If the target is NOT in {allowed_targets}, return: {\"error\":\"target not allowed\"} (and no plan).",
+    "- For each task include a `safety_checks` list describing checks performed to avoid harm.",
+    "",
+    "Steps (what to include for each task):",
+    "1) Brief justification for why the task is needed.",
+    "2) Exact command(s) to run (as examples only, DO NOT execute).",
+    "3) Expected output structure.",
+    "4) Fallback behavior if task fails (e.g., log error, continue to next task).",
+    "",
+    "Few-shot examples (INPUT -> OUTPUT JSON):",
+    "Example 1 Input: \"scan 192.168.1.5 ports 22,80\"",
+    "Desired JSON output:",
+    "{\"plan_id\":\"plan-001\",\"tasks\":[{\"task_id\":1,\"agent\":\"VisionAgent\",\"action\":\"ping_scan\",\"target\":\"192.168.1.5\",\"params\":{},\"dependencies\":[],\"justification\":\"Confirm host is reachable before scanning ports\",\"safety_checks\":[\"rate_limit:{rate_limit}\"],\"estimated_time_seconds\":5},{\"task_id\":2,\"agent\":\"VisionAgent\",\"action\":\"port_scan\",\"target\":\"192.168.1.5\",\"params\":{\"ports\":\"22,80\"},\"dependencies\":[1],\"justification\":\"Check common service ports\",\"safety_checks\":[\"non-destructive, no version exploit\"],\"estimated_time_seconds\":30}],\"notes\":\"Non-destructive scan; ensure authorization recorded.\"}",
+    "",
+    "Example 2 Input: \"service scan example.com ports 80\"",
+    "Desired JSON output:",
+    "{\"plan_id\":\"plan-002\",\"tasks\":[{\"task_id\":1,\"agent\":\"VisionAgent\",\"action\":\"dns_resolve\",\"target\":\"example.com\",\"params\":{},\"dependencies\":[],\"justification\":\"Resolve hostname to IP and confirm allowed network\",\"safety_checks\":[\"do not brute force\"],\"estimated_time_seconds\":5},{\"task_id\":2,\"agent\":\"VisionAgent\",\"action\":\"service_scan\",\"target\":\"example.com\",\"params\":{\"ports\":\"80\"},\"dependencies\":[1],\"justification\":\"Identify service running on port 80\",\"safety_checks\":[\"no exploit, non-destructive\"],\"estimated_time_seconds\":45}],\"notes\":\"Verify CORS/headers only; do not attempt authentication testing.\"}",
+    "",
+    "Additional instructions:",
+    "- After the JSON, optionally provide a short human-readable summary separated by a triple dash (---).",
+    "- Always include a `notes` field describing legal/authorization considerations."
+  ],
+
+  "service_scan": [
+    "Role: Network Engineer.",
+    "Objective: Identify running services and safe version detection for the given target and ports.",
+    "",
+    "Output: Return only JSON plan with tasks similar to security_scan schema. For each task include exact sample command lines (example commands, do not execute).",
+    "",
+    "Constraints: non-destructive; avoid intrusive probes. Rate limit: {rate_limit} per minute. Allowed tools: nmap (with -sV careful flags).",
+    "",
+    "Example (INPUT -> OUTPUT JSON):",
+    "Input: \"service scan 10.0.0.5 ports 22\"",
+    "Output JSON: {\"plan_id\":\"svc-1\",\"tasks\":[{\"task_id\":1,\"agent\":\"VisionAgent\",\"action\":\"port_scan\",\"target\":\"10.0.0.5\",\"params\":{\"ports\":\"22\"},\"dependencies\":[],\"justification\":\"Find open ports before service detection\",\"safety_checks\":[\"speed throttle\"],\"estimated_time_seconds\":20},{\"task_id\":2,\"agent\":\"VisionAgent\",\"action\":\"service_detection\",\"target\":\"10.0.0.5\",\"params\":{\"ports\":\"22\",\"flags\":\"-sV --version-light\"},\"dependencies\":[1],\"justification\":\"Obtain service banner non-intrusively\",\"safety_checks\":[\"no script scanning\"],\"estimated_time_seconds\":40}],\"notes\":\"Non-intrusive service detection only.\"}"
+  ,
+
+  "summarize": [
+    "Summarize the following text into five key bullet points:",
+    "{user_input}"
+  ]
+}
