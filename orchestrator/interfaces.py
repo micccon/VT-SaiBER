@@ -5,6 +5,7 @@ These abstract classes define the contracts between different parts
 of the system, allowing teams to work independently.
 """
 from abc import ABC, abstractmethod
+from typing import Any
 from blueprints.schemas import ExecutionPlan
 
 
@@ -17,7 +18,7 @@ class IPromptBuilder(ABC):
     """
     
     @abstractmethod
-    def build_prompt(self, user_query: str, agent_registry: dict, context: dict = None) -> str:
+    def build_prompt(self, user_query: Any, agent_registry: dict, context: dict = None) -> str:
         """
         Build a formatted prompt for the LLM.
         

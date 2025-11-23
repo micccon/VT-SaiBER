@@ -8,24 +8,30 @@ import json
 import socket
 import ipaddress
 import logging
-from urllib.parse import urlparse, urlunparse, quote, unquote
+from urllib.parse import urlparse, urlunparse
 
 # Configs
 MAX_INPUT_LEN = 500
-# validation
-DANGEROUS_PATTERN = re.compile(r"[;&|$`<>\\\^\*]")  
+DANGEROUS_PATTERN = re.compile(r"[;&|$`<>\\\^\*]")
 URL_SCHEME_WHITELIST = {"http", "https"}
-
-
-# Example allowlist: either explicit hostnames or CIDR ranges
-# could be a seperated textbox for user to input first
 ALLOWED_HOSTNAMES = {"example.com", "internal.example.local"}
 ALLOWED_CIDRS = ["10.0.0.0/8", "192.168.0.0/16"]
 ALLOWED_NETWORKS = [ipaddress.ip_network(c) for c in ALLOWED_CIDRS]
 
-logging.basicConfig(filename="./database/logger/input_validation.log", 
-                    level=logging.INFO, 
-                    format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    filename="./database/logger/input_validation.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+def strip_dangerous_chars(s: str) -> str:
+    return DANGEROUS_PATTERN.sub(" ", s)
+
+def normalize_domain(domain: str) -> str:
+    try:
+        return domain.strip().lower().encode("idna").decode("ascii")
+    except Exception:
+        return domain
 
 def is_ip_address(s: str):
     try:
@@ -34,14 +40,6 @@ def is_ip_address(s: str):
     except ValueError:
         return False
 
-def normalize_domain(domain: str) -> str:
-    try:
-        domain = domain.strip().lower()
-        # Convert unicode domain to punycode (ACE) to ensure system understand text
-        return domain.encode("idna").decode("ascii")
-    except Exception:
-        return domain
-
 def in_allowed_networks(ip_str: str) -> bool:
     try:
         ip = ipaddress.ip_address(ip_str)
@@ -49,143 +47,124 @@ def in_allowed_networks(ip_str: str) -> bool:
     except ValueError:
         return False
 
-def strip_dangerous_chars(s: str) -> str:
-    return DANGEROUS_PATTERN.sub(" ", s)
-
-
-def validate_input(prompt: str):
-    """
-    Validate raw user input.
-    Only allow IP/domain/URL, in allowed hosts/networks, length and printable.
-    """
-    s = prompt.strip()
-    if len(s) == 0:
-        logging.warning("Empty input")
-        raise ValueError("Empty input")
-    if len(s) > MAX_INPUT_LEN:
-        logging.warning(f"Too long input: {len(s)} chars")
-        raise ValueError("Input too long")
-    if not all(ch.isprintable() for ch in s):
-        logging.warning("Non-printable char detected")
-        raise ValueError("Contains non-printable character")
-    s = strip_dangerous_chars(s)
-
-    # IP
-    if is_ip_address(s) and in_allowed_networks(s):
-        return {"type": "ip", "value": str(ipaddress.ip_address(s))}
-
-    # URL/domain 
-    parsed = urlparse(s if "://" in s else "http://" + s)
+def validate_target(target: str):
+    """Single IP/hostname/url validation and sanitization."""
+    t = strip_dangerous_chars(target.strip())
+    if is_ip_address(t) and in_allowed_networks(t):
+        return {"type": "ip", "value": str(ipaddress.ip_address(t)), "raw": target}
+    parsed = urlparse(t if "://" in t else "http://" + t)
     if parsed.hostname:
         hostname = normalize_domain(parsed.hostname)
         if hostname in ALLOWED_HOSTNAMES:
             scheme = parsed.scheme if parsed.scheme in URL_SCHEME_WHITELIST else "http"
             clean_url = urlunparse((scheme, hostname, parsed.path or "/", "", "", ""))
-            return {"type": "url", "value": clean_url}
-        # Hostname not allowed, check IP
+            return {"type": "url", "value": clean_url, "raw": target}
+        # Try resolve to allowed IP
         try:
             answers = socket.getaddrinfo(hostname, None)
             ips = {a[4][0] for a in answers}
             if any(in_allowed_networks(ip) for ip in ips):
                 scheme = parsed.scheme if parsed.scheme in URL_SCHEME_WHITELIST else "http"
                 clean_url = urlunparse((scheme, hostname, parsed.path or "/", "", "", ""))
-                return {"type": "url", "value": clean_url}
+                return {"type": "url", "value": clean_url, "raw": target}
             else:
-                logging.warning("Resolved IP outside allowed networks")
                 raise ValueError("Resolved IP not allowed")
-        except socket.gaierror:
-            logging.error(f"Host resolve failed: {hostname}")
+        except Exception:
             raise ValueError("Unable to resolve hostname")
-    logging.warning("Unrecognized input format")
-    raise ValueError("Unrecognized input format")
+    raise ValueError("Unrecognized target format")
 
-def sanitize_for_context(data: str, context: str) -> str:
-    if context == "json":
-        return json.dumps(data)
-    else:
-        return strip_dangerous_chars(data)
+def process_user_input(raw_input: str, output_context: str = "json"):
+    """
+    Accept free-form user input. Extract target(s), action, port(s), 
+    validate targets, and return structure for downstream usage.
+    """
+    s = (raw_input or "").strip()
+    result = {
+        "raw": s,
+        "action": "general",
+        "targets": [],
+        "ports": [],
+        "sanitized_targets": [],
+        "validation_errors": []
+    }
+    # Quick input checks
+    if not s:
+        result["validation_errors"].append("empty input")
+        return json.dumps(result) if output_context == "json" else result
+    if len(s) > MAX_INPUT_LEN:
+        result["validation_errors"].append("input too long")
+        return json.dumps(result) if output_context == "json" else result
+    if not all(ch.isprintable() for ch in s):
+        result["validation_errors"].append("non-printable characters")
+        return json.dumps(result) if output_context == "json" else result
 
-# Validate and Sanitize
-def process_user_input(raw_input: str, output_context: str):
-    try:
-        valid = validate_input(raw_input)
-        safe = sanitize_for_context(valid["value"], output_context)
-        logging.info(f"Processed input: {safe}")
-        return safe
-    except Exception as e:
-        logging.error(f"User input error: {e}")
-        raise
+    s_safe = strip_dangerous_chars(s)
+    # Infer action
+    lower = s_safe.lower()
+    if "port" in lower and "scan" in lower:
+        result["action"] = "port_scan"
+    elif "service" in lower or "version" in lower:
+        result["action"] = "service_scan"
+    elif "ping" in lower:
+        result["action"] = "ping_scan"
+    elif "scan" in lower:
+        result["action"] = "quick_scan"
 
-# Example test main
+    # Extract IP & hostnames/domains
+    ip_pattern = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
+    host_pattern = re.compile(r"\b([a-zA-Z0-9\-_.]+\.[a-zA-Z]{2,})\b")
+    ips = ip_pattern.findall(s_safe)
+    hosts = host_pattern.findall(s_safe)
+
+    # Merge unique targets
+    seen = set()
+    for t in ips + hosts:
+        if t not in seen:
+            seen.add(t)
+            result["targets"].append(t)
+
+    # Extract ports (matches 'port 22', 'ports 80,443')
+    ports_pattern = re.compile(r"ports?\s*[:=]?\s*([0-9,\s]+)", re.IGNORECASE)
+    m = ports_pattern.search(s_safe)
+    if m:
+        result["ports"] = [p for p in re.split(r"[,\s]+", m.group(1)) if p.isdigit()]
+
+    # Validate targets
+    for t in result["targets"]:
+        try:
+            val = validate_target(t)
+            result["sanitized_targets"].append(val)
+        except Exception as e:
+            result["validation_errors"].append(f"{t}: {e}")
+
+    # If no targets found, try tokens
+    if not result["targets"]:
+        tokens = re.split(r"\s+", s_safe)
+        for tok in tokens:
+            if ip_pattern.fullmatch(tok) or host_pattern.fullmatch(tok):
+                try:
+                    val = validate_target(tok)
+                    if tok not in result["targets"]:
+                        result["targets"].append(tok)
+                        result["sanitized_targets"].append(val)
+                except Exception as e:
+                    result["validation_errors"].append(f"{tok}: {e}")
+
+    return json.dumps(result) if output_context == "json" else result
+
+# Simple demo
 if __name__ == "__main__":
     EXAMPLES = [
         "192.168.0.10",
         "example.com",
         "http://internal.example.local/test",
-        "badhost.com",
-        "123.123.123.123",
-        "Hello world!",
+        "scan badhost.com for port 22",
+        "scan 10.0.0.8 ports 22,443",
+        "quick scan 123.123.123.123",
+        "please check 1.2.3.4; rm -rf /",
         "<script>alert('XSS')</script>",
-        "1.2.3.4; rm -rf /"
+        "ports 80,8080 on 192.168.1.1"
     ]
-
     for inp in EXAMPLES:
-        try:
-            result = process_user_input(inp, "json")
-            print(f"OK: {inp} -> {result}")
-        except Exception as ex:
-            print(f"FAIL: {inp} -> {ex}")
-
-
-# def sanitize_query(prompt: str):
-#     """
-#     sanitizes the user's input query to prevent prompt injection
-#     raises ValueError on invalid or out-of-scope targets.
-
-#     args:
-#         prompt: The raw user input string
-
-#     returns:
-#         the sanitized dict: {type: "ip"|"domain"|"url", value: normalized_value}
-#     """
-#     print(f"Sanitizing query: '{prompt}'")
-#     s = prompt.strip()
-#     if len(s) == 0:
-#         raise ValueError("Empty input")
-#     if len(s) > MAX_INPUT_LEN:
-#         raise ValueError("Input too long")
-
-#     # remove control characters
-#     s = "".join(ch for ch in s if ch.isprintable())
-#     s = strip_dangerous_chars(s)
-
-#     # Try IP
-#     if is_ip_address(s):
-#         if not in_allowed_networks(s):
-#             raise ValueError("IP not in allowed networks")
-#         return {"type":"ip", "value": str(ipaddress.ip_address(s))}
-
-#     # Try URL parse
-#     # help parse domain-only strings
-#     parsed = urlparse(s if "://" in s else "http://" + s)  
-#     if parsed.hostname:
-#         hostname = normalize_domain(parsed.hostname)
-#         # Check allowed hostnames (exact) OR resolve and check IP range
-#         if hostname in ALLOWED_HOSTNAMES:
-#             clean_url = urlunparse((parsed.scheme if parsed.scheme in URL_SCHEME_WHITELIST else "http",
-#                                      hostname, parsed.path or "/", "", "", ""))
-#             return {"type":"url", "value": clean_url}
-#         # try resolve when not in ALLOWED_HOSTNAMES Whitelist
-#         try:
-#             answers = socket.getaddrinfo(hostname, None)
-#             ips = {a[4][0] for a in answers}
-#             if any(in_allowed_networks(ip) for ip in ips):
-#                 # reconstruct safe URL with normalized hostname
-#                 scheme = parsed.scheme if parsed.scheme in URL_SCHEME_WHITELIST else "http"
-#                 clean_url = urlunparse((scheme, hostname, parsed.path or "/", "", "", ""))
-#                 return {"type":"url", "value": clean_url}
-#             else:
-#                 raise ValueError("Target resolves outside allowed networks")
-#         except socket.gaierror:
-#             raise ValueError("Unable to resolve hostname")
-#     raise ValueError("Unrecognized target format")
+        res = process_user_input(inp, output_context="json")
+        print(f"{inp} ->\n{res}\n")

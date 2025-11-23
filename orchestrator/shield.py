@@ -11,6 +11,8 @@ from typing import Optional
 from orchestrator.interfaces import IPromptBuilder, ILLMClient, IReportGenerator
 from orchestrator.nick_fury import FuryAgentController
 from blueprints.schemas import UserQueryRequest, FinalReport
+from interaction.api.thanos import process_user_input
+from orchestrator.tony_stark import StarkPromptEngine
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ class ShieldOrchestrator:
     def __init__(
         self, 
         config_path: str,
-        prompt_builder: IPromptBuilder,
+        prompt_builder: StarkPromptEngine,
         llm_client: ILLMClient,
         report_generator: IReportGenerator
     ):
@@ -80,13 +82,18 @@ class ShieldOrchestrator:
         logger.info(f"Orchestrator received query: {user_query.prompt[:100]}")
         
         try:
-            # Step 1: Validate input
-            self._validate_query(user_query.prompt)
-            
-            # Step 2: Build prompt
+            # Step 1: Extract structured command using thanos (sanitization + parsing)
+            logger.info("Sanitizing and validating...")
+            processed_json = process_user_input(
+                raw_input=user_query.prompt,
+                output_context="json"
+            )
+            logger.info(f"processed_json: {str(processed_json)[:200]}")
+
+            # Step 2: Build prompt using the structured command
             logger.info("Building prompt...")
             prompt = self.prompt_builder.build_prompt(
-                user_query=user_query.prompt,
+                user_query=processed_json,
                 agent_registry=self.agent_controller.agent_registry,
                 context={"session_id": user_query.session_id}
             )
@@ -123,24 +130,3 @@ class ShieldOrchestrator:
                 results=[],
                 session_id=user_query.session_id or "default"
             )
-    
-    def _validate_query(self, query: str):
-        """
-        Validate user input against security rules.
-        
-        Args:
-            query: User's input query
-            
-        Raises:
-            ValueError: If query is invalid
-        """
-        if not query or len(query.strip()) == 0:
-            raise ValueError("Query cannot be empty")
-        
-        if len(query) > 500:
-            raise ValueError("Query too long (max 500 characters)")
-        
-        # Additional validation can be added here
-        # e.g., call thanos.py validation for targets
-        
-        logger.debug(f"Query validation passed: {query[:50]}")

@@ -3,6 +3,7 @@ Mock implementations for testing orchestrator without LLM/Prompt components.
 
 Use these until other team members finish their implementations.
 """
+from typing import Any
 from orchestrator.interfaces import IPromptBuilder, ILLMClient, IReportGenerator
 from blueprints.schemas import ExecutionPlan, Task, AvengerResult
 
@@ -14,7 +15,7 @@ class MockPromptBuilder(IPromptBuilder):
     Replace this with real implementation from prompt person.
     """
     
-    def build_prompt(self, user_query: str, agent_registry: dict, context: dict = None) -> str:
+    def build_prompt(self, user_query: Any, agent_registry: dict, context: dict = None) -> str:
         """Return a mock prompt for testing."""
         agent_names = list(agent_registry.keys())
         
