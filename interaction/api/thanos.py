@@ -79,6 +79,8 @@ def process_user_input(raw_input: str, output_context: str = "json"):
     validate targets, and return structure for downstream usage.
     """
     s = (raw_input or "").strip()
+
+    # Result template
     result = {
         "raw": s,
         "action": "general",
@@ -87,6 +89,7 @@ def process_user_input(raw_input: str, output_context: str = "json"):
         "sanitized_targets": [],
         "validation_errors": []
     }
+    
     # Quick input checks
     if not s:
         result["validation_errors"].append("empty input")
@@ -99,6 +102,7 @@ def process_user_input(raw_input: str, output_context: str = "json"):
         return json.dumps(result) if output_context == "json" else result
 
     s_safe = strip_dangerous_chars(s)
+    
     # Infer action
     lower = s_safe.lower()
     if "port" in lower and "scan" in lower:

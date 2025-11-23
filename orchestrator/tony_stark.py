@@ -9,79 +9,93 @@ import json
 from typing import Any
 from orchestrator.interfaces import IPromptBuilder
 from interaction.api.thanos import process_user_input
+import json
+from pathlib import Path
+import copy
+
+DEFAULT_FORMAT_ARGS = {
+    "user_input": "[NO INPUT PROVIDED]",
+    "allowed_targets": "[NOT SPECIFIED]",
+    "port_range": "1-65535",
+    "rate_limit": "20",
+    "constraints": "Non-destructive only.",
+}
 
 class StarkPromptEngine(IPromptBuilder):
+    _PROMPT_CACHE = None
+    _PROMPT_PATH = Path(__file__).resolve().parents[1] / "database" / "avenger_prompts" / "tony_stark_prompt_example.json"
 
     def __init__(self):
-        self.default_prompts = {
-            "general": "Please respond to the following user input:\n{user_input}",
-            "security_scan": (
-                "You are a cybersecurity expert. Write a Python script that performs a security scan using modern best practices.\n"
-                "Task description: {user_input}\n"
-                "Explain your implementation approach."
-            ),
-            "summarize": (
-                "Summarize the following text into five key bullet points:\n{user_input}"
-            )
-        }
+        # Load prompts from file to cache once
+        if StarkPromptEngine._PROMPT_CACHE is None:
+            prompts_path = self._PROMPT_PATH
+            if not prompts_path.exists():
+                prompts_path = Path.cwd() / "database" / "avenger_prompts" / "tony_stark_prompt_example.json"
+            try:
+                with open(prompts_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    # if any value is a list, join into string
+                    for k, v in loaded.items():
+                        if isinstance(v, list):
+                            loaded[k] = "\n".join(str(x) for x in v)
+                    StarkPromptEngine._PROMPT_CACHE = loaded
+            except Exception:
+                # Fallback to hardcoded defaults
+                StarkPromptEngine._PROMPT_CACHE = {
+                    "general": "Please respond to the following user input:\n{user_input}",
+                    "security_scan": (
+                        "You are a cybersecurity expert. Write a Python script that performs a security scan using modern best practices.\n"
+                        "Task description: {user_input}\n"
+                        "Explain your implementation approach."
+                    ),
+                }
+        self.default_prompts = StarkPromptEngine._PROMPT_CACHE
 
     def build_prompt(self, user_query: Any, agent_registry: dict = None, context: dict = None) -> str:
         """
-        Build a prompt. This method is compatible with `IPromptBuilder.build_prompt`.
-
-        `user_query` may be:
-          - a raw string (user input)
-          - a dict produced by `interaction.api.thanos.extract_command`
+        Build a prompt for a given user input (dict or str) using default prompts.
         """
-        # Normalize to a structured dict if possible
-        cmd = None
-        if isinstance(user_query, str):
+        # Step 1: Normalize user_query to dict
+        if isinstance(user_query, dict):
+            cmd = user_query
+        else:
             try:
-                # try to parse as JSON command
                 cmd = json.loads(user_query)
             except Exception:
-                # fallback: run processor to get structured command (JSON string)
                 try:
                     cmd = json.loads(process_user_input(user_query, output_context="json"))
                 except Exception:
-                    cmd = {"raw": user_query, "action": "general"}
-        elif isinstance(user_query, dict):
-            cmd = user_query
-        else:
-            cmd = {"raw": str(user_query), "action": "general"}
+                    cmd = {"raw": str(user_query), "action": "general"}
 
         action = cmd.get("action", "general")
+        template = self.default_prompts.get(action, self.default_prompts["general"])
 
-        # Build a human-readable user_input snippet for the templates
-        if action in ("port_scan", "service_scan", "ping_scan", "quick_scan"):
-            # Prefer sanitized targets if available. sanitized_targets may be list of dicts or strings.
-            raw_sanitized = cmd.get("sanitized_targets") or cmd.get("targets") or []
-            targets = []
-            for t in raw_sanitized:
-                if isinstance(t, dict):
-                    # prefer the sanitized 'value' then 'raw'
-                    v = t.get("value") or t.get("raw")
-                    if v:
-                        targets.append(str(v))
-                else:
-                    targets.append(str(t))
-            ports = cmd.get("ports") or []
-            target_str = ", ".join(targets) if targets else cmd.get("raw", "")
-            params = []
-            if ports:
-                params.append(f"ports: {', '.join(ports)}")
-            params_str = ("; ".join(params)) if params else ""
-            user_input_text = f"Action: {action}. Targets: {target_str}. {params_str}"
-            template = self.default_prompts.get("security_scan")
-            return template.format(user_input=user_input_text)
+        # Step 2: Prepare format map, starting from default args
+        fmt_map = copy.deepcopy(DEFAULT_FORMAT_ARGS)
+        fmt_map.update({
+            "user_input": cmd.get("raw", fmt_map["user_input"]),
+            "allowed_targets": ", ".join(
+                str(t["value"]) if isinstance(t, dict) and "value" in t else str(t)
+                for t in cmd.get("sanitized_targets", [])
+            ) or fmt_map["allowed_targets"],
+            "error_response": '{"error":"target not allowed"}',
+            "example_json": '{}'
+        })
 
-        # default/general
-        user_text = cmd.get("raw", "")
-        template = self.default_prompts.get("general")
-        return template.format(user_input=user_text)
+        if context and isinstance(context, dict):
+            fmt_map.update(context)
 
-    def list_available_prompts(self) -> list:
-        return list(self.default_prompts.keys())
+        ports = cmd.get("ports")
+        if ports:
+            fmt_map["ports"] = ", ".join(str(p) for p in ports)
+
+        # Step 3: Build prompt
+        if isinstance(template, list):
+            template = "\n".join(str(line) for line in template)
+
+        prompt = template.format(**fmt_map)
+        return prompt
+
 
 # Example usage
 if __name__ == "__main__":
