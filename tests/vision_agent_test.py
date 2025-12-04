@@ -1,60 +1,47 @@
 """
-vision_agent_test.py - Using Managed Approach
+vision_agent_test.py - Google ADK with FastMCP
 """
 
-import time
-from strands.agent import Agent
-from strands.tools.mcp import MCPClient
-from mcp.client.sse import sse_client
-from strands.models.gemini import GeminiModel
+import os
+import asyncio
+from google.adk.agents import Agent
+from google.adk.sessions import InMemorySessionService
+from google.adk.runners import Runner
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import SseConnectionParams
+from google.genai import types
 
-MCP_SERVER_URL = "http://localhost:8000"
+os.environ["GOOGLE_API_KEY"] = "YOUR API KEY"
+os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
 
-def run_strands_agent():
-    print("--- 🤖 Initializing Strands Agent ---")
-    
-    print("Waiting 5 seconds for server routes to initialize...")
-    time.sleep(5)
-    
-    try:
-        # Create MCP client
-        mcp_client = MCPClient(lambda: sse_client("http://localhost:8000/sse"))
-        
-        # Initialize the Gemini Model
-        model = GeminiModel(
-            client_args={
-                "api_key": "YOUR GOOGLE API KEY",
-            },
-            model_id="gemini-2.5-flash",
-            params={
-                "temperature": 0.7,
-                "max_output_tokens": 2048,
-                "top_p": 0.9,
-                "top_k": 40
-            }
-        )
+async def main():
+    agent = Agent(
+        name="vision_agent",
+        model="gemini-2.0-flash",  # Stable model with better quota
+        description="Network security scanner",
+        instruction="Network security expert. Use nmap tools. Explain scans, warn about detection.",
+        tools=[McpToolset(connection_params=SseConnectionParams(url="http://localhost:8000/sse"))],
+    )
 
-        # Managed approach - pass the client directly
-        agent = Agent(model=model, tools=[mcp_client])
-        
-        print("\n✅ Agent is ready with MCP tools!")
-        print("--------------------------------------------------")
-        
-        # Run the agent with a task
-        while True:
-            user_input = input("\n🤖 Enter your task (or 'quit' to exit): ")
-            if user_input.lower() in ['quit', 'exit', 'q']:
-                print("Goodbye!")
+    session_service = InMemorySessionService()
+    await session_service.create_session(app_name="agents", user_id="user1", session_id="sess1")
+    runner = Runner(agent=agent, app_name="agents", session_service=session_service)
+
+    print("✅ Ready!\n")
+
+    while True:
+        query = input("🤖 Query: ")
+        if query.lower() in ['quit', 'exit', 'q']:
+            break
+
+        async for event in runner.run_async(
+            user_id="user1",
+            session_id="sess1",
+            new_message=types.Content(role='user', parts=[types.Part(text=query)])
+        ):
+            if event.is_final_response():
+                print(f"\n✅ {event.content.parts[0].text if event.content else 'No response'}\n")
                 break
-            
-            print("\n🔄 Processing...")
-            result = agent(user_input)
-            print(f"\n✅ Result: {result}")
-
-    except Exception as e:
-        print(f"❌ Agent failed to run: {e}")
-        import traceback
-        traceback.print_exc()
 
 if __name__ == "__main__":
-    run_strands_agent()
+    asyncio.run(main())
