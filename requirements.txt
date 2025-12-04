@@ -5,12 +5,6 @@ pydantic
 httpx
 pyyaml
 python-nmap
-strands-agents[openai]
-strands-agents[gemini]
-strands-agents-tools
-strands
-strands-mcp
-mcp-sdk
 fastmcp
 mcp
-mcp-protocol
+google-adk
