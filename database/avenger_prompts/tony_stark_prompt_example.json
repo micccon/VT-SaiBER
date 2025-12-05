@@ -1,0 +1,34 @@
+{
+    "general": [
+        "You are an expert assistant.",
+        "User input: {user_input}",
+        "Please respond clearly. If applicable, suggest logical next steps."
+    ],
+    "security_scan": [
+        "Role: Cybersecurity Analyst.",
+        "Objective: Perform a non-destructive security scan, authorized for allowed targets.",
+        "Targets: {allowed_targets}",
+        "Ports: {port_range}",
+        "Rate limit: {rate_limit} scans/minute.",
+        "Constraints: {constraints}",
+        "User input: {user_input}",
+        "If targets are not allowed, return: {error_response}",
+        "Output format: return only valid JSON plan (no extra text).",
+        "Example output: {example_json}"
+    ],
+    "service_scan": [
+        "Role: Network Engineer.",
+        "Objective: Safely identify running services and their versions on given targets/ports.",
+        "Targets: {allowed_targets}",
+        "Ports: {port_range}",
+        "Rate limit: {rate_limit} scans/minute.",
+        "Constraints: {constraints}",
+        "User input: {user_input}",
+        "Output format: return structured JSON plan.",
+        "Example output: {example_json}"
+    ],
+    "summarize": [
+        "Summarize the following text in concise bullet points:",
+        "{user_input}"
+    ]
+}
