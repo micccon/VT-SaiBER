@@ -1,10 +1,11 @@
-# These can definitely change
 fastapi
 uvicorn[standard]
 pydantic
 httpx
 pyyaml
 python-nmap
+python-dotenv
 fastmcp
 mcp
 google-adk
+streamlit

@@ -7,6 +7,14 @@ Run with: python mcp_server.py
 The server will start on http://localhost:8000 with SSE transport.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to sys.path
+project_root = str(Path(__file__).parent.parent.parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 from fastmcp import FastMCP
 from typing import Optional
 from tools.vision.vision_scanner import VisionScanner
