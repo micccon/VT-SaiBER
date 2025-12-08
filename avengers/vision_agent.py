@@ -1,17 +1,18 @@
 """
-orchestrator_agent.py - Multi-Agent Orchestration System
-Google ADK pattern for modular agent architecture
+vision_agent.py - Network security scanner
 """
 
-import os
 from google.adk.agents import Agent
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import SseConnectionParams
+from typing import Dict, Any
+from google.adk.tools import ToolContext
 
-# Config
-os.environ["GOOGLE_API_KEY"] = "YOUR API KEY"
-os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
-
+def scanner_tool_callback(tool, args: Dict[str, Any], tool_context: ToolContext) -> None:
+    """Logs the details of the nmap tool being executed."""
+    print(f"[{tool_context.agent_name.upper()} LOG] 🛠️  Executing NMAP tool: {tool.name}")
+    print(f"[{tool_context.agent_name.upper()} LOG]   Args: {args}")
+    return None
 
 class VisionAgent:
     """Network security scanner with nmap tools"""
@@ -36,3 +37,9 @@ Available scans:
 Always explain scans before running. Warn about detection. Format results clearly.""",
             tools=[McpToolset(connection_params=SseConnectionParams(url=mcp_url))],
         )
+        
+        # Workaround for ADK version where set_callbacks is unavailable
+        if hasattr(self.agent, '_llm_agent'):
+            self.agent._llm_agent.before_tool_callback = scanner_tool_callback
+        else:
+            self.agent.before_tool_callback = scanner_tool_callback
