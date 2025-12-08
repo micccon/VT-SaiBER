@@ -9,7 +9,6 @@ import json
 from typing import Any
 from orchestrator.interfaces import IPromptBuilder
 from interaction.api.thanos import process_user_input
-import json
 from pathlib import Path
 import copy
 
@@ -51,9 +50,62 @@ class StarkPromptEngine(IPromptBuilder):
                 }
         self.default_prompts = StarkPromptEngine._PROMPT_CACHE
 
+    def _format_agent_capabilities(self, agent_registry: dict) -> str:
+        """
+        Format the agent registry into a readable list of available capabilities.
+        
+        This method transforms the agent registry dictionary into a formatted string
+        that tells the LLM what agents are available and what they can do.
+        
+        Args:
+            agent_registry: Dictionary of agents with their metadata
+            
+        Returns:
+            Formatted string describing available agents and their capabilities
+        """
+        if not agent_registry:
+            return "No agents available"
+        
+        capabilities_list = []
+        
+        for agent_name, agent_info in agent_registry.items():
+            capabilities_list.append(f"Agent: {agent_name}")
+            
+            if isinstance(agent_info, dict):
+                description = agent_info.get("description", "")
+                if description:
+                    capabilities_list.append(f"  Description: {description}")
+                
+                agent_capabilities = agent_info.get("capabilities", [])
+                if agent_capabilities:
+                    capabilities_list.append("  Available actions:")
+                    for capability in agent_capabilities:
+                        if isinstance(capability, dict):
+                            action = capability.get("action", "Unknown")
+                            desc = capability.get("description", "")
+                            params = capability.get("parameters", {})
+                            param_str = ", ".join(params.keys()) if params else "none"
+                            capabilities_list.append(f"    - {action}: {desc} (parameters: {param_str})")
+        
+        return "\n".join(capabilities_list) if capabilities_list else "No agents available"
+
     def build_prompt(self, user_query: Any, agent_registry: dict = None, context: dict = None) -> str:
         """
         Build a prompt for a given user input (dict or str) using default prompts.
+        
+        This method:
+        1. Normalizes the user query to a dictionary
+        2. Selects the appropriate prompt template based on action type
+        3. Formats the template with user data, targets, and available agent capabilities
+        4. Returns a complete prompt ready for the LLM
+        
+        Args:
+            user_query: Raw user input (str or dict)
+            agent_registry: Dictionary of available agents and their capabilities
+            context: Optional additional context (session history, etc.)
+            
+        Returns:
+            Formatted prompt string ready for LLM
         """
         # Step 1: Normalize user_query to dict
         if isinstance(user_query, dict):
@@ -79,7 +131,8 @@ class StarkPromptEngine(IPromptBuilder):
                 for t in cmd.get("sanitized_targets", [])
             ) or fmt_map["allowed_targets"],
             "error_response": '{"error":"target not allowed"}',
-            "example_json": '{}'
+            "example_json": '{}',
+            "available_agents": self._format_agent_capabilities(agent_registry) if agent_registry else "No agents registered"
         })
 
         if context and isinstance(context, dict):
@@ -93,6 +146,7 @@ class StarkPromptEngine(IPromptBuilder):
         if isinstance(template, list):
             template = "\n".join(str(line) for line in template)
 
+        # Use standard format() - JSON templates are already escaped with {{ and }}
         prompt = template.format(**fmt_map)
         return prompt
 
