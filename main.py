@@ -8,40 +8,81 @@ Prerequisites:
 
 import os
 import asyncio
+import streamlit as st
 from orchestrator.agent_system import AgentSystem
 
 # Config
-os.environ["GOOGLE_API_KEY"] = "YOUR API KEY"
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
 
+# Page Config
+st.set_page_config(page_title="VT-SaiBER", page_icon="🛡️")
+
+@st.cache_resource
+def get_agent_system() -> AgentSystem:
+    """Initialize AgentSystem once and cache it"""
+    return AgentSystem()
 
 async def main():
-    print("🔄 Initializing Multi-Agent System...")
-    print("⚠️  Make sure MCP server is running: python mcp_server.py\n")
-    # Initialize agent system
-    system = AgentSystem()
-    await system.initialize()
-    
-    print("✅ Multi-Agent System Ready!")
-    print("📋 Available Agents:")
-    print("   • Scanner: Network security scanning (nmap)")
-    print("   • Vuln Report: Vulnerability assessment reports")
-    print("   • Orchestrator: Coordinates workflows\n")
-    
-    print("💡 Example queries:")
-    print('   "Scan 192.168.1.1"')
-    print('   "Scan scanme.nmap.org and create a vulnerability report"')
-    print('   "Generate a security assessment for 10.0.0.0/24"\n')
-    
-    # Interactive loop
-    while True:
-        query = input("🤖 Query: ")
-        if query.lower() in ['quit', 'exit', 'q']:
-            break
-        
-        response = await system.run_query(query)
-        print(f"\n✅ {response}\n")
+    st.title("VT-SaiBER 🛡️")
+    st.caption("Multi-Agent Security Scanner & Reporter")
 
+    # API Key Handling
+    with st.sidebar:
+        api_key = st.text_input("Enter Google API Key", type="password")
+        if api_key:
+            os.environ["GOOGLE_API_KEY"] = api_key
+            st.success("API Key accepted!")
+        else:
+            st.warning("Please enter your Google API Key to continues.")
+            st.stop()
+
+
+    # Initialize state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Get cached system
+    system = get_agent_system()
+    
+    # Initialize system if needed (idempotent check)
+    if system.runner is None:
+        with st.spinner("Initializing Agent System..."):
+            await system.initialize()
+            st.success("System Ready!")
+
+    # Sidebar info
+    with st.sidebar:
+        st.header("Available Agents")
+        st.markdown("""
+        - **Scanner**: Network security scanning
+        - **Vulnerability Report**: Vulnerability assessment
+        - **Orchestrator**: Workflow coordination
+        """)
+        
+        st.header("Example Queries")
+        st.code("Scan 192.168.1.1")
+        st.code("Scan scanme.nmap.org and create a vulnerability report")
+
+    # Display chat history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat input
+    if prompt := st.chat_input("How can I help you secure the network?"):
+        # Add user message to history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Generate response
+        with st.chat_message("assistant"):
+            with st.spinner("Processing..."):
+                response = await system.run_query(prompt)
+                st.markdown(response)
+        
+        # Add assistant message to history
+        st.session_state.messages.append({"role": "assistant", "content": response})
 
 if __name__ == "__main__":
     asyncio.run(main())

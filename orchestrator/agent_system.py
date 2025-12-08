@@ -1,16 +1,16 @@
 """
-main.py - Multi-Agent System Entry Point
+agent_system.py - Multi-Agent System Entry Point
 """
 
-import os
-import asyncio
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai import types
 
+# Import necessary types for event handling
+# Assuming the file structure places these in a higher directory
 from avengers.vision_agent import VisionAgent
 from avengers.vuln_report_agent import VulnReportAgent
-from avengers.nick_fury_agent import OrchestratorAgent
+from avengers.nick_fury_agent import NickFuryAgent
 from interaction.api.thanos import process_user_input
 from orchestrator.tony_stark import StarkPromptEngine
 from utils.DrStrange import AgentLogger
@@ -35,7 +35,7 @@ class AgentSystem:
         self.vuln_report = VulnReportAgent()
         
         # Initialize orchestrator with sub-agents
-        self.orchestrator = OrchestratorAgent(
+        self.orchestrator = NickFuryAgent(
             sub_agents=[self.scanner, self.vuln_report]
         )
         
@@ -58,7 +58,7 @@ class AgentSystem:
         self.logger._log_system("AgentSystem initialized", {"session": "sess1"})
     
     async def run_query(self, query: str) -> str:
-        """
+                """
         Execute a query through the orchestrator with sanitization and prompt engineering
         
         Workflow:
@@ -103,27 +103,27 @@ class AgentSystem:
             
             # Step 3: Execute through orchestrator with enhanced prompt
             response = None
-            async for event in self.runner.run_async(
-                user_id="user1",
-                session_id="sess1",
-                new_message=types.Content(role='user', parts=[types.Part(text=enhanced_prompt)])
-            ):
-                if event.is_final_response():
-                    response = event.content.parts[0].text if event.content else "No response"
-                    break
-            
-            if response is None:
-                response = "No response"
-            
-            # Log agent response
-            self.logger.log_agent_response(response, "OrchestratorAgent")
-            return response
-            
-        except Exception as e:
-            # Log error
-            self.logger.log_error(str(e), {"query": query})
-            raise
-    
-    def save_session_log(self):
-        """Save the session log summary"""
-        self.logger.save_summary()
+        async for event in self.runner.run_async(
+            user_id="user1",
+            session_id="sess1",
+            new_message=types.Content(role='user', parts=[types.Part(text=query)])
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    
+                    # 1. Log Agent/Tool Call Requests (Delegation)
+                    if part.function_call:
+                        call = part.function_call
+                        print(f"[RUNNER EVENT] 📞 AGENT DECISION: Call Agent/Tool '{call.name}'")
+                    
+                    # 2. Log Agent/Tool Response Results
+                    if part.function_response:
+                        response = part.function_response
+                        result_preview = str(response.response).replace('\n', ' ')[:100] + "..."
+                        print(f"[RUNNER EVENT] ✅ TOOL RESULT: Received response from '{response.name}'. Result preview: {result_preview}")
+                        
+                    # 3. Capture the Final Response (from the Orchestrator)
+                    if event.is_final_response() and part.text:
+                        final_response_text = part.text
+        
+        return final_response_text
