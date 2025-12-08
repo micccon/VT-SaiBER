@@ -27,6 +27,19 @@ logging.basicConfig(
 def strip_dangerous_chars(s: str) -> str:
     return DANGEROUS_PATTERN.sub(" ", s)
 
+def escape_template_injection(s: str) -> str:
+    """Escape braces and control chars to prevent prompt template injection."""
+    if not isinstance(s, str):
+        s = str(s)
+
+    # Escape braces used by str.format
+    escaped = s.replace("{", "{{").replace("}", "}}")
+
+    # Drop non-printable control chars (keep newlines/tabs)
+    escaped = "".join(ch for ch in escaped if ch.isprintable() or ch in ["\n", "\t"])
+
+    return escaped
+
 def normalize_domain(domain: str) -> str:
     try:
         return domain.strip().lower().encode("idna").decode("ascii")
@@ -78,7 +91,7 @@ def process_user_input(raw_input: str, output_context: str = "json"):
     Accept free-form user input. Extract target(s), action, port(s), 
     validate targets, and return structure for downstream usage.
     """
-    s = (raw_input or "").strip()
+    s = escape_template_injection((raw_input or "").strip())
 
     # Result template
     result = {

@@ -1,4 +1,6 @@
 import os
+import yaml
+from pathlib import Path
 from google.adk.agents import Agent
 
 # Config
@@ -8,50 +10,24 @@ os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
 class VulnReportAgent:
     """Vulnerability assessment report generator"""
     
+    @staticmethod
+    def _load_prompts():
+        """Load agent instructions from YAML file"""
+        prompt_path = Path(__file__).resolve().parents[1] / "database" / "avenger_prompts" / "agent_instructions.yaml"
+        if not prompt_path.exists():
+            prompt_path = Path.cwd() / "database" / "avenger_prompts" / "agent_instructions.yaml"
+        
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    
     def __init__(self):
+        prompts = self._load_prompts()
+        vuln_prompts = prompts["vuln_report_agent"]
+        
         self.agent = Agent(
             name="vuln_report",
             model="gemini-2.5-flash",
-            description="Security analyst that creates professional vulnerability assessment reports from scan data. Identifies risks, recommends mitigations, and produces executive summaries.",
-            instruction="""You are a senior security analyst specializing in vulnerability assessment reporting.
-
-Your responsibilities:
-1. Analyze scan data from the scanner agent
-2. Identify security vulnerabilities and misconfigurations
-3. Assess risk levels (Critical, High, Medium, Low)
-4. Map findings to CVE databases and CVSS scores when applicable
-5. Provide actionable remediation recommendations
-6. Create professional reports with:
-   - Executive Summary
-   - Technical Findings
-   - Risk Assessment
-   - Remediation Recommendations
-   - Compliance Impact (NIST, PCI-DSS, etc.)
-
-Report format:
-```
-VULNERABILITY ASSESSMENT REPORT
-================================
-
-Executive Summary:
-[High-level overview for management]
-
-Critical Findings:
-[List critical vulnerabilities]
-
-High Priority Findings:
-[List high-priority issues]
-
-Medium/Low Findings:
-[List other issues]
-
-Remediation Plan:
-[Prioritized action items]
-
-Technical Details:
-[Detailed analysis]
-```
-
-Be thorough, professional, and security-focused. Use industry standard terminology.""",
+            description=vuln_prompts["description"],
+            instruction=vuln_prompts["instruction"],
             tools=[],  # Report agent doesn't need external tools
         )

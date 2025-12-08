@@ -89,8 +89,8 @@ class AgentSystem:
             })
             
             # Step 2: Build optimized prompt using Tony Stark
-            # TODO: Get agent_registry from orchestrator or nick_fury
-            agent_registry = {}  # Placeholder - should come from OrchestratorAgent
+            # ✋ FIX: Get real agent registry from orchestrator
+            agent_registry = self.orchestrator.get_agent_registry()
             enhanced_prompt = self.prompt_builder.build_prompt(
                 user_query=sanitized,
                 agent_registry=agent_registry

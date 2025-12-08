@@ -124,6 +124,7 @@ class StarkPromptEngine(IPromptBuilder):
 
         # Step 2: Prepare format map, starting from default args
         fmt_map = copy.deepcopy(DEFAULT_FORMAT_ARGS)
+
         fmt_map.update({
             "user_input": cmd.get("raw", fmt_map["user_input"]),
             "allowed_targets": ", ".join(
