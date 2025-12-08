@@ -2,6 +2,7 @@
 agent_system.py - Multi-Agent System Entry Point
 """
 
+import os
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai import types
@@ -58,7 +59,7 @@ class AgentSystem:
         self.logger._log_system("AgentSystem initialized", {"session": "sess1"})
     
     async def run_query(self, query: str) -> str:
-                """
+        """
         Execute a query through the orchestrator with sanitization and prompt engineering
         
         Workflow:
@@ -102,28 +103,31 @@ class AgentSystem:
             })
             
             # Step 3: Execute through orchestrator with enhanced prompt
-            response = None
-        async for event in self.runner.run_async(
-            user_id="user1",
-            session_id="sess1",
-            new_message=types.Content(role='user', parts=[types.Part(text=query)])
-        ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    
-                    # 1. Log Agent/Tool Call Requests (Delegation)
-                    if part.function_call:
-                        call = part.function_call
-                        print(f"[RUNNER EVENT] 📞 AGENT DECISION: Call Agent/Tool '{call.name}'")
-                    
-                    # 2. Log Agent/Tool Response Results
-                    if part.function_response:
-                        response = part.function_response
-                        result_preview = str(response.response).replace('\n', ' ')[:100] + "..."
-                        print(f"[RUNNER EVENT] ✅ TOOL RESULT: Received response from '{response.name}'. Result preview: {result_preview}")
+            final_response_text = None
+            async for event in self.runner.run_async(
+                user_id="user1",
+                session_id="sess1",
+                new_message=types.Content(role='user', parts=[types.Part(text=query)])
+            ):
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
                         
-                    # 3. Capture the Final Response (from the Orchestrator)
-                    if event.is_final_response() and part.text:
-                        final_response_text = part.text
-        
-        return final_response_text
+                        # 1. Log Agent/Tool Call Requests (Delegation)
+                        if part.function_call:
+                            call = part.function_call
+                            print(f"[RUNNER EVENT] 📞 AGENT DECISION: Call Agent/Tool '{call.name}'")
+                        
+                        # 2. Log Agent/Tool Response Results
+                        if part.function_response:
+                            response = part.function_response
+                            result_preview = str(response.response).replace('\n', ' ')[:100] + "..."
+                            print(f"[RUNNER EVENT] ✅ TOOL RESULT: Received response from '{response.name}'. Result preview: {result_preview}")
+                            
+                        # 3. Capture the Final Response (from the Orchestrator)
+                        if event.is_final_response() and part.text:
+                            final_response_text = part.text
+            
+            return final_response_text
+        except Exception as e:
+            self.logger.log_error(f"Query execution failed: {str(e)}", {"query": query})
+            raise
