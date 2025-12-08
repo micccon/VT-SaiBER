@@ -34,9 +34,6 @@ VT-SaiBER/
 │ ├── api/ # REST API (FastAPI)
 │ │ ├── routes.py # API endpoints
 │ │ └── thanos.py # Input validation
-│ └── ui/ # Frontend interfaces
-│ ├── stark_hud.py # Google ADK Web UI
-│ └── launch_hud.py # Launcher script
 ├── tools/ # External tool integrations
 │ └── vision/ # Nmap-based scanning
 │ ├── vision_mcp_server.py # MCP server
@@ -316,11 +313,11 @@ python -m venv saiber_env
 source saiber_env/bin/activate  # On Windows: saiber_env\Scripts\activate
 pip install -r requirements.txt
 
-# Install dev dependencies
-pip install black flake8 mypy pytest pytest-cov
+# Run MCP server
+python tools/vision/vision_mcp_server.py
 
 # Run development server
-python interaction/ui/launch_hud.py
+streamlit run main.py
 ```
 
 ## 📋 Roadmap
