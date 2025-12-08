@@ -11,6 +11,9 @@ from google.genai import types
 from avengers.vision_agent import VisionAgent
 from avengers.vuln_report_agent import VulnReportAgent
 from avengers.nick_fury_agent import OrchestratorAgent
+from interaction.api.thanos import process_user_input
+from orchestrator.tony_stark import StarkPromptEngine
+from utils.DrStrange import AgentLogger
 
 # Config
 os.environ["GOOGLE_API_KEY"] = "YOUR API KEY"
@@ -21,6 +24,12 @@ class AgentSystem:
     """Complete multi-agent system"""
     
     def __init__(self):
+        # Initialize agent logger
+        self.logger = AgentLogger()
+        
+        # Initialize prompt engineer
+        self.prompt_builder = StarkPromptEngine()
+        
         # Initialize specialized agents
         self.scanner = VisionAgent()
         self.vuln_report = VulnReportAgent()
@@ -46,14 +55,75 @@ class AgentSystem:
             app_name="agents",
             session_service=self.session_service
         )
+        self.logger._log_system("AgentSystem initialized", {"session": "sess1"})
     
     async def run_query(self, query: str) -> str:
-        """Execute a query through the orchestrator"""
-        async for event in self.runner.run_async(
-            user_id="user1",
-            session_id="sess1",
-            new_message=types.Content(role='user', parts=[types.Part(text=query)])
-        ):
-            if event.is_final_response():
-                return event.content.parts[0].text if event.content else "No response"
-        return "No response"
+        """
+        Execute a query through the orchestrator with sanitization and prompt engineering
+        
+        Workflow:
+        1. Log user query
+        2. Sanitize and validate input (Thanos)
+        3. Build optimized prompt (Tony Stark)
+        4. Execute through orchestrator
+        5. Log and return response
+        """
+        # Log original user query
+        self.logger.log_user_query(query)
+        
+        try:
+            # Step 1: Sanitize and validate input
+            sanitized = process_user_input(query, output_context="dict")
+            
+            # Check for validation errors
+            if sanitized.get("validation_errors"):
+                error_msg = f"Input validation failed: {', '.join(sanitized['validation_errors'])}"
+                self.logger.log_error(error_msg, {"raw_input": query})
+                return error_msg
+            
+            # Log sanitization results
+            self.logger._log_system("Input sanitized", {
+                "action": sanitized.get("action"),
+                "targets": sanitized.get("targets"),
+                "ports": sanitized.get("ports")
+            })
+            
+            # Step 2: Build optimized prompt using Tony Stark
+            # TODO: Get agent_registry from orchestrator or nick_fury
+            agent_registry = {}  # Placeholder - should come from OrchestratorAgent
+            enhanced_prompt = self.prompt_builder.build_prompt(
+                user_query=sanitized,
+                agent_registry=agent_registry
+            )
+            
+            self.logger._log_system("Prompt generated", {
+                "action": sanitized.get("action"),
+                "prompt_length": len(enhanced_prompt)
+            })
+            
+            # Step 3: Execute through orchestrator with enhanced prompt
+            response = None
+            async for event in self.runner.run_async(
+                user_id="user1",
+                session_id="sess1",
+                new_message=types.Content(role='user', parts=[types.Part(text=enhanced_prompt)])
+            ):
+                if event.is_final_response():
+                    response = event.content.parts[0].text if event.content else "No response"
+                    break
+            
+            if response is None:
+                response = "No response"
+            
+            # Log agent response
+            self.logger.log_agent_response(response, "OrchestratorAgent")
+            return response
+            
+        except Exception as e:
+            # Log error
+            self.logger.log_error(str(e), {"query": query})
+            raise
+    
+    def save_session_log(self):
+        """Save the session log summary"""
+        self.logger.save_summary()
