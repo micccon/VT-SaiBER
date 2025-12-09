@@ -1,10 +1,10 @@
-# 🛡️ VT-SaiBER (Virtual Team - Security AI-Based Emergency Response)
+# 🛡️ VT-SaiBER (Agentic AI + Cybersecurity)
 
 **AI-Powered Cybersecurity Agent Orchestration System**
 
 VT-SaiBER is an advanced cybersecurity platform that combines AI agent orchestration with network reconnaissance tools. Inspired by the Avengers, it features specialized "Avenger" agents that work together to perform comprehensive security assessments using natural language commands.
 
-![VT-SaiBER Architecture](docs/architecture.png)
+![VT-SaiBER Architecture](docs/Untitled-2.png)
 
 ## 🎯 What VT-SaiBER Does
 
@@ -18,7 +18,7 @@ VT-SaiBER is an advanced cybersecurity platform that combines AI agent orchestra
 ## 🏗️ Architecture Overview
 
 ### Core Components
-
+```bash
 VT-SaiBER/
 ├── orchestrator/ # Agent coordination system
 │ ├── nick_fury.py # Agent Controller ("Avenger Controller")
@@ -44,7 +44,7 @@ VT-SaiBER/
 ├── avenger_registry.json # Agent definitions
 ├── avenger_prompts/ # LLM prompts
 └── logger/ # Application logs
-
+```
 
 ### Agent Roles (Inspired by Avengers)
 
@@ -80,37 +80,9 @@ VT-SaiBER/
    export GOOGLE_API_KEY="your-google-ai-api-key-here"
    ```
 
-4. **Configure environment** (optional)
-   ```bash
-   python interaction/ui/config_helper.py --create-env
-   # Edit .env file with your API keys
-   ```
-
 ## 🎮 Usage
 
-### Option 1: Google ADK Web Interface (Recommended)
-
-The Stark HUD provides a modern, AI-powered web interface:
-
-```bash
-# Launch the complete frontend
-python interaction/ui/launch_hud.py
-```
-
-This automatically:
-- ✅ Checks dependencies
-- ✅ Starts MCP server (if needed)
-- ✅ Launches Streamlit web UI
-- ✅ Initializes Google ADK agent
-
-**Features:**
-- 🤖 Conversational AI security assistant
-- 🔍 Quick scan buttons for common tasks
-- 📊 Scan history tracking
-- 🛡️ Input validation
-- 🎨 Modern dark theme
-
-### Option 2: MCP Server Only
+### Option 1: MCP Server Only
 
 Run the network scanning tools directly:
 
@@ -126,16 +98,13 @@ The server exposes these tools via HTTP:
 - `service_scan` - Service version detection
 - `comprehensive_scan` - Full security assessment
 
-### Option 3: Agent Testing
+### Option 2: Agent Testing
 
 Test individual components:
 
 ```bash
 # Test vision agent
 python tests/vision_agent_test.py
-
-# Test MCP integration
-python tests/test_thanos_tony_integration.py
 ```
 
 ## 📚 API Documentation
@@ -183,10 +152,6 @@ VT-SaiBER uses the Model Context Protocol for tool integration:
 # Required for Google ADK
 GOOGLE_API_KEY=your-api-key-here
 GOOGLE_GENAI_USE_VERTEXAI=False
-
-# Optional: Alternative LLM providers
-OPENAI_API_KEY=your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
 ```
 
 ### Security Configuration
@@ -225,7 +190,6 @@ python -m pytest tests/
 
 # Test specific components
 python tests/vision_agent_test.py
-python tests/test_thanos_tony_integration.py
 
 # Test MCP server
 python tools/vision/vision_mcp_server.py --test
@@ -274,34 +238,6 @@ python tools/vision/vision_mcp_server.py --test
        return await self._call_tool("my_new_tool", target=target)
    ```
 
-3. **Update VisionAgent** to route to new tool
-
-### Code Quality
-
-```bash
-# Format code
-black .
-
-# Lint code
-flake8 .
-
-# Type checking
-mypy .
-
-# Run tests
-pytest --cov=.
-```
-
-## 🤝 Contributing
-
-We welcome contributions! Please:
-
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
-3. **Write tests** for new functionality
-4. **Follow the code style** (Black, Flake8)
-5. **Update documentation**
-6. **Submit a pull request**
 
 ### Development Setup
 
@@ -330,13 +266,11 @@ streamlit run main.py
 - ✅ Input validation & security
 
 ### Phase 2 (Upcoming)
-- 🔄 REST API endpoints
-- 🔄 Additional security agents (WAF, vulnerability scanner)
+- ✅ REST API endpoints
+- ✅ Additional security agents (WAF, vulnerability scanner)
 - 🔄 Session management
 - 🔄 Report generation
 - 🔄 Multi-user support
-
-### Phase 3 (Future)
 - 🔄 Plugin system for custom agents
 - 🔄 Integration with SIEM systems
 - 🔄 Automated response capabilities
