@@ -2,10 +2,14 @@ import os
 import yaml
 from pathlib import Path
 from google.adk.agents import Agent
+from google.adk.tools import ToolContext
+from typing import Dict, Any
 
-# Config
-os.environ["GOOGLE_API_KEY"] = "YOUR API KEY"
-os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
+def vuln_report_callback(tool, args: Dict[str, Any], tool_context: ToolContext) -> None:
+    """Logs the details of the nmap tool being executed."""
+    print(f"[{tool_context.agent_name.upper()} LOG] 📝  Writing Vulnerability Report: {tool.name}")
+    print(f"[{tool_context.agent_name.upper()} LOG]   Args: {args}")
+    return None
 
 class VulnReportAgent:
     """Vulnerability assessment report generator"""
@@ -31,3 +35,8 @@ class VulnReportAgent:
             instruction=vuln_prompts["instruction"],
             tools=[],  # Report agent doesn't need external tools
         )
+
+        if hasattr(self.agent, '_llm_agent'):
+            self.agent._llm_agent.before_tool_callback = vuln_report_callback
+        else:
+            self.agent.before_tool_callback = vuln_report_callback
