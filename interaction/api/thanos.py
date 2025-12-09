@@ -14,8 +14,44 @@ from urllib.parse import urlparse, urlunparse
 MAX_INPUT_LEN = 500
 DANGEROUS_PATTERN = re.compile(r"[;&|$`<>\\\^\*]")
 URL_SCHEME_WHITELIST = {"http", "https"}
-ALLOWED_HOSTNAMES = {"example.com", "internal.example.local"}
-ALLOWED_CIDRS = ["10.0.0.0/8", "192.168.0.0/16"]
+ALLOWED_HOSTNAMES = {
+    # Test & Demo Sites
+    "scanme.nmap.org",
+    "example.com",
+    "testphp.vulnweb.com",
+    "httpbin.org",
+    "jsonplaceholder.typicode.com",
+    "reqres.in",
+    "postman-echo.com",
+    
+    # Local Development
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "internal.example.local",
+    
+    # Common Local Domains
+    "*.local",
+    "*.test",
+    "*.dev",
+}
+ALLOWED_CIDRS = [
+    # Private IPv4 Networks (RFC 1918)
+    "10.0.0.0/8",           # Class A private
+    "172.16.0.0/12",        # Class B private
+    "192.168.0.0/16",       # Class C private
+    
+    # Loopback
+    "127.0.0.0/8",          # Localhost
+    
+    # Link-Local
+    "169.254.0.0/16",       # APIPA/Link-local
+    
+    # Documentation & Testing (RFC 5737)
+    "192.0.2.0/24",         # TEST-NET-1
+    "198.51.100.0/24",      # TEST-NET-2
+    "203.0.113.0/24",       # TEST-NET-3
+]
 ALLOWED_NETWORKS = [ipaddress.ip_network(c) for c in ALLOWED_CIDRS]
 
 logging.basicConfig(

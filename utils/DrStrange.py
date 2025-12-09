@@ -11,7 +11,7 @@ from pathlib import Path
 class AgentLogger:
     """Logs all agent interactions and system events"""
     
-    def __init__(self, log_dir: str = "logs"):
+    def __init__(self, log_dir: str = "./database/logger/logs"):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(exist_ok=True)
         
