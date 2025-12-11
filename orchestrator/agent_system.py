@@ -14,6 +14,7 @@ from avengers.vuln_report_agent import VulnReportAgent
 from avengers.nick_fury_agent import NickFuryAgent
 from interaction.api.thanos import process_user_input
 from orchestrator.tony_stark import StarkPromptEngine
+from orchestrator.Validators import validate_agent_result, validate_scan_output
 from utils.DrStrange import AgentLogger
 
 # Config
@@ -117,10 +118,25 @@ class AgentSystem:
                             call = part.function_call
                             print(f"[RUNNER EVENT] 📞 AGENT DECISION: Call Agent/Tool '{call.name}'")
                         
-                        # 2. Log Agent/Tool Response Results
+                        # 2. Log Agent/Tool Response Results and VALIDATE OUTPUT
                         if part.function_response:
                             response = part.function_response
-                            result_preview = str(response.response).replace('\n', ' ')[:100] + "..."
+                            
+                            # OUTPUT VALIDATION: Validate agent result
+                            is_valid, error_msg = validate_agent_result(response.response)
+                            if not is_valid:
+                                print(f"[VALIDATION] ❌ OUTPUT VALIDATION FAILED: {error_msg}")
+                                self.logger.log_error(f"Output validation failed: {error_msg}", {
+                                    "agent": response.name,
+                                    "response": str(response.response)[:200]
+                                })
+                            else:
+                                print(f"[VALIDATION] ✅ OUTPUT VALIDATED for '{response.name}'")
+                                self.logger._log_system("Output validated successfully", {
+                                    "agent": response.name
+                                })
+                            
+                            result_preview = str(response.response).replace('\\n', ' ')[:100] + "..."
                             print(f"[RUNNER EVENT] ✅ TOOL RESULT: Received response from '{response.name}'. Result preview: {result_preview}")
                             
                         # 3. Capture the Final Response (from the Orchestrator)
