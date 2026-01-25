@@ -1,4 +1,18 @@
 {
+  "NickFuryAgent": {
+    "description": "Orchestrator agent that coordinates task execution across specialized agents using Google ADK",
+    "module_path": "avengers.nick_fury_agent",
+    "class_name": "NickFuryAgent",
+    "capabilities": [
+      {
+        "action": "coordinate",
+        "description": "Coordinates multi-agent workflows and delegates tasks to specialized agents",
+        "parameters": {
+          "query": "string (natural language task description)"
+        }
+      }
+    ]
+  },
   "VisionAgent": {
     "description": "Network reconnaissance agent using Nmap for port scanning, service detection, and host discovery",
     "module_path": "avengers.vision_agent",
@@ -47,6 +61,28 @@
         "parameters": {
           "target": "string (IP address or hostname)",
           "ports": "string (optional, specific ports to scan)"
+        }
+      }
+    ]
+  },
+  "VulnReportAgent": {
+    "description": "Security analyst agent that creates professional vulnerability assessment reports from scan results",
+    "module_path": "avengers.vuln_report_agent",
+    "class_name": "VulnReportAgent",
+    "capabilities": [
+      {
+        "action": "generate_report",
+        "description": "Generates a vulnerability assessment report from scan data",
+        "parameters": {
+          "scan_results": "object (scan data from VisionAgent)",
+          "format": "string (optional: 'summary', 'detailed', 'executive')"
+        }
+      },
+      {
+        "action": "analyze_risks",
+        "description": "Analyzes security risks based on discovered services and open ports",
+        "parameters": {
+          "scan_results": "object (scan data from VisionAgent)"
         }
       }
     ]
