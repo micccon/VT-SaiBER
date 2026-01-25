@@ -129,7 +129,7 @@ class VisionScanner:
                 command=" ".join(cmd),
                 duration=duration
             )
-        # if it took too long (wtf u scannin bruh)
+        # if it took too long
         except subprocess.TimeoutExpired:
             return VisionScanResult(
                 success=False,
@@ -140,7 +140,7 @@ class VisionScanner:
                 error=f"Scan timed out after {self.timeout} seconds",
                 duration=self.timeout
             )
-        # if anything else went wrong (kinda lazy tbh my bad)
+        # if anything else went wrong
         except Exception as e:
             return VisionScanResult(
                 success=False,
