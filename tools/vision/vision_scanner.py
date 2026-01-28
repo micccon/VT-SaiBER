@@ -2,28 +2,21 @@
 wrapper for the nmap command-line tool
 
 this module is responsible for:
-2.  Executing an nmap command as a subprocess
+1.  Executing an nmap command as an async subprocess
 2.  Returning a vision scan result object from scans
+3.  Handling safe cancellation/interruption of scans
 """
-import subprocess 
+import asyncio
+import shutil
+import os
+import time
+from typing import List
+
 from tools.vision.vision_scan_result import VisionScanResult
 from tools.vision.vision_parser import VisionParser
-import sys
-import os
-import shutil
-from pathlib import Path
 
-# Add project root to sys.path
-project_root = str(Path(__file__).parent.parent.parent)
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-
-# class that the MCP class uses to complete scans
 class VisionScanner:
 
-    # timeout: scan runs longer than 120 seconds cut it
-    # nmap_path: for potential future docker implementation, sets default nmap path
     def __init__(self, timeout: int = 120, nmap_path: str = None):
         self.timeout = timeout
         self.nmap_path = nmap_path or self._resolve_nmap_path()
@@ -52,13 +45,13 @@ class VisionScanner:
         for path in common_paths:
             if os.path.exists(path):
                 return path
-                
+        
         # Default fallback
         return "nmap"
 
-    # Verify nmap is installed and can run
     def _verify_nmap(self) -> None:
         try:
+            import subprocess
             subprocess.run(
                 [self.nmap_path, "--version"],
                 capture_output=True,
@@ -66,16 +59,10 @@ class VisionScanner:
                 timeout=5
             )
         except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            # Instead of raising error, mark as unavailable
             self.is_available = False
-            # We don't raise here to allow the app to start
-            # raise RuntimeError(f"nmap not found at {self.nmap_path}")
         
-    # Modular scan that tools exposed to mcp will use
-    def scan(self, target: str, scan_type: str = "custom", *args) -> VisionScanResult:
+    async def scan(self, target: str, scan_type: str = "custom", *args) -> VisionScanResult:
         
-        # Start time for duration portions
-        import time
         start_time = time.time()
 
         if not self.is_available:
@@ -89,48 +76,81 @@ class VisionScanner:
                 duration=0
             )
 
-        # command that nmap will run
-        cmd = [self.nmap_path, "-oX", "-"] + list(args) + [target]
+        nmap_args = ["-oX", "-"] + list(args) + [target]
+        command_str = f"{self.nmap_path} {' '.join(nmap_args)}"
+        process = None
 
-        try: # Run the nmap scan
-            result = subprocess.run(
-                cmd,
-                capture_output = True,
-                text = True,
-                timeout = self.timeout
+        try: 
+            # Run the nmap scan asynchronously
+            process = await asyncio.create_subprocess_exec(
+                self.nmap_path,
+                *nmap_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
 
-            # calculate duration time
+            # Wait for output with timeout
+            stdout_data, stderr_data = await asyncio.wait_for(
+                process.communicate(), 
+                timeout=self.timeout
+            )
+            
+            stdout_str = stdout_data.decode('utf-8', errors='replace')
+            stderr_str = stderr_data.decode('utf-8', errors='replace')
             duration = time.time() - start_time
 
-            # If the scan didn't run
-            if result.returncode != 0:
+            # Check for Non-Zero Exit Code (Classic Failure)
+            if process.returncode != 0:
+                error_msg = stderr_str.strip() or stdout_str.strip() or "Unknown nmap error (non-zero exit)"
                 return VisionScanResult(
-                    success= False,
+                    success=False,
                     tool_name="nmap",
-                    target = target,
-                    scan_type = scan_type,
-                    hosts = [],
-                    error = result.stderr,
-                    command = " ".join(cmd),
-                    duration = duration
+                    target=target,
+                    scan_type=scan_type,
+                    hosts=[],
+                    error=error_msg,
+                    command=command_str,
+                    duration=duration
                 )
             
-            # parse the data with my loooovvvveeeellllyyy parser
-            parsed_data = VisionParser.parse_xml(result.stdout)
-            
-            # returns a vision scan result object (lfg)
+            # Parse Valid XML Output
+            parsed_data = VisionParser.parse_xml(stdout_str)
+            hosts = parsed_data.get("hosts", [])
+
+            # Check for "Silent Failure" signatures in text (DNS/Resolution errors)
+            # Nmap often exits with code 0 even if it fails to resolve the target.
+            combined_output = (stdout_str + stderr_str).lower()
+            if "failed to resolve" in combined_output:
+                 return VisionScanResult(
+                    success=False,
+                    tool_name="nmap",
+                    target=target,
+                    scan_type=scan_type,
+                    hosts=[],
+                    error=f"DNS Resolution Failed: Could not find '{target}'",
+                    command=command_str,
+                    duration=duration
+                )
+
+            # Success (Even if hosts is empty, it means the scan ran and found nothing)
             return VisionScanResult(
                 success=True,
                 tool_name="nmap",
                 target=target,
                 scan_type=scan_type,
-                hosts=parsed_data.get("hosts", []),
-                command=" ".join(cmd),
+                hosts=hosts,
+                command=command_str,
                 duration=duration
             )
-        # if it took too long (wtf u scannin bruh)
-        except subprocess.TimeoutExpired:
+
+        except asyncio.TimeoutError:
+            if process:
+                try:
+                    process.kill()
+                    await process.communicate()
+                except ProcessLookupError:
+                    pass
+            
             return VisionScanResult(
                 success=False,
                 tool_name="nmap",
@@ -140,8 +160,35 @@ class VisionScanner:
                 error=f"Scan timed out after {self.timeout} seconds",
                 duration=self.timeout
             )
-        # if anything else went wrong (kinda lazy tbh my bad)
+
+        except asyncio.CancelledError:
+            # Handle User Interrupt / Manual Stop
+            if process:
+                try:
+                    process.kill()
+                    await process.communicate()
+                except ProcessLookupError:
+                    pass
+            
+            return VisionScanResult(
+                success=False,
+                tool_name="nmap",
+                target=target,
+                scan_type=scan_type,
+                hosts=[],
+                error="Scan cancelled by user interrupt",
+                duration=time.time() - start_time
+            )
+
         except Exception as e:
+            # Handle unexpected crashes
+            if process:
+                try:
+                    process.kill()
+                    await process.communicate()
+                except:
+                    pass
+
             return VisionScanResult(
                 success=False,
                 tool_name="nmap",
@@ -151,10 +198,3 @@ class VisionScanner:
                 error=f"Unexpected error: {str(e)}",
                 duration=time.time() - start_time
             )
-
-# If you want to test urself uncomment these
-# But I wrote a simple test method in the mcp sooooo
-
-# vision = VisionNmapScanner()
-# result = vision.scan("scanme.nmap.org", "-F")
-# print(json.dumps(asdict(result), indent=2))
