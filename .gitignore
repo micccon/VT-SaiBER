@@ -1,7 +1,5 @@
 __pycache__/
 *.pyc
 *.pyo
-.DS_Store
-saiber_env/*
 .env
 logs/
