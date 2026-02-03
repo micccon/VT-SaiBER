@@ -1,0 +1,318 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     PostgreSQL Database Schema                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────┐
+│       TARGETS            │
+│──────────────────────────│
+│ PK  id (SERIAL)          │
+│     mission_id (VARCHAR) │◄────┐
+│     ip_address (VARCHAR) │     │
+│     mac_address (VARCHAR)│     │
+│     os_guess (VARCHAR)   │     │
+│     hostname (VARCHAR)   │     │
+│     discovered_at (TS)   │     │
+└────────────┬─────────────┘     │
+             │                   │
+             │ 1:N               │
+             ▼                   │
+┌──────────────────────────┐     │
+│       SERVICES           │     │
+│──────────────────────────│     │
+│ PK  id (SERIAL)          │     │
+│ FK  target_id            │─────┘
+│     port (INTEGER)       │
+│     protocol (VARCHAR)   │  # tcp/udp
+│     service_name (VARCHAR)│
+│     service_version (VARCHAR)│
+│     banner (TEXT)        │  # Raw banner text
+│     discovered_at (TS)   │
+└──────────────────────────┘
+
+
+┌──────────────────────────────────────────┐
+│            FINDINGS                      │
+│──────────────────────────────────────────│
+│ PK  id (SERIAL)                          │
+│     mission_id (VARCHAR)                 │
+│     agent_name (VARCHAR)                 │  # scout, fuzzer, striker, etc.
+│     finding_type (VARCHAR)               │  # 'vulnerable_service', 'web_directory', 'exploit_success'
+│     severity (VARCHAR)                   │  # 'critical', 'high', 'medium', 'low', 'info'
+│     target_ip (VARCHAR)                  │
+│     target_port (INTEGER)                │
+│     title (VARCHAR)                      │  # Short description
+│     description (TEXT)                   │  # Detailed finding
+│     data (JSONB)                         │  # Flexible storage for agent-specific data
+│     created_at (TS)                      │
+└──────────────────────────────────────────┘
+
+Example FINDINGS rows:
+
+{
+  "id": 1,
+  "mission_id": "mission-001",
+  "agent_name": "scout",
+  "finding_type": "vulnerable_service",
+  "severity": "critical",
+  "target_ip": "192.168.1.50",
+  "target_port": 21,
+  "title": "vsftpd 2.3.4 Backdoor Vulnerability",
+  "description": "Detected vsftpd version 2.3.4 which contains a backdoor vulnerability",
+  "data": {
+    "service": "ftp",
+    "version": "vsftpd 2.3.4",
+    "cve": "CVE-2011-2523",
+    "exploit_available": true
+  },
+  "created_at": "2026-02-02T14:30:00Z"
+}
+
+{
+  "id": 5,
+  "mission_id": "mission-001",
+  "agent_name": "fuzzer",
+  "finding_type": "web_directory",
+  "severity": "high",
+  "target_ip": "192.168.1.50",
+  "target_port": 80,
+  "title": "Admin Panel Accessible",
+  "description": "Found accessible admin panel at /admin",
+  "data": {
+    "url": "http://192.168.1.50/admin",
+    "status_code": 200,
+    "size": 1024,
+    "requires_auth": false
+  },
+  "created_at": "2026-02-02T14:31:00Z"
+}
+
+
+┌──────────────────────────────────────────┐
+│           AGENT_LOG                      │
+│──────────────────────────────────────────│
+│ PK  id (SERIAL)                          │
+│     mission_id (VARCHAR)                 │
+│     agent_name (VARCHAR)                 │
+│     action (VARCHAR)                     │  # 'nmap_scan', 'run_exploit', 'route_decision'
+│     reasoning (TEXT)                     │  # LLM's explanation
+│     result_summary (TEXT)                │  # Brief outcome
+│     details (JSONB)                      │  # Full details
+│     created_at (TS)                      │
+└──────────────────────────────────────────┘
+
+Example AGENT_LOG rows:
+
+{
+  "id": 1,
+  "mission_id": "mission-001",
+  "agent_name": "scout",
+  "action": "nmap_scan",
+  "reasoning": "Initial reconnaissance on target 192.168.1.50",
+  "result_summary": "Found 3 open ports",
+  "details": {
+    "target": "192.168.1.50",
+    "scan_type": "service_version",
+    "ports_found": [21, 22, 80],
+    "duration": 5.42
+  },
+  "created_at": "2026-02-02T14:30:00Z"
+}
+
+{
+  "id": 2,
+  "mission_id": "mission-001",
+  "agent_name": "supervisor",
+  "action": "route_decision",
+  "reasoning": "Detected HTTP server on port 80. Should enumerate web directories to find attack surface.",
+  "result_summary": "Routing to fuzzer",
+  "details": {
+    "next_agent": "fuzzer",
+    "confidence": 0.85,
+    "state_summary": {
+      "targets_discovered": 1,
+      "services_found": 3
+    }
+  },
+  "created_at": "2026-02-02T14:30:30Z"
+}
+
+
+┌──────────────────────────────────────────┐
+│           SESSIONS                       │
+│──────────────────────────────────────────│
+│ PK  id (SERIAL)                          │
+│     mission_id (VARCHAR)                 │
+│     session_id (INTEGER)                 │  # Metasploit session ID
+│     target_ip (VARCHAR)                  │
+│     target_port (INTEGER)                │
+│     user_context (VARCHAR)               │  # 'www-data', 'root', etc.
+│     session_type (VARCHAR)               │  # 'shell', 'meterpreter'
+│     exploit_used (VARCHAR)               │  # Module path
+│     established_at (TS)                  │
+│     closed_at (TS)                       │  # NULL if still active
+│     notes (TEXT)                         │
+└──────────────────────────────────────────┘
+
+Example SESSION row:
+
+{
+  "id": 1,
+  "mission_id": "mission-001",
+  "session_id": 1,
+  "target_ip": "192.168.1.50",
+  "target_port": 21,
+  "user_context": "root",
+  "session_type": "shell",
+  "exploit_used": "exploit/unix/ftp/vsftpd_234_backdoor",
+  "established_at": "2026-02-02T14:35:00Z",
+  "closed_at": null,
+  "notes": "Initial access via vsftpd backdoor. Got root shell immediately."
+}
+
+
+┌──────────────────────────────────────────┐
+│        KNOWLEDGE_BASE (RAG)              │
+│──────────────────────────────────────────│
+│ PK  id (SERIAL)                          │
+│     doc_name (VARCHAR)                   │
+│     chunk_text (TEXT)                    │
+│     embedding (VECTOR(1536))             │  # pgvector extension
+│     metadata (JSONB)                     │
+│     created_at (TS)                      │
+└──────────────────────────────────────────┘
+
+-- Index for fast vector similarity search
+CREATE INDEX ON knowledge_base USING ivfflat (embedding vector_cosine_ops);
+
+Example KNOWLEDGE_BASE row:
+
+{
+  "id": 42,
+  "doc_name": "vsftpd_exploits.pdf",
+  "chunk_text": "The vsftpd 2.3.4 backdoor can be triggered by sending a username containing a smiley face :) on port 21. The Metasploit module exploit/unix/ftp/vsftpd_234_backdoor automates this attack...",
+  "embedding": [0.023, -0.154, 0.089, ...],  # 1536-dim vector
+  "metadata": {
+    "page": 5,
+    "section": "FTP Vulnerabilities",
+    "cve": "CVE-2011-2523"
+  },
+  "created_at": "2026-01-15T10:00:00Z"
+}
+
+
+┌──────────────────────────────────────────┐
+│        CHECKPOINTS (LangGraph)           │
+│──────────────────────────────────────────│
+│ PK  thread_id (VARCHAR)                  │
+│ PK  checkpoint_id (VARCHAR)              │
+│     parent_id (VARCHAR)                  │
+│     checkpoint_data (JSONB)              │  # Serialized CyberState
+│     created_at (TS)                      │
+└──────────────────────────────────────────┘
+
+Example CHECKPOINT row:
+
+{
+  "thread_id": "mission-001",
+  "checkpoint_id": "checkpoint-5",
+  "parent_id": "checkpoint-4",
+  "checkpoint_data": {
+    "mission_goal": "Exploit 192.168.1.50",
+    "iteration_count": 5,
+    "discovered_targets": {...},
+    "active_sessions": {...},
+    ... # Full CyberState snapshot
+  },
+  "created_at": "2026-02-02T14:35:00Z"
+}
+
+
+┌──────────────────────────────────────────┐
+│        ATTACK_CHAIN (Optional)           │
+│──────────────────────────────────────────│
+│ PK  id (SERIAL)                          │
+│     mission_id (VARCHAR)                 │
+│     step_number (INTEGER)                │
+│     agent_name (VARCHAR)                 │
+│     action (VARCHAR)                     │
+│     target (VARCHAR)                     │
+│     outcome (VARCHAR)                    │  # 'success', 'failed'
+│     timestamp (TS)                       │
+└──────────────────────────────────────────┘
+
+This table provides a simple chronological view of the attack:
+
+Step 1: scout     → nmap_scan       → 192.168.1.50 → success
+Step 2: fuzzer    → web_enum        → port 80      → success
+Step 3: librarian → research_exploit → vsftpd 2.3.4 → success
+Step 4: striker   → run_exploit     → port 21      → success
+Step 5: resident  → privilege_esc   → escalated    → success
+
+
+RELATIONSHIPS:
+══════════════
+
+TARGETS ─┬─► SERVICES (1:N)
+         │
+         └─► FINDINGS (1:N via target_ip)
+
+MISSION ─┬─► TARGETS (1:N)
+         ├─► FINDINGS (1:N)
+         ├─► AGENT_LOG (1:N)
+         ├─► SESSIONS (1:N)
+         ├─► ATTACK_CHAIN (1:N)
+         └─► CHECKPOINTS (1:N)
+
+
+KEY QUERIES:
+════════════
+
+-- Get complete attack narrative for a mission
+SELECT 
+  a.step_number,
+  a.agent_name,
+  a.action,
+  a.target,
+  a.outcome,
+  a.timestamp,
+  al.reasoning
+FROM attack_chain a
+LEFT JOIN agent_log al ON a.mission_id = al.mission_id 
+  AND a.agent_name = al.agent_name 
+  AND a.timestamp = al.created_at
+WHERE a.mission_id = 'mission-001'
+ORDER BY a.step_number;
+
+-- Get all critical findings for a mission
+SELECT 
+  f.finding_type,
+  f.severity,
+  f.target_ip,
+  f.title,
+  f.description,
+  f.created_at
+FROM findings f
+WHERE f.mission_id = 'mission-001'
+  AND f.severity IN ('critical', 'high')
+ORDER BY f.created_at;
+
+-- Get supervisor's decision history
+SELECT 
+  al.reasoning,
+  al.details->>'next_agent' as next_agent,
+  al.details->>'confidence' as confidence,
+  al.created_at
+FROM agent_log al
+WHERE al.mission_id = 'mission-001'
+  AND al.agent_name = 'supervisor'
+ORDER BY al.created_at;
+
+-- Check if target has active sessions
+SELECT 
+  s.session_id,
+  s.user_context,
+  s.session_type,
+  s.established_at
+FROM sessions s
+WHERE s.mission_id = 'mission-001'
+  AND s.closed_at IS NULL;

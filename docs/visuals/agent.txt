@@ -1,0 +1,177 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              Inside a Single Agent Call (Example: SCOUT)                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                        ┌──────────────────────┐
+                        │  LangGraph calls:    │
+                        │  scout_node(state)   │
+                        └──────────┬───────────┘
+                                   │
+                                   ▼
+         ╔════════════════════════════════════════════════╗
+         ║          SCOUT AGENT (BaseAgent)               ║
+         ╚════════════════════════════════════════════════╝
+                                   │
+    ┌──────────────────────────────┼──────────────────────────────┐
+    │                              │                              │
+    ▼                              ▼                              ▼
+┌────────────┐              ┌─────────────┐              ┌──────────────┐
+│  STEP 1:   │              │  STEP 2:    │              │   STEP 3:    │
+│  Extract   │              │  LLM        │              │   Execute    │
+│  Context   │              │  Reasoning  │              │   Tools      │
+└─────┬──────┘              └──────┬──────┘              └──────┬───────┘
+      │                            │                            │
+      ▼                            ▼                            ▼
+  
+┌──────────────────────┐  ┌──────────────────────┐  ┌─────────────────────┐
+│ def call_llm(state): │  │ # Build prompt       │  │ # Call MCP tools    │
+│                      │  │ context = f"""       │  │                     │
+│ target = state[      │  │   Mission: {goal}    │  │ result = await      │
+│   "target_scope"][0] │  │   Target: {target}   │  │   mcp.call_tool(    │
+│                      │  │                      │  │     "nmap",         │
+│ previous_scans =     │  │   What we know:      │  │     {               │
+│   [log for log in    │  │   - Targets: {..}    │  │       "target": ip, │
+│    state["agent_log"]│  │   - Previous: {..}   │  │       "flags": "-sV"│
+│    if log["agent"]   │  │                      │  │     }               │
+│    == "scout"]       │  │   Decide: What type  │  │   )                 │
+│                      │  │   of scan to run?    │  │                     │
+│ # Avoid re-scanning  │  │ """                  │  │ # MCP executes:     │
+│ # same target        │  │                      │  │ $ nmap -sV -sC      │
+│                      │  │ # LLM decides        │  │   192.168.1.50      │
+│                      │  │ decision = await     │  │                     │
+│                      │  │   llm.ainvoke([      │  │ Returns:            │
+│                      │  │     SystemMessage(   │  │ {                   │
+│                      │  │       SCOUT_PROMPT   │  │   "stdout": "...",  │
+│                      │  │     ),               │  │   "exit_code": 0    │
+│                      │  │     HumanMessage(    │  │ }                   │
+│                      │  │       context        │  │                     │
+│                      │  │     )                │  │                     │
+│                      │  │   ])                 │  │                     │
+└──────────────────────┘  └──────────────────────┘  └─────────────────────┘
+                                   │
+                                   ▼
+                        ┌──────────────────────┐
+                        │  STEP 4:             │
+                        │  Parse & Validate    │
+                        └──────────┬───────────┘
+                                   │
+                                   ▼
+                        ┌──────────────────────────────────────┐
+                        │ # Parse nmap output                  │
+                        │ findings = parse_nmap_output(        │
+                        │   result["stdout"]                   │
+                        │ )                                    │
+                        │                                      │
+                        │ # LLM interprets results             │
+                        │ interpretation = await llm.ainvoke([ │
+                        │   SystemMessage(                     │
+                        │     "Analyze these nmap results..."  │
+                        │   ),                                 │
+                        │   HumanMessage(                      │
+                        │     f"Results: {findings}"           │
+                        │   )                                  │
+                        │ ])                                   │
+                        │                                      │
+                        │ # Extract structured data            │
+                        │ structured = {                       │
+                        │   "ip": "192.168.1.50",              │
+                        │   "ports": [21, 22, 80],             │
+                        │   "services": {                      │
+                        │     21: {                            │
+                        │       "name": "ftp",                 │
+                        │       "version": "vsftpd 2.3.4"      │
+                        │     }                                │
+                        │   }                                  │
+                        │ }                                    │
+                        │                                      │
+                        │ # Validate scope                     │
+                        │ if not validate_scope(target_ip):    │
+                        │   raise ScopeViolationError()        │
+                        │                                      │
+                        │ # Identify critical findings         │
+                        │ critical = identify_critical(        │
+                        │   structured                         │
+                        │ )                                    │
+                        │ # Returns: ["vsftpd 2.3.4 backdoor"] │
+                        └──────────────┬───────────────────────┘
+                                       │
+                                       ▼
+                        ┌──────────────────────────────────────┐
+                        │  STEP 5:                             │
+                        │  Return State Updates                │
+                        └──────────────┬───────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ return {                                                                 │
+│   "discovered_targets": {                    ← Merged with existing     │
+│     target: structured                                                  │
+│   },                                                                    │
+│                                                                         │
+│   "critical_findings": state["critical_findings"] + critical,          │
+│   # Appends: ["vsftpd 2.3.4 detected (known backdoor)"]                │
+│                                                                         │
+│   "agent_log": state["agent_log"] + [{      ← APPENDED                 │
+│     "agent": "scout",                                                   │
+│     "action": "nmap_scan",                                              │
+│     "target": target,                                                   │
+│     "result": f"Found {len(structured['ports'])} open ports",          │
+│     "details": {                                                        │
+│       "scan_type": "service_version",                                   │
+│       "ports_found": structured['ports'],                               │
+│       "duration": 5.42                                                  │
+│     },                                                                  │
+│     "timestamp": datetime.now().isoformat()                             │
+│   }],                                                                   │
+│                                                                         │
+│   "iteration_count": state["iteration_count"] + 1  ← INCREMENTED       │
+│ }                                                                       │
+└──────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       │ (Returned to LangGraph)
+                                       ▼
+                        ┌──────────────────────────────────────┐
+                        │  LangGraph merges with global state  │
+                        │  Saves checkpoint to PostgreSQL      │
+                        │  Calls next node (supervisor)        │
+                        └──────────────────────────────────────┘
+
+
+SCOUT'S SYSTEM PROMPT (Example):
+════════════════════════════════
+
+You are a network reconnaissance specialist for an autonomous penetration 
+testing system. Your role is to discover targets, identify open ports, and 
+fingerprint services.
+
+AVAILABLE TOOLS:
+- nmap: Port scanning and service version detection
+- arp-scan: Discover live hosts on local network
+
+YOUR RESPONSIBILITIES:
+1. Scan targets within the authorized scope
+2. Identify open ports and running services
+3. Gather service version information (critical for exploitation)
+4. Flag potentially vulnerable services
+
+DECISION-MAKING:
+- For initial scans: Use comprehensive service scan (-sV -sC)
+- If target is already scanned: Skip redundant scans
+- If specific ports mentioned: Focus scan on those ports
+- Always verify target is in scope before scanning
+
+CRITICAL SERVICES TO FLAG:
+- Old FTP versions (vsftpd 2.3.4, ProFTPD 1.3.5)
+- Unpatched SSH (OpenSSH < 7.0)
+- Outdated web servers (Apache < 2.4.10)
+- Known vulnerable services
+
+OUTPUT FORMAT:
+Return structured data with:
+- IP address
+- Open ports
+- Service names and versions
+- OS detection (if available)
+- Any critical findings
+
+Be thorough but avoid aggressive scans that might crash targets.
