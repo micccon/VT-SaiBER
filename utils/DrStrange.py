@@ -129,7 +129,7 @@ class AgentLogger:
         with open(summary_file, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
         
-        print(f"\n📊 Session summary saved to: {summary_file}")
+        print(f"\n Session summary saved to: {summary_file}")
     
     def get_conversation_history(self) -> list:
         """Return full conversation history"""

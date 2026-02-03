@@ -43,7 +43,6 @@ VT-SaiBER/
 ├── utils/
 │   └── DrStrange.py             # Logging & telemetry
 └── database/                    # Configuration & data
-    ├── avenger_registry.json    # Agent definitions
     ├── avenger_prompts/         # LLM prompts
     └── logger/                  # Application logs
 ```
@@ -137,10 +136,6 @@ security:
     - "10.0.0.0/8"
 ```
 
-### Agent Registry
-
-Modify `database/avenger_registry.json` to configure agents.
-
 ## Testing
 
 ```bash
@@ -170,8 +165,6 @@ python tools/vision/vision_mcp_server.py --test
                instruction="Your agent instructions here"
            )
    ```
-
-2. **Register in database** (`database/avenger_registry.json`)
 
 3. **Add to AgentSystem** in `orchestrator/agent_system.py`
 

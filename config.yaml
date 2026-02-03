@@ -7,9 +7,8 @@ llm:
   api_key: "" # Use env var here for sure
   temperature: 0.2
 
-# DB paths: logging, session data, agent registry, and reports
+# DB paths: logging, session data, and reports
 database:
-  agent_registry_path: "./database/avenger_registry.json"
   logs_dir: "./database/logs/"
   sessions_dir: "./database/sessions/"
   reports_dir: "./database/reports/"

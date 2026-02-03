@@ -3,7 +3,6 @@
 This module provides validation functions for:
     - User input sanitization and security checks
     - Configuration file validation
-    - Agent registry validation
     - Task plan validation
     - Network target validation (IP, hostname, CIDR)
 
@@ -11,7 +10,6 @@ Usage:
     from orchestrator.validators import (
         validate_user_query,
         validate_config,
-        validate_agent_registry,
         validate_execution_plan
     )
     
