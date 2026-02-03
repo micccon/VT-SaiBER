@@ -4,4 +4,4 @@ __pycache__/
 .DS_Store
 saiber_env/*
 .env
-logs/
+database/logger

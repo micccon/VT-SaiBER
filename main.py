@@ -60,8 +60,8 @@ async def main():
         """)
         
         st.header("Example Queries")
-        st.code("Scan 192.168.1.1")
-        st.code("Scan scanme.nmap.org and create a vulnerability report")
+        st.code("Scan scanme.nmap.org")
+        st.code("Generate vulnerability report on the scan results")
 
     # Display chat history
     for message in st.session_state.messages:
