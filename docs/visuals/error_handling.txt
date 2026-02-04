@@ -1,0 +1,458 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   Error Handling & Recovery Mechanisms                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+ERROR CATEGORIES:
+═════════════════
+
+1. Tool Execution Errors (MCP/subprocess failures)
+2. LLM Errors (API failures, hallucinations, invalid structured output)
+3. State Errors (corruption, merge conflicts)
+4. Network Errors (MCP server unreachable, target down)
+5. Safety Violations (out of scope, iteration limit)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 1: Tool Execution Failure (nmap timeout)                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+AGENT: Scout
+  │
+  │ Calls MCP
+  ├─────────────► nmap -sV 192.168.1.50
+  │
+  │ MCP Server
+  │ executes...
+  │
+  │ ⏱ 300 seconds pass (timeout)
+  │
+  │ subprocess.TimeoutExpired
+  │
+  ◄─┤ Error returned
+    │
+    │ {
+    │   "error": "Tool execution timeout",
+    │   "exit_code": -1,
+    │   "tool": "nmap"
+    │ }
+    │
+    ▼
+  Scout Agent catches error:
+  
+  try:
+    result = await mcp.call_tool("nmap", {...})
+  except ToolTimeoutError as e:
+    logger.error(f"nmap scan timed out on {target}")
+    
+    # Return error in state
+    return {
+      "errors": state["errors"] + [{
+        "agent": "scout",
+        "tool": "nmap",
+        "target": target,
+        "error_type": "timeout",
+        "error_message": str(e),
+        "timestamp": datetime.now().isoformat()
+      }],
+      "agent_log": state["agent_log"] + [{
+        "agent": "scout",
+        "action": "nmap_scan_failed",
+        "result": "TIMEOUT",
+        "timestamp": datetime.now().isoformat()
+      }]
+    }
+    
+    # DON'T crash - return partial state
+    │
+    ▼
+  Supervisor sees error in state:
+  
+  state["errors"] = [
+    {"agent": "scout", "error_type": "timeout", ...}
+  ]
+  
+  LLM Decision:
+  "Scout's nmap scan timed out. This could mean:
+   1. Target is very slow to respond
+   2. Target has aggressive firewall
+   3. Network issues
+   
+   Should try different approach:
+   - Use faster scan (-F instead of full scan)
+   - Try alternative discovery (arp-scan)
+   - Skip this target if continues to fail"
+   
+  next_agent = "scout"  # Retry with different params
+  
+  OR
+  
+  next_agent = "end"  # Give up on this target
+
+RECOVERY STRATEGIES:
+- Retry with different parameters
+- Try alternative tool (masscan instead of nmap)
+- Skip target and continue mission
+- Report failure and end mission
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 2: LLM Hallucination (Invalid Structured Output)                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+SUPERVISOR: Calling LLM for decision
+  │
+  │ Expected: SupervisorDecision
+  │ {
+  │   "next_agent": "scout",
+  │   "rationale": "...",
+  │   "confidence": 0.85
+  │ }
+  │
+  │ LLM Returns:
+  │ {
+  │   "next_agent": "super_hacker_agent",  ← INVALID (not in enum)
+  │   "rationale": "Let's hack it!",
+  │   "confidence": 1.5  ← INVALID (> 1.0)
+  │ }
+  │
+  ▼
+  Pydantic Validation Fails:
+  
+  try:
+    decision = await llm.with_structured_output(
+      SupervisorDecision
+    ).ainvoke([...])
+  except ValidationError as e:
+    logger.error(f"LLM returned invalid decision: {e}")
+    
+    # Fallback: Use safe default
+    decision = SupervisorDecision(
+      next_agent="end",  # Safe choice
+      rationale="LLM produced invalid output. Ending mission for safety.",
+      confidence=0.0
+    )
+    
+    # Log the error
+    return {
+      "errors": state["errors"] + [{
+        "agent": "supervisor",
+        "error_type": "llm_validation_error",
+        "error_message": str(e),
+        "llm_raw_output": raw_output,
+        "timestamp": datetime.now().isoformat()
+      }],
+      "next_agent": "end",
+      "mission_status": "failed"
+    }
+
+RECOVERY STRATEGIES:
+- Use fallback default (safe agent or end)
+- Retry with clearer prompt
+- Add more constraints to structured output
+- Log for later analysis
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 3: Network Error (MCP Server Unreachable)                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+AGENT: Striker
+  │
+  │ Calls Metasploit MCP
+  ├─────────────► http://msf-mcp:8081/tools/run_exploit
+  │
+  │ ❌ Connection Refused
+  │ (MCP server crashed/restarting)
+  │
+  ◄─┤ httpx.ConnectError
+    │
+    ▼
+  MCPClient catches error:
+  
+  async def _call_msf_mcp(tool_name, params):
+    try:
+      response = await self.http_client.post(
+        f"{self.msf_url}/tools/{tool_name}",
+        json=params,
+        timeout=60
+      )
+    except httpx.ConnectError:
+      logger.error(f"MSF MCP server unreachable")
+      
+      # Retry with backoff
+      for attempt in range(3):
+        await asyncio.sleep(2 ** attempt)  # 1s, 2s, 4s
+        try:
+          response = await self.http_client.post(...)
+          return response.json()
+        except httpx.ConnectError:
+          continue
+      
+      # All retries failed
+      raise MCPServerUnreachableError("MSF MCP server is down")
+    
+    │
+    ▼
+  Striker Agent catches:
+  
+  try:
+    result = await mcp.call_tool("run_exploit", {...})
+  except MCPServerUnreachableError as e:
+    logger.critical("Cannot reach Metasploit MCP - aborting mission")
+    
+    return {
+      "mission_status": "failed",
+      "errors": state["errors"] + [{
+        "agent": "striker",
+        "error_type": "mcp_server_down",
+        "error_message": "Metasploit MCP server unreachable after 3 retries",
+        "severity": "critical",
+        "timestamp": datetime.now().isoformat()
+      }],
+      "next_agent": "end"
+    }
+
+RECOVERY STRATEGIES:
+- Retry with exponential backoff
+- Check health endpoint before calling tool
+- Alert human operator (critical infrastructure failure)
+- Gracefully abort mission
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 4: Safety Violation (Out of Scope Target)                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+AGENT: Scout
+  │
+  │ LLM decides to scan: 8.8.8.8 (Google DNS)
+  │ ❌ This is OUT OF SCOPE!
+  │
+  ▼
+  Validation in Agent:
+  
+  async def call_llm(state):
+    target = extract_target_from_llm_decision()
+    
+    # CRITICAL: Validate scope before ANY tool call
+    if not self.validate_scope(target):
+      logger.critical(
+        f"SCOPE VIOLATION: Agent attempted to scan {target}"
+      )
+      
+      return {
+        "mission_status": "failed",
+        "errors": state["errors"] + [{
+          "agent": "scout",
+          "error_type": "scope_violation",
+          "attempted_target": target,
+          "allowed_scope": state["target_scope"],
+          "severity": "critical",
+          "timestamp": datetime.now().isoformat()
+        }],
+        "next_agent": "end"
+      }
+    
+    # Only proceed if in scope
+    result = await mcp.call_tool(...)
+  
+  │
+  ▼
+  Mission IMMEDIATELY aborted
+  
+  Supervisor sees mission_status = "failed"
+  → Returns "end"
+  → Mission terminates
+  
+  Alert sent to operator:
+  "⚠️ CRITICAL: Agent attempted to scan out-of-scope target 8.8.8.8"
+
+RECOVERY STRATEGIES:
+- NONE - This is unrecoverable by design
+- Scope violations ALWAYS abort mission
+- Requires human review before restart
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 5: Infinite Loop Detection                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+STATE:
+{
+  "iteration_count": 19,
+  "agent_log": [
+    {"agent": "scout", "action": "scan", ...},
+    {"agent": "supervisor", "decision": "scout", ...},
+    {"agent": "scout", "action": "scan", ...},
+    {"agent": "supervisor", "decision": "scout", ...},
+    {"agent": "scout", "action": "scan", ...},
+    {"agent": "supervisor", "decision": "scout", ...},
+    ... (same pattern repeating)
+  ]
+}
+  │
+  │ Supervisor about to make decision #20
+  │
+  ▼
+  Router Safety Check:
+  
+  def route_to_next_agent(state):
+    # Check 1: Max iterations
+    if state["iteration_count"] >= 20:
+      logger.error(
+        "Max iterations (20) exceeded. Likely infinite loop."
+      )
+      
+      # Analyze the loop
+      recent_decisions = [
+        log["decision"] 
+        for log in state["agent_log"][-10:]
+        if log["agent"] == "supervisor"
+      ]
+      
+      logger.error(
+        f"Last 10 decisions: {recent_decisions}"
+      )
+      # Example: ['scout', 'scout', 'scout', ...]
+      
+      # Force end
+      return "end"
+    
+    # Check 2: Same agent called 3x in a row
+    recent_agents = [
+      log["agent"]
+      for log in state["agent_log"][-3:]
+      if log["agent"] != "supervisor"
+    ]
+    
+    if len(recent_agents) == 3 and len(set(recent_agents)) == 1:
+      logger.warning(
+        f"Agent {recent_agents[0]} called 3 times in a row - possible loop"
+      )
+      
+      # Don't abort, but log for review
+      # Supervisor should notice this pattern
+
+RECOVERY STRATEGIES:
+- Hard limit at 20 iterations (forced END)
+- Warn at 3x same agent (let LLM adapt)
+- Supervisor prompt includes: "Check recent actions to avoid loops"
+- Post-mission analysis flags loops for prompt tuning
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 6: State Corruption (Checkpoint Recovery)                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+RUNTIME:
+  Agent running...
+  │
+  │ Checkpoint saved to DB
+  │
+  │ ⚡ CRASH (Python exception, OOM, etc.)
+  │
+  ▼
+RESTART:
+  User runs: python src/main.py --resume mission-001
+  │
+  │ Load last checkpoint from DB
+  │
+  ▼
+  try:
+    checkpoint = db.get_latest_checkpoint(thread_id="mission-001")
+    
+    if checkpoint is None:
+      raise CheckpointNotFoundError()
+    
+    # Validate checkpoint data
+    state = CyberState(**checkpoint["checkpoint_data"])
+    
+  except CheckpointNotFoundError:
+    logger.error("No checkpoint found for mission-001")
+    print("Cannot resume. Start new mission.")
+    sys.exit(1)
+    
+  except ValidationError as e:
+    logger.error(f"Checkpoint data corrupted: {e}")
+    
+    # Try previous checkpoint
+    previous = db.get_checkpoint(
+      thread_id="mission-001",
+      checkpoint_id=checkpoint["parent_id"]
+    )
+    
+    if previous:
+      logger.info("Using previous checkpoint")
+      state = CyberState(**previous["checkpoint_data"])
+    else:
+      logger.critical("Cannot recover - all checkpoints corrupted")
+      sys.exit(1)
+  
+  │
+  │ Resume from recovered state
+  │
+  ▼
+  graph.ainvoke(
+    None,  # Don't provide input (use checkpointed state)
+    config={"configurable": {"thread_id": "mission-001"}}
+  )
+  
+  Mission continues from last saved checkpoint ✓
+
+RECOVERY STRATEGIES:
+- Load most recent checkpoint
+- If corrupted, try parent checkpoint
+- Validate state before resuming
+- Keep last N checkpoints for redundancy
+
+
+ERROR LOGGING STRUCTURE:
+═══════════════════════
+
+All errors written to state["errors"]:
+
+{
+  "agent": "scout",
+  "error_type": "timeout" | "validation" | "scope_violation" | "network" | "tool_failure",
+  "error_message": "Detailed error message",
+  "severity": "low" | "medium" | "high" | "critical",
+  "target": "192.168.1.50",  # If applicable
+  "tool": "nmap",  # If applicable
+  "timestamp": "2026-02-02T14:30:00Z",
+  "stack_trace": "...",  # For debugging
+  "recovery_attempted": true,
+  "recovery_successful": false
+}
+
+Also logged to database:
+
+INSERT INTO agent_log (
+  mission_id,
+  agent_name,
+  action,
+  reasoning,
+  details
+) VALUES (
+  'mission-001',
+  'scout',
+  'error_handled',
+  'Tool timeout occurred, attempting retry with faster scan',
+  '{"error_type": "timeout", "recovery": "retry_with_fast_scan"}'
+);
+
+
+SUMMARY OF RECOVERY STRATEGIES:
+═══════════════════════════════
+
+┌─────────────────────┬──────────────────────┬─────────────────────┐
+│ Error Type          │ Recovery Strategy    │ Fallback            │
+├─────────────────────┼──────────────────────┼─────────────────────┤
+│ Tool Timeout        │ Retry with fast scan │ Skip target         │
+│ Tool Failure        │ Try alternative tool │ Report and continue │
+│ LLM Hallucination   │ Retry with strict    │ Safe default        │
+│ Network Error       │ Exponential backoff  │ Abort mission       │
+│ Scope Violation     │ NONE - immediate end │ Require human       │
+│ Iteration Limit     │ NONE - force end     │ Analyze and restart │
+│ State Corruption    │ Load parent chkpt    │ Start from scratch  │
+│ MCP Server Down     │ Retry 3x             │ Abort mission       │
+└─────────────────────┴──────────────────────┴─────────────────────┘

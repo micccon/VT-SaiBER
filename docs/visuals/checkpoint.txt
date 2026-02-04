@@ -1,0 +1,411 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              Checkpointing & State Persistence Architecture                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+CHECKPOINT LIFECYCLE:
+═════════════════════
+
+MISSION START          AGENT 1           AGENT 2           AGENT 3
+     │                    │                 │                 │
+     │  Initial State     │                 │                 │
+     │  created           │                 │                 │
+     ├────────────────────┤                 │                 │
+     │                    │                 │                 │
+     │  Checkpoint 1      │                 │                 │
+     │  saved ────────────┼────────► ┌──────────────┐         │
+     │                    │          │  PostgreSQL  │         │
+     │                    │          │  checkpoints │         │
+     │                    │          │    table     │         │
+     │                    │          └──────────────┘         │
+     │                    │                 │                 │
+     │                    │  Agent runs     │                 │
+     │                    │  updates state  │                 │
+     │                    ├─────────────────┤                 │
+     │                    │                 │                 │
+     │                    │  Checkpoint 2   │                 │
+     │                    │  saved ─────────┼────────► ┌──────────────┐
+     │                    │                 │          │  PostgreSQL  │
+     │                    │                 │          └──────────────┘
+     │                    │                 │                 │
+     │                    │                 │  Agent runs     │
+     │                    │                 │  updates state  │
+     │                    │                 ├─────────────────┤
+     │                    │                 │                 │
+     │                    │                 │  Checkpoint 3   │
+     │                    │                 │  saved ─────────┼────────►
+     │                    │                 │                 │
+     ... continues until mission complete or failure ...
+
+
+POSTGRESQL CHECKPOINT TABLE:
+════════════════════════════
+
+CREATE TABLE checkpoints (
+    thread_id VARCHAR(255),           -- Mission identifier
+    checkpoint_id VARCHAR(255),        -- Unique checkpoint ID (UUID)
+    parent_id VARCHAR(255),            -- Previous checkpoint ID (for history)
+    checkpoint_data JSONB,             -- Serialized CyberState
+    created_at TIMESTAMP DEFAULT NOW(),
+    
+    PRIMARY KEY (thread_id, checkpoint_id),
+    FOREIGN KEY (thread_id, parent_id) 
+        REFERENCES checkpoints(thread_id, checkpoint_id)
+);
+
+CREATE INDEX idx_checkpoints_thread 
+    ON checkpoints(thread_id, created_at DESC);
+
+
+CHECKPOINT DATA STRUCTURE:
+══════════════════════════
+
+{
+  "thread_id": "mission-001",
+  "checkpoint_id": "ckpt_a3f2e1d9",
+  "parent_id": "ckpt_8b4c7a21",  -- Links to previous checkpoint
+  "checkpoint_data": {
+    // Full CyberState snapshot
+    "mission_goal": "Exploit 192.168.1.50",
+    "target_scope": ["192.168.1.0/24"],
+    "iteration_count": 5,
+    "mission_status": "active",
+    "current_agent": "striker",
+    "next_agent": "striker",
+    
+    "discovered_targets": {
+      "192.168.1.50": {
+        "ports": [21, 22, 80],
+        "services": {...}
+      }
+    },
+    
+    "web_findings": [...],
+    "active_sessions": {...},
+    "agent_log": [...],  // Full history
+    "critical_findings": [...],
+    "errors": []
+  },
+  "created_at": "2026-02-02T14:35:00Z"
+}
+
+
+HOW LANGGRAPH USES CHECKPOINTS:
+════════════════════════════════
+
+┌────────────────────────────────────────────────────────────────┐
+│  Initialize Graph with PostgreSQL Checkpointer                 │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  from langgraph.checkpoint.postgres import PostgresSaver       │
+│  from langgraph.graph import StateGraph                        │
+│                                                                │
+│  # Create checkpointer                                         │
+│  checkpointer = PostgresSaver(                                 │
+│    connection_string="postgresql://user:pass@postgres/vtsaiber"│
+│  )                                                             │
+│                                                                │
+│  # Build graph                                                 │
+│  graph = StateGraph(CyberState)                                │
+│  # ... add nodes and edges ...                                 │
+│                                                                │
+│  # Compile with checkpointer                                   │
+│  compiled_graph = graph.compile(                               │
+│    checkpointer=checkpointer                                   │
+│  )                                                             │
+└────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────┐
+│  Start New Mission                                             │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  initial_state = {                                             │
+│    "mission_goal": "Exploit 192.168.1.50",                     │
+│    "target_scope": ["192.168.1.0/24"],                         │
+│    "iteration_count": 0,                                       │
+│    "mission_status": "active",                                 │
+│    ... (other fields initialized to defaults)                  │
+│  }                                                             │
+│                                                                │
+│  config = {                                                    │
+│    "configurable": {                                           │
+│      "thread_id": "mission-001"  # Unique mission ID           │
+│    }                                                           │
+│  }                                                             │
+│                                                                │
+│  # Run the graph                                               │
+│  result = await compiled_graph.ainvoke(                        │
+│    initial_state,                                              │
+│    config                                                      │
+│  )                                                             │
+└────────────────────────────────────────────────────────────────┘
+                                │
+                                │ LangGraph automatically:
+                                │ 1. Saves checkpoint BEFORE each node
+                                │ 2. Saves checkpoint AFTER each node
+                                │ 3. Links checkpoints with parent_id
+                                ▼
+┌────────────────────────────────────────────────────────────────┐
+│  Checkpoint Saved After Each Node                              │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  Node: supervisor_node                                         │
+│    ├─► Before execution: Checkpoint A (state snapshot)         │
+│    │   Runs: Supervisor decides next_agent = "scout"           │
+│    └─► After execution: Checkpoint B (updated state)           │
+│                                                                │
+│  Node: scout_node                                              │
+│    ├─► Before execution: Checkpoint C (parent = B)             │
+│    │   Runs: Scout scans target, updates discovered_targets    │
+│    └─► After execution: Checkpoint D (updated state)           │
+│                                                                │
+│  Node: supervisor_node                                         │
+│    ├─► Before execution: Checkpoint E (parent = D)             │
+│    │   Runs: Supervisor decides next_agent = "fuzzer"          │
+│    └─► After execution: Checkpoint F (updated state)           │
+│                                                                │
+│  ... continues for entire mission ...                          │
+└────────────────────────────────────────────────────────────────┘
+
+
+RESUME AFTER CRASH:
+═══════════════════
+
+SCENARIO: Mission crashes at iteration 5 (after Striker ran)
+
+┌────────────────────────────────────────────────────────────────┐
+│  User wants to resume mission-001                              │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  config = {                                                    │
+│    "configurable": {                                           │
+│      "thread_id": "mission-001"                                │
+│    }                                                           │
+│  }                                                             │
+│                                                                │
+│  # Resume: Pass None as input                                  │
+│  result = await compiled_graph.ainvoke(                        │
+│    None,  # ◄── None means "load from checkpoint"              │
+│    config                                                      │
+│  )                                                             │
+└────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────┐
+│  LangGraph Automatically:                                      │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  1. Queries PostgreSQL:                                        │
+│     SELECT checkpoint_data                                     │
+│     FROM checkpoints                                           │
+│     WHERE thread_id = 'mission-001'                            │
+│     ORDER BY created_at DESC                                   │
+│     LIMIT 1;                                                   │
+│                                                                │
+│  2. Loads the most recent checkpoint:                          │
+│     {                                                          │
+│       "iteration_count": 5,                                    │
+│       "current_agent": "striker",                              │
+│       "discovered_targets": {...},                             │
+│       "active_sessions": {                                     │
+│         1: {"target": "192.168.1.50", "user": "root"}          │
+│       },                                                       │
+│       ...                                                      │
+│     }                                                          │
+│                                                                │
+│  3. Resumes execution from current_agent:                      │
+│     → Calls supervisor_node (because Striker already ran)      │
+│     → Supervisor sees active session, decides next step        │
+│     → Mission continues as if nothing happened                 │
+└────────────────────────────────────────────────────────────────┘
+
+
+MANUAL CHECKPOINT INSPECTION:
+══════════════════════════════
+
+┌────────────────────────────────────────────────────────────────┐
+│  Debugging: View all checkpoints for a mission                 │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  SELECT                                                        │
+│    checkpoint_id,                                              │
+│    parent_id,                                                  │
+│    checkpoint_data->>'iteration_count' as iteration,           │
+│    checkpoint_data->>'current_agent' as agent,                 │
+│    checkpoint_data->>'mission_status' as status,               │
+│    created_at                                                  │
+│  FROM checkpoints                                              │
+│  WHERE thread_id = 'mission-001'                               │
+│  ORDER BY created_at;                                          │
+│                                                                │
+│  Result:                                                       │
+│  ┌──────────────┬──────────────┬────────┬────────┬────────┐    │
+│  │ checkpoint_id│ parent_id    │ iter   │ agent  │ status │    │
+│  ├──────────────┼──────────────┼────────┼────────┼────────┤    │
+│  │ ckpt_001     │ NULL         │ 0      │ super  │ active │    │
+│  │ ckpt_002     │ ckpt_001     │ 1      │ scout  │ active │    │
+│  │ ckpt_003     │ ckpt_002     │ 2      │ super  │ active │    │
+│  │ ckpt_004     │ ckpt_003     │ 3      │ fuzzer │ active │    │
+│  │ ckpt_005     │ ckpt_004     │ 4      │ super  │ active │    │
+│  │ ckpt_006     │ ckpt_005     │ 5      │ striker│ active │    │
+│  │ ckpt_007     │ ckpt_006     │ 6      │ super  │success │    │
+│  └──────────────┴──────────────┴────────┴────────┴────────┘    │
+└────────────────────────────────────────────────────────────────┘
+
+
+CHECKPOINT RECOVERY FROM SPECIFIC POINT:
+═════════════════════════════════════════
+
+┌────────────────────────────────────────────────────────────────┐
+│  Advanced: Resume from specific checkpoint (not latest)        │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  # Scenario: Want to revert to state before Striker ran        │
+│  # (Maybe Striker's exploit broke the target)                  │
+│                                                                │
+│  config = {                                                    │
+│    "configurable": {                                           │
+│      "thread_id": "mission-001",                               │
+│      "checkpoint_id": "ckpt_004"  # ◄── Specific checkpoint    │
+│    }                                                           │
+│  }                                                             │
+│                                                                │
+│  result = await compiled_graph.ainvoke(None, config)           │
+│                                                                │
+│  # Resumes from ckpt_004 (before Striker)                      │
+│  # Supervisor can make different decision this time            │
+└────────────────────────────────────────────────────────────────┘
+
+
+CHECKPOINT CLEANUP:
+═══════════════════
+
+Checkpoints accumulate over time. Cleanup strategies:
+
+┌────────────────────────────────────────────────────────────────┐
+│  Strategy 1: Keep only recent checkpoints                      │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  DELETE FROM checkpoints                                       │
+│  WHERE thread_id = 'mission-001'                               │
+│    AND created_at < NOW() - INTERVAL '7 days';                 │
+│                                                                │
+│  Keeps checkpoints for 7 days, then deletes                    │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│  Strategy 2: Keep only final checkpoint per mission            │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  WITH latest_checkpoints AS (                                  │
+│    SELECT DISTINCT ON (thread_id)                              │
+│      thread_id, checkpoint_id                                  │
+│    FROM checkpoints                                            │
+│    WHERE checkpoint_data->>'mission_status' IN                 │
+│          ('success', 'failed')                                 │
+│    ORDER BY thread_id, created_at DESC                         │
+│  )                                                             │
+│  DELETE FROM checkpoints                                       │
+│  WHERE (thread_id, checkpoint_id) NOT IN (                     │
+│    SELECT thread_id, checkpoint_id FROM latest_checkpoints     │
+│  );                                                            │
+│                                                                │
+│  Keeps only the final checkpoint of completed missions         │
+└────────────────────────────────────────────────────────────────┘
+
+
+STATE CONSISTENCY GUARANTEES:
+══════════════════════════════
+
+LangGraph's checkpointing provides:
+
+✅ Atomicity: Each checkpoint is a complete, valid state
+✅ Consistency: State always matches schema
+✅ Isolation: Checkpoints don't interfere with each other
+✅ Durability: Stored in PostgreSQL (ACID compliant)
+
+What this means:
+- If crash occurs mid-node, resume from BEFORE that node
+- No partial state corruption
+- Can always revert to any previous checkpoint
+- Multiple missions can run simultaneously (different thread_ids)
+
+
+DEBUGGING WITH CHECKPOINTS:
+═══════════════════════════
+
+┌────────────────────────────────────────────────────────────────┐
+│  "Why did Supervisor decide to call Striker?"                  │
+│────────────────────────────────────────────────────────────────│
+│                                                                │
+│  -- Find the checkpoint right before Striker was called        │
+│  SELECT checkpoint_data                                        │
+│  FROM checkpoints                                              │
+│  WHERE thread_id = 'mission-001'                               │
+│    AND checkpoint_data->>'next_agent' = 'striker'              │
+│  ORDER BY created_at ASC                                       │
+│  LIMIT 1;                                                      │
+│                                                                │
+│  -- Examine what the Supervisor "knew" at that moment:         │
+│  Result:                                                       │
+│  {                                                             │
+│    "discovered_targets": {...},                                │
+│    "web_findings": [...],                                      │
+│    "research_results": {                                       │
+│      "vsftpd 2.3.4": "exploit/unix/ftp/vsftpd_234_backdoor"    │
+│    },                                                          │
+│    "agent_log": [                                              │
+│      {"agent": "librarian", "result": "Found exploit"}         │
+│    ]                                                           │
+│  }                                                             │
+│                                                                │
+│  Answer: Librarian provided exploit info, so Supervisor        │
+│          logically decided to attack.                          │
+└────────────────────────────────────────────────────────────────┘
+
+
+CHECKPOINT SIZE OPTIMIZATION:
+══════════════════════════════
+
+CyberState can get large. Optimization strategies:
+
+1. Summarize old agent_log entries (keep only last 10)
+2. Remove redundant data from discovered_targets
+3. Use JSONB compression in PostgreSQL
+4. Store only deltas (not full state) - advanced
+
+Example optimization:
+
+def trim_state_for_checkpoint(state: CyberState) -> CyberState:
+    """Reduce checkpoint size by removing redundant data"""
+    
+    # Keep only last 10 agent log entries
+    if len(state["agent_log"]) > 10:
+        state["agent_log"] = state["agent_log"][-10:]
+    
+    # Remove raw tool outputs (keep only parsed data)
+    for target in state["discovered_targets"].values():
+        if "raw_nmap_output" in target:
+            del target["raw_nmap_output"]
+    
+    return state
+
+
+SUMMARY:
+════════
+
+┌─────────────────────────────────────────────────────────────┐
+│  Checkpointing Benefits:                                    │
+│─────────────────────────────────────────────────────────────│
+│  ✓ Crash recovery (resume from exact state)                 │
+│  ✓ Time travel (revert to previous checkpoint)              │
+│  ✓ Debugging (inspect state at any point)                   │
+│  ✓ Audit trail (complete mission history)                   │
+│  ✓ Parallel missions (unique thread_ids)                    │
+│─────────────────────────────────────────────────────────────│
+│  Key Implementation Details:                                │
+│  • LangGraph saves checkpoint after EVERY node              │
+│  • Stored in PostgreSQL checkpoints table                   │
+│  • Resume by passing None as input                          │
+│  • Cleanup old checkpoints to save space                    │
+└─────────────────────────────────────────────────────────────┘
