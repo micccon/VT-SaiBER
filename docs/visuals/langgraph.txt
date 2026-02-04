@@ -1,0 +1,113 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          LangGraph Agent Workflow                           │
+│                   (Agents follow logical attack progression)                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                                    START
+                                      │
+                                      ▼
+                        ┌─────────────────────────┐
+                        │      SUPERVISOR         │
+                        │   (Decision Engine)     │
+                        │                         │
+                        │  Analyzes current state │
+                        │  Decides next agent     │
+                        │  using LLM reasoning    │
+                        └───────────┬─────────────┘
+                                    │
+                                    │ (AI decides based on findings,
+                                    │  not hardcoded rules)
+                                    │
+                      ┌─────────────┼─────────────┐
+                      │             │             │
+                      ▼             ▼             ▼
+         ┌────────────────┐  ┌────────────┐  ┌────────────────┐
+         │     SCOUT      │  │  LIBRARIAN │  │    FUZZER      │
+         │  (Network      │  │  (Research │  │  (Web Enum)    │
+         │   Recon)       │  │   Intel)   │  │                │
+         │                │  │            │  │  Discovers:    │
+         │ Discovers:     │  │ Provides:  │  │  - Directories │
+         │ - Live hosts   │  │  - Exploit │  │  - API endpoints│
+         │ - Open ports   │  │    details │  │  - Hidden files│
+         │ - Services     │  │  - CVE info│  │                │
+         │ - Versions     │  │  - PoC code│  │                │
+         └───────┬────────┘  └─────┬──────┘  └───────┬────────┘
+                 │                 │                  │
+                 │                 │                  │
+                 └────────┬────────┴────────┬─────────┘
+                          ▼                 ▼
+                 ┌────────────────┐  ┌────────────────┐
+                 │    STRIKER     │  │    RESIDENT    │
+                 │  (Exploitation)│  │ (Post-Exploit) │
+                 │                │  │                │
+                 │ Executes:      │  │ Performs:      │
+                 │ - Exploits     │  │ - Priv Esc     │
+                 │ - Payloads     │  │ - Persistence  │
+                 │ - Gets shell   │  │ - Pivoting     │
+                 │                │  │ - Lateral Mov  │
+                 └───────┬────────┘  └───────┬────────┘
+                         │                   │
+                         └────────┬──────────┘
+                                  ▼
+                        ┌─────────────────────┐
+                        │   AUTOMOTIVE        │
+                        │  (OT Specialist)    │
+                        │                     │
+                        │  For ICSim/CAN:     │
+                        │  - Sniff CAN bus    │
+                        │  - Inject frames    │
+                        │  - Manipulate ECUs  │
+                        └──────────┬──────────┘
+                                   │
+                                   ▼
+                     ┌──────────────────────────┐
+                     │     All Return to        │
+                     │      SUPERVISOR          │
+                     │   (Re-evaluate state)    │
+                     └──────────┬───────────────┘
+                                │
+                    ┌───────────┴───────────┐
+                    ▼                       ▼
+              ┌──────────┐           ┌──────────┐
+              │ CONTINUE │           │   END    │
+              │  (Loop)  │           │ (Mission │
+              └──────────┘           │ Complete)│
+                                     └──────────┘
+
+ROUTING LOGIC (AI-Driven, Not Hardcoded):
+═════════════════════════════════════════
+
+Supervisor uses LLM to decide next agent based on:
+  ✓ Current discoveries (what we found)
+  ✓ Mission goal (what we're trying to achieve)
+  ✓ Logical progression (what makes sense next)
+  ✓ Previous attempts (what we've tried)
+  
+Example Decision Chain:
+  1. Scout finds port 80 
+     → Supervisor: "HTTP service detected, should enumerate web surface"
+     → Calls Fuzzer
+     
+  2. Fuzzer finds /admin login panel
+     → Supervisor: "Found potential entry point, need exploit info"
+     → Calls Librarian
+     
+  3. Librarian finds Apache Struts CVE
+     → Supervisor: "Have exploit details, ready to attack"
+     → Calls Striker
+     
+  4. Striker gets shell as www-data
+     → Supervisor: "Got initial access, should escalate and persist"
+     → Calls Resident
+
+CONDITIONAL EDGES (Safety Only, Not Business Logic):
+════════════════════════════════════════════════════
+  if iteration_count >= 20        → END (safety limit)
+  if mission_status == "success"  → END (goal achieved)
+  if mission_status == "failed"   → END (no path forward)
+  if out_of_scope_detected        → END (safety violation)
+  else                            → next_agent (from LLM decision)
+
+The graph doesn't have rules like "if port 80, then fuzzer"
+Instead, the Supervisor's LLM reasons about what makes sense.
+

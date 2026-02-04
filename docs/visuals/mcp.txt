@@ -1,0 +1,323 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                MCP Tool Execution: Agent → Tool → Result                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+AGENT SIDE (Python Process):
+═════════════════════════════
+
+┌────────────────────────────────────────────────────────────────────┐
+│  Scout Agent decides: "I need to scan 192.168.1.50"                │
+│                                                                    │
+│  await self.mcp.call_tool("nmap", {                                │
+│    "target": "192.168.1.50",                                       │
+│    "flags": "-sV -sC"                                              │
+│  })                                                                │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                     MCPClient (src/mcp/client.py)                  │
+│                                                                    │
+│  async def call_tool(tool_name, params):                           │
+│    # Route to correct server                                       │
+│    if tool_name in ["nmap", "gobuster", "ffuf", "nikto"]:          │
+│      return await _call_kali_mcp(tool_name, params)                │
+│    elif tool_name in ["run_exploit", "sessions"]:                  │
+│      return await _call_msf_mcp(tool_name, params)                 │
+│    elif tool_name in ["candump", "cansend"]:                       │
+│      return await _call_automotive_mcp(tool_name, params)          │
+│                                                                    │
+│  async def _call_kali_mcp(tool_name, params):                      │
+│    # Add timeout, retry logic, error handling                      │
+│    try:                                                            │
+│      response = await self.http_client.post(                       │
+│        f"{self.kali_url}/tools/{tool_name}",                       │
+│        json=params,                                                │
+│        timeout=300  # 5 min max                                    │
+│      )                                                             │
+│                                                                    │
+│      if response.status_code != 200:                               │
+│        raise MCPError(f"MCP returned {response.status_code}")      │
+│                                                                    │
+│      return response.json()                                        │
+│                                                                    │
+│    except httpx.TimeoutException:                                  │
+│      raise ToolTimeoutError(f"{tool_name} exceeded timeout")       │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                │ HTTP POST Request
+                                │ POST /tools/nmap
+                                │ {"target": "192.168.1.50", "flags": "-sV -sC"}
+                                ▼
+
+═══════════════════════════════════════════════════════════════════════
+                         DOCKER NETWORK BOUNDARY
+═══════════════════════════════════════════════════════════════════════
+
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│           Kali MCP Server (Docker Container)                       │
+│           Host: kali-mcp-server:8080                               │
+│           Network: vt-saiber-network                               │
+│                                                                    │
+│  POST /tools/nmap                                                  │
+│  {                                                                 │
+│    "target": "192.168.1.50",                                       │
+│    "flags": "-sV -sC"                                              │
+│  }                                                                 │
+│                                                                    │
+│  ┌──────────────────────────────────────────────────────────┐      │
+│  │  MCP Server validates request:                           │      │
+│  │  ✓ Is "nmap" a registered tool?                          │      │
+│  │  ✓ Are params valid?                                     │      │
+│  │  ✓ Is requester authorized?                              │      │
+│  │  ✓ Is target in allowed scope?                           │      │
+│  └──────────────────────────────────────────────────────────┘      │
+│                                                                    │
+│  ┌──────────────────────────────────────────────────────────┐      │
+│  │  Execute the actual tool:                                │      │
+│  │                                                          │      │
+│  │  import subprocess                                       │      │
+│  │  import shlex                                            │      │
+│  │                                                          │      │
+│  │  # Build safe command                                    │      │
+│  │  cmd = ["nmap"] + shlex.split(params["flags"]) + \       │      │
+│  │        [params["target"]]                                │      │
+│  │                                                          │      │
+│  │  result = subprocess.run(                                │      │
+│  │    cmd,                                                  │      │
+│  │    capture_output=True,                                  │      │
+│  │    text=True,                                            │      │
+│  │    timeout=300,  # 5 min max                             │      │
+│  │    cwd="/tmp"                                            │      │
+│  │  )                                                       │      │
+│  │                                                          │      │
+│  │  # Log execution                                         │      │
+│  │  logger.info(f"Executed: {' '.join(cmd)}")               │      │
+│  │  logger.info(f"Exit code: {result.returncode}")          │      │
+│  └──────────────────────────────────────────────────────────┘      │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│               Actual Tool (nmap binary in Kali container)          │
+│                                                                    │
+│  $ nmap -sV -sC 192.168.1.50                                       │
+│                                                                    │
+│  Starting Nmap 7.94 ( https://nmap.org ) at 2026-02-02 14:30 EST   │
+│  Nmap scan report for 192.168.1.50                                 │
+│  Host is up (0.00045s latency).                                    │
+│  Not shown: 997 closed tcp ports (reset)                           │
+│  PORT    STATE SERVICE VERSION                                     │
+│  21/tcp  open  ftp     vsftpd 2.3.4                                │
+│  | ftp-syst:                                                       │
+│  |   STAT:                                                         │
+│  | FTP server status:                                              │
+│  |      Connected to 192.168.1.100                                 │
+│  |_     Logged in as ftp                                           │
+│  22/tcp  open  ssh     OpenSSH 7.2p2 Ubuntu 4ubuntu2.2             │
+│  | ssh-hostkey:                                                    │
+│  |   2048 b8:24:7f:87:53:5a:5a:08:89:ec:57:fc:07:c2:c6:31 (RSA)    │
+│  |_  256 05:1c:6c:84:02:83:66:3d:01:28:e5:fa:3c:5c:31:2a (ECDSA)   │
+│  80/tcp  open  http    Apache httpd 2.4.18 ((Ubuntu))              │
+│  |_http-server-header: Apache/2.4.18 (Ubuntu)                      │
+│  |_http-title: Apache2 Ubuntu Default Page                         │
+│                                                                    │
+│  Service detection performed. Please report any incorrect results  │
+│  Nmap done: 1 IP address (1 host up) scanned in 5.42 seconds       │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                │ (stdout captured by subprocess)
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│           Kali MCP Server (Parse & Format Response)                │
+│                                                                    │
+│  ┌───────────────────────────────────────────────────────────┐     │
+│  │  Parse nmap output into structured JSON:                  │     │
+│  │                                                           │     │
+│  │  def parse_nmap_output(raw_text: str) -> dict:            │     │
+│  │    # Extract host, ports, services                        │     │
+│  │    # This can use nmap's XML output for easier parsing    │     │
+│  │                                                           │     │
+│  │    parsed = {                                             │     │
+│  │      "host": "192.168.1.50",                              │     │
+│  │      "status": "up",                                      │     │
+│  │      "latency": "0.00045s",                               │     │
+│  │      "ports": [                                           │     │
+│  │        {                                                  │     │
+│  │          "port": 21,                                      │     │
+│  │          "protocol": "tcp",                               │     │
+│  │          "state": "open",                                 │     │
+│  │          "service": "ftp",                                │     │
+│  │          "version": "vsftpd 2.3.4",                       │     │
+│  │          "details": "FTP server status: Connected..."     │     │
+│  │        },                                                 │     │
+│  │        {                                                  │     │
+│  │          "port": 22,                                      │     │
+│  │          "protocol": "tcp",                               │     │
+│  │          "state": "open",                                 │     │
+│  │          "service": "ssh",                                │     │
+│  │          "version": "OpenSSH 7.2p2 Ubuntu 4ubuntu2.2"     │     │
+│  │        },                                                 │     │
+│  │        {                                                  │     │
+│  │          "port": 80,                                      │     │
+│  │          "protocol": "tcp",                               │     │
+│  │          "state": "open",                                 │     │
+│  │          "service": "http",                               │     │
+│  │          "version": "Apache httpd 2.4.18 ((Ubuntu))"      │     │
+│  │        }                                                  │     │
+│  │      ],                                                   │     │
+│  │      "scan_time": 5.42,                                   │     │
+│  │      "raw_output": raw_text  # Include for agent LLM      │     │
+│  │    }                                                      │     │
+│  │                                                           │     │
+│  │    return parsed                                          │     │
+│  └───────────────────────────────────────────────────────────┘     │
+│                                                                    │
+│  Return HTTP 200 with JSON response                                │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                │ HTTP Response
+                                │ 200 OK
+                                │ Content-Type: application/json
+                                │
+═══════════════════════════════════════════════════════════════════════
+                         DOCKER NETWORK BOUNDARY
+═══════════════════════════════════════════════════════════════════════
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                     MCPClient (receives response)                  │
+│                                                                    │
+│  response = {                                                      │
+│    "host": "192.168.1.50",                                         │
+│    "status": "up",                                                 │
+│    "ports": [                                                      │
+│      {"port": 21, "service": "ftp", "version": "vsftpd 2.3.4"},    │
+│      {"port": 22, "service": "ssh", ...},                          │
+│      {"port": 80, "service": "http", ...}                          │
+│    ],                                                              │
+│    "scan_time": 5.42                                               │
+│  }                                                                 │
+│                                                                    │
+│  # Log the tool call                                               │
+│  logger.info(                                                      │
+│    f"nmap scan completed: {response['scan_time']}s, "              │
+│    f"found {len(response['ports'])} ports"                         │
+│  )                                                                 │
+│                                                                    │
+│  return response                                                   │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                Scout Agent (receives parsed result)                │
+│                                                                    │
+│  # Agent's LLM interprets the findings                             │
+│  interpretation = await llm.ainvoke([                              │
+│    SystemMessage(                                                  │
+│      "Analyze these nmap results and identify critical services"   │
+│    ),                                                              │
+│    HumanMessage(                                                   │
+│      f"Scan results: {json.dumps(response, indent=2)}"             │
+│    )                                                               │
+│  ])                                                                │
+│                                                                    │
+│  # LLM response might be:                                          │
+│  """                                                               │
+│  Analysis of scan results:                                         │
+│                                                                    │
+│  CRITICAL FINDING:                                                 │
+│  - Port 21 running vsftpd 2.3.4 - This version contains a          │
+│    well-known backdoor vulnerability (CVE-2011-2523).              │
+│    Should be high priority for exploitation.                       │
+│                                                                    │
+│  MODERATE INTEREST:                                                │
+│  - Port 80 running Apache 2.4.18 - Should enumerate web            │
+│    directories for attack surface.                                 │
+│                                                                    │
+│  LOWER PRIORITY:                                                   │
+│  - Port 22 running OpenSSH 7.2p2 - Relatively recent version,      │
+│    unlikely to have direct exploits. May be useful for             │
+│    persistence after initial access.                               │
+│  """                                                               │
+│                                                                    │
+│  # Extract critical findings from LLM response                     │
+│  critical_findings = extract_critical_findings(interpretation)     │
+│  # Returns: ["vsftpd 2.3.4 detected (known backdoor)"]             │
+│                                                                    │
+│  return state_updates                                              │
+└────────────────────────────────────────────────────────────────────┘
+
+
+ERROR HANDLING AT EACH LAYER:
+═════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Agent Layer (try/catch):                                       │
+│                                                                 │
+│  try:                                                           │
+│    result = await mcp.call_tool("nmap", params)                 │
+│  except ToolTimeoutError:                                       │
+│    logger.error("nmap scan timed out")                          │
+│    return {                                                     │
+│      "errors": state["errors"] + [{                             │
+│        "agent": "scout",                                        │
+│        "tool": "nmap",                                          │
+│        "error": "Scan timeout (300s exceeded)",                 │
+│        "target": params["target"]                               │
+│      }]                                                         │
+│    }                                                            │
+│  except MCPError as e:                                          │
+│    # MCP server returned error                                  │
+│    logger.error(f"MCP error: {e}")                              │
+│    return {"errors": ...}                                       │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  MCP Server Layer (validation):                                 │
+│                                                                 │
+│  if tool_name not in REGISTERED_TOOLS:                          │
+│    return {"error": "Unknown tool", "code": 404}                │
+│                                                                 │
+│  if not validate_params(tool_name, params):                     │
+│    return {"error": "Invalid parameters", "code": 400}          │
+│                                                                 │
+│  if not is_target_in_scope(params.get("target")):               │
+│    return {"error": "Target out of scope", "code": 403}         │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Tool Execution Layer (subprocess):                            │
+│                                                                 │
+│  try:                                                           │
+│    result = subprocess.run(..., timeout=300)                    │
+│  except subprocess.TimeoutExpired:                              │
+│    return {                                                     │
+│      "error": "Tool execution timeout",                         │
+│      "exit_code": -1                                            │
+│    }                                                            │
+│  except Exception as e:                                         │
+│    return {                                                     │
+│      "error": f"Tool execution failed: {str(e)}",               │
+│      "exit_code": -1                                            │
+│    }                                                            │
+└─────────────────────────────────────────────────────────────────┘
+
+
+TIMEOUT HANDLING:
+═════════════════
+
+Tool-specific timeouts (enforced by MCP server):
+  - nmap:        300s (5 min)
+  - gobuster:    600s (10 min)
+  - ffuf:        600s (10 min)
+  - exploits:    60s (1 min)
+  - candump:     custom (based on duration param)
+  
+If timeout exceeded:
+  1. Kill the process (subprocess.TimeoutExpired)
+  2. Return error to agent
+  3. Agent logs error and reports to Supervisor
+  4. Supervisor decides: retry, skip, or try different approach
