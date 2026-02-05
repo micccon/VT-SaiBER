@@ -1,0 +1,198 @@
+# =============================================================================
+# VT-SaiBER Docker Compose Configuration
+# =============================================================================
+# This file defines all containers and how they work together
+#
+# Services defined:
+#   1. postgres  - PostgreSQL database
+#   2. kali-mcp  - Kali Linux tools MCP server
+#   3. msf-mcp   - Metasploit Framework MCP server
+#   4. agents    - Python application (your agents)
+
+version: '3.8'
+
+# =============================================================================
+# SERVICES (Containers)
+# =============================================================================
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  # Stores: targets, findings, sessions, agent logs
+  # Yi-Chen is responsible for schema.sql
+  postgres:
+    image: postgres:15              # Official PostgreSQL 15 image from Docker Hub
+    container_name: vt-saiber-postgres
+    
+    # Environment variables passed to the container
+    environment:
+      POSTGRES_USER: ${DB_USER}       # Database username
+      POSTGRES_PASSWORD: ${DB_PASSWORD}  # From .env file
+      POSTGRES_DB: ${DB_NAME}         # Database name
+    
+    # Volumes: Persist data outside container
+    volumes:
+      # Named volume - Docker manages where data is stored
+      - postgres_data:/var/lib/postgresql/data
+      
+      # Mount schema.sql - auto-runs on first startup
+      # :ro means "read-only"
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    
+    # Network: Join the vt-saiber-network
+    networks:
+      - vt-saiber-network
+    
+    # Ports: Map container port to host port
+    # Format: "host_port:container_port"
+    # This allows you to access DB from your laptop at localhost:5432
+    ports:
+      - "5432:5432" # From .env file
+    
+    # Health check: Docker periodically runs this command
+    # If it fails, container is marked "unhealthy"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 5s      # Check every 5 seconds
+      timeout: 5s       # Command must complete in 5 seconds
+      retries: 5        # Try 5 times before marking unhealthy
+    
+    # Restart policy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Kali MCP Server
+  # ---------------------------------------------------------------------------
+  # Provides: nmap, gobuster, ffuf, nikto, and other security tools
+  # Uses pre-built mcp-kali-server package from Kali repos
+  kali-mcp:
+    # Build from Dockerfile instead of pulling pre-built image
+    build:
+      context: .                          # Build context is project root
+      dockerfile: docker/kali_mcp.Dockerfile  # Path to Dockerfile
+    
+    container_name: vt-saiber-kali-mcp
+    
+    networks:
+      - vt-saiber-network
+    
+    # Port 5000 inside container
+    # Not mapped to host (only accessible inside Docker network)
+    ports:
+      - "5000"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Metasploit MCP Server
+  # ---------------------------------------------------------------------------
+  # Provides: Metasploit exploits, payloads, sessions
+  # Uses MetasploitMCP from GitHub
+  msf-mcp:
+    build:
+      context: .
+      dockerfile: docker/msf_mcp.Dockerfile
+    
+    container_name: vt-saiber-msf-mcp
+    
+    entrypoint: []
+
+    # Environment variables for Metasploit RPC
+    environment:
+      - MSF_PASSWORD=${MSF_PASSWORD}
+      - MSF_SERVER=127.0.0.1
+      - MSF_PORT=55553
+      - MSF_SSL=false
+      - DATABASE_URL=postgres://vtsaiber:${DB_PASSWORD}@vt-saiber-postgres:5432/vtsaiber
+    
+    networks:
+      - vt-saiber-network
+    
+    ports:
+      - "55553"  # msfrpcd (Metasploit RPC daemon)
+      - "8085"   # MetasploitMCP HTTP server
+    
+    # Persist Metasploit data
+    volumes:
+      - msf_data:/root/.msf4
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/docs"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s  # Give it 30 seconds before health checks start
+    
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Agents (Python Application)
+  # ---------------------------------------------------------------------------
+  # Your main application - runs Scout, Fuzzer, Striker, etc.
+  # Sudip is responsible for src/main.py
+  agents:
+    build:
+      context: .
+      dockerfile: docker/agents.Dockerfile
+    
+    container_name: vt-saiber-agents
+    
+    # All environment variables your app needs
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - KALI_MCP_URL=http://kali-mcp:5000
+      - MSF_MCP_URL=http://msf-mcp:8085
+    
+    # Mount source code - allows live editing without rebuilding
+    volumes:
+      - ./src:/app/src:rw      # Read-write access
+      - ./data:/app/data:rw
+    
+    networks:
+      - vt-saiber-network
+    
+    # Dependencies: Wait for these to be healthy before starting
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kali-mcp:
+        condition: service_healthy
+      msf-mcp:
+        condition: service_healthy
+    
+    # Command to run when container starts
+    command: tail -f /dev/null
+    
+    restart: unless-stopped
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+# All containers join this network and can talk to each other by name
+networks:
+  vt-saiber-network:
+    driver: bridge           # Standard Docker network driver
+    ipam:                    # IP Address Management
+      config:
+        - subnet: 172.20.0.0/16  # IP range for containers
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+# Named volumes - Docker manages where data is actually stored
+volumes:
+  postgres_data:   # PostgreSQL database files
+  msf_data:        # Metasploit configuration and modules
