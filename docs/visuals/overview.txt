@@ -17,7 +17,7 @@
 │  │  │Supervisor│◄─►│ Scout  │◄─►│ Fuzzer │◄─►│ Striker  │◄─►│Resident │   │  │
 │  │  │ (Router) │   │ (Recon)│   │  (Web) │   │(Exploit) │   │ (Post)  │   │  │
 │  │  └────┬─────┘   └───┬────┘   └───┬────┘   └────┬─────┘   └────┬────┘   │  │
-│  │       │             │             │             │              │       │  │
+│  │       │             │            │             │              │        │  │
 │  │  ┌────┴─────┐   ┌───┴────────────┴─────────────┴──────────────┴────┐   │  │
 │  │  │Librarian │   │         Automotive (OT Specialist)               │   │  │
 │  │  │  (RAG/   │   │         (CAN Bus / ICSim)                        │   │  │
