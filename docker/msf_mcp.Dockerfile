@@ -1,42 +1,57 @@
 # =============================================================================
-# VT-SaiBER Python Dependencies (Updated for Dependency Compatibility)
+# Metasploit MCP Server Dockerfile
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# LangChain & LangGraph (Relaxed to allow compatible sub-dependencies)
-# -----------------------------------------------------------------------------
-langchain>=0.1.0,<0.2.0
-langgraph>=0.0.20
-langchain-anthropic>=0.1.0
-langchain-openai>=0.0.5
-langsmith>=0.1.0
+FROM metasploitframework/metasploit-framework:latest
 
 # -----------------------------------------------------------------------------
-# LLM Providers
+# Install Dependencies
 # -----------------------------------------------------------------------------
-anthropic==0.18.0
-openai==1.12.0
+RUN apk update && \
+    apk add --no-cache \
+    python3 \
+    py3-pip \
+    git \
+    curl \
+    bash \
+    postgresql-client \
+    netcat-openbsd \
+    net-tools \
+    && rm -rf /var/cache/apk/*
 
 # -----------------------------------------------------------------------------
-# Database
+# Clone MetasploitMCP Repository
 # -----------------------------------------------------------------------------
-psycopg2-binary==2.9.9
-sqlalchemy==2.0.25
-pgvector==0.2.4
+WORKDIR /app
+
+RUN git clone https://github.com/GH05TCREW/MetasploitMCP.git /app/MetasploitMCP
 
 # -----------------------------------------------------------------------------
-# HTTP Clients (for MCP communication)
+# Install Python Dependencies
 # -----------------------------------------------------------------------------
-httpx==0.26.0
-requests==2.31.0
+WORKDIR /app/MetasploitMCP
+
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # -----------------------------------------------------------------------------
-# Data Validation & Serialization
+# Copy Startup Script
 # -----------------------------------------------------------------------------
-pydantic>=2.6.0
-pydantic-settings>=2.1.0
+COPY scripts/docker/start_msf_mcp.sh /app/start_msf_mcp.sh
+RUN chmod +x /app/start_msf_mcp.sh
 
 # -----------------------------------------------------------------------------
-# Utilities
+# Expose Ports
 # -----------------------------------------------------------------------------
-python-dotenv==1.0.1
+EXPOSE 55553 8085
+
+# -----------------------------------------------------------------------------
+# Health Check
+# -----------------------------------------------------------------------------
+# Check if port 8085 is listening
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=3 \
+    CMD nc -z localhost ${MCP_HTTP_PORT} || exit 1
+
+# -----------------------------------------------------------------------------
+# Run Startup Script
+# -----------------------------------------------------------------------------
+CMD ["/app/start_msf_mcp.sh"]

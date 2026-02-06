@@ -1,0 +1,410 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              Supervisor Decision-Making Process (Step-by-Step)              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+ENTRY: supervisor_node(state: CyberState)
+═══════════════════════════════════════════
+
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 1: Read Current State                                    │
+│                                                                │
+│  state = {                                                     │
+│    "mission_goal": "Exploit 192.168.1.50",                     │
+│    "iteration_count": 3,                                       │
+│    "discovered_targets": {                                     │
+│      "192.168.1.50": {                                         │
+│        "ports": [21, 22, 80],                                  │
+│        "services": {                                           │
+│          21: {"name": "ftp", "version": "vsftpd 2.3.4"},       │
+│          22: {"name": "ssh", "version": "OpenSSH 7.2"},        │
+│          80: {"name": "http", "version": "Apache 2.4.18"}      │
+│        }                                                       │
+│      }                                                         │
+│    },                                                          │
+│    "web_findings": [                                           │
+│      {"url": "/admin", "status": 200},                         │
+│      {"url": "/api", "status": 403}                            │
+│    ],                                                          │
+│    "agent_log": [                                              │
+│      {"agent": "scout", "action": "nmap_scan", ...},           │
+│      {"agent": "supervisor", "decision": "fuzzer", ...},       │
+│      {"agent": "fuzzer", "action": "web_enum", ...}            │
+│    ],                                                          │
+│    "critical_findings": [                                      │
+│      "vsftpd 2.3.4 detected (known backdoor)",                 │
+│      "Admin panel at /admin"                                   │
+│    ]                                                           │
+│  }                                                             │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 2: Build Context Summary (for LLM)                       │
+│                                                                │
+│  def build_context_summary(state: CyberState) -> str:          │
+│                                                                │
+│    # Summarize discoveries                                     │
+│    targets_summary = summarize_targets(                        │
+│      state["discovered_targets"]                               │
+│    )                                                           │
+│                                                                │
+│    # Recent agent actions (last 5)                             │
+│    recent_actions = format_agent_log(                          │
+│      state["agent_log"][-5:]                                   │
+│    )                                                           │
+│                                                                │
+│    # Critical findings                                         │
+│    critical = "\n".join(state["critical_findings"])            │
+│                                                                │
+│    context = f"""                                              │
+│    MISSION STATUS:                                             │
+│    ══════════════                                              │
+│    Goal: {state['mission_goal']}                               │
+│    Progress: Iteration {state['iteration_count']}/20           │
+│    Status: {state['mission_status']}                           │
+│                                                                │
+│    DISCOVERED INTELLIGENCE:                                    │
+│    ═══════════════════════                                     │
+│    {targets_summary}                                           │
+│                                                                │
+│    CRITICAL FINDINGS:                                          │
+│    ════════════════                                            │
+│    {critical}                                                  │
+│                                                                │
+│    RECENT ACTIONS:                                             │
+│    ══════════════                                              │
+│    {recent_actions}                                            │
+│                                                                │
+│    YOUR TASK:                                                  │
+│    ═════════                                                   │
+│    Analyze the current state and decide which specialist       │
+│    agent to call next. Consider:                               │
+│    1. What information do we have?                             │
+│    2. What information do we need?                             │
+│    3. What's the logical next step in the attack chain?        │
+│    4. Have we tried this before? (check recent actions)        │
+│    """                                                         │
+│                                                                │
+│    return context                                              │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 3: LLM Reasoning (with Structured Output)                │
+│                                                                │
+│  from pydantic import BaseModel, Field                         │
+│  from enum import Enum                                         │
+│                                                                │
+│  class AgentChoice(str, Enum):                                 │
+│    SCOUT = "scout"                                             │
+│    FUZZER = "fuzzer"                                           │
+│    LIBRARIAN = "librarian"                                     │
+│    STRIKER = "striker"                                         │
+│    RESIDENT = "resident"                                       │
+│    AUTOMOTIVE = "automotive"                                   │
+│    END = "end"                                                 │
+│                                                                │
+│  class SupervisorDecision(BaseModel):                          │
+│    next_agent: AgentChoice                                     │
+│    rationale: str = Field(                                     │
+│      description="Detailed reasoning for this decision"        │
+│    )                                                           │
+│    confidence: float = Field(                                  │
+│      ge=0.0,                                                   │
+│      le=1.0,                                                   │
+│      description="Confidence in this decision (0.0-1.0)"       │
+│    )                                                           │
+│    expected_outcome: str = Field(                              │
+│      description="What we expect this agent to accomplish"     │
+│    )                                                           │
+│                                                                │
+│  # Call LLM with structured output                             │
+│  decision = await llm.with_structured_output(                  │
+│    SupervisorDecision                                          │
+│  ).ainvoke([                                                   │
+│    SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT),            │
+│    HumanMessage(content=context_summary)                       │
+│  ])                                                            │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│  LLM OUTPUT (Example):                                         │
+│                                                                │
+│  {                                                             │
+│    "next_agent": "librarian",                                  │
+│                                                                │
+│    "rationale": "We have completed initial reconnaissance      │
+│                  and web enumeration. Scout identified a       │
+│                  critical vulnerability (vsftpd 2.3.4 with     │
+│                  known backdoor CVE-2011-2523). Before         │
+│                  attempting exploitation, we should consult    │
+│                  the Librarian to:                             │
+│                  1. Confirm the exploit module details         │
+│                  2. Understand required parameters             │
+│                  3. Check for any special conditions           │
+│                  This follows best practice of researching     │
+│                  exploits before execution to maximize         │
+│                  success rate.",                               │
+│                                                                │
+│    "confidence": 0.92,                                         │
+│                                                                │
+│    "expected_outcome": "Librarian will provide:                │
+│                         - Metasploit module path               │
+│                         - Required options (RHOSTS, RPORT)     │
+│                         - Payload recommendations              │
+│                         - Any known limitations"               │
+│  }                                                             │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 4: Validate Decision (Safety Checks)                     │
+│                                                                │
+│  def validate_decision(                                        │
+│    decision: SupervisorDecision,                               │
+│    state: CyberState                                           │
+│  ) -> bool:                                                    │
+│                                                                │
+│    # Check 1: Valid agent?                                     │
+│    if decision.next_agent not in AgentChoice:                  │
+│      raise ValueError(f"Invalid agent: {decision.next_agent}") │
+│                                                                │
+│    # Check 2: Not looping?                                     │
+│    recent_agents = [                                           │
+│      log["agent"]                                              │
+│      for log in state["agent_log"][-3:]                        │
+│      if log["agent"] != "supervisor"                           │
+│    ]                                                           │
+│                                                                │
+│    if len(recent_agents) >= 3 and \                            │
+│       all(a == decision.next_agent for a in recent_agents):    │
+│      logger.warning(                                           │
+│        f"Agent {decision.next_agent} called 3x in a row"       │
+│      )                                                         │
+│      # Force different choice or end                           │
+│      # (or allow if confidence is very high)                   │
+│                                                                │
+│    # Check 3: Iteration limit                                  │
+│    if state["iteration_count"] >= 20:                          │
+│      logger.error("Max iterations reached")                    │
+│      return False                                              │
+│                                                                │
+│    # Check 4: Mission already complete?                        │
+│    if state["mission_status"] in ["success", "failed"]:        │
+│      return False                                              │
+│                                                                │
+│    # Check 5: Logical progression                              │
+│    # (optional heuristic checks)                               │
+│    if decision.next_agent == "striker":                        │
+│      # Should have done research first                         │
+│      has_research = any(                                       │
+│        log["agent"] == "librarian"                             │
+│        for log in state["agent_log"]                           │
+│      )                                                         │
+│      if not has_research and decision.confidence < 0.9:        │
+│        logger.warning(                                         │
+│          "Striker called without Librarian research"           │
+│        )                                                       │
+│        # Log but allow (LLM knows best)                        │
+│                                                                │
+│    return True                                                 │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 5: Log Decision & Update State                           │
+│                                                                │
+│  new_agent_log_entry = {                                       │
+│    "agent": "supervisor",                                      │
+│    "action": "route_decision",                                 │
+│    "decision": decision.next_agent,                            │
+│    "reasoning": decision.rationale,                            │
+│    "confidence": decision.confidence,                          │
+│    "expected_outcome": decision.expected_outcome,              │
+│    "timestamp": datetime.now().isoformat()                     │
+│  }                                                             │
+│                                                                │
+│  # Insert into database                                        │
+│  db.insert_agent_log(                                          │
+│    mission_id=state["mission_id"],                             │
+│    entry=new_agent_log_entry                                   │
+│  )                                                             │
+│                                                                │
+│  # Also log to console for debugging                           │
+│  logger.info(                                                  │
+│    f"Supervisor decision: {decision.next_agent} "              │
+│    f"(confidence: {decision.confidence:.2f})"                  │
+│  )                                                             │
+│  logger.info(f"Reasoning: {decision.rationale[:100]}...")      │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 6: Return State Updates                                  │
+│                                                                │
+│  return {                                                      │
+│    "next_agent": decision.next_agent,                          │
+│    "iteration_count": state["iteration_count"] + 1,            │
+│    "agent_log": state["agent_log"] + [new_agent_log_entry],    │
+│                                                                │
+│    # Optional: Store expected outcome for later validation     │
+│    "supervisor_expectations": {                                │
+│      "expected_outcome": decision.expected_outcome,            │
+│      "confidence": decision.confidence                         │
+│    }                                                           │
+│  }                                                             │
+│                                                                │
+│  # LangGraph will:                                             │
+│  #  1. Merge this with current state                           │
+│  #  2. Save checkpoint to database                             │
+│  #  3. Call route_to_next_agent(state)                         │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│  Router Function: route_to_next_agent(state)                   │
+│                                                                │
+│  def route_to_next_agent(state: CyberState) -> str:            │
+│    """                                                         │
+│    Simple routing - just reads Supervisor's decision.          │
+│    ALL business logic is in the Supervisor's LLM.              │
+│    This function only handles safety.                          │
+│    """                                                         │
+│                                                                │
+│    # Safety checks (hardcoded limits)                          │
+│    if state["iteration_count"] >= 20:                          │
+│      logger.error("Max iterations exceeded")                   │
+│      return "end"                                              │
+│                                                                │
+│    if state["mission_status"] in ["success", "failed"]:        │
+│      return "end"                                              │
+│                                                                │
+│    # Get supervisor's decision                                 │
+│    next_agent = state.get("next_agent")                        │
+│                                                                │
+│    # Validate it's a real agent                                │
+│    valid_agents = [                                            │
+│      "scout", "fuzzer", "striker",                             │
+│      "librarian", "resident", "automotive"                     │
+│    ]                                                           │
+│                                                                │
+│    if next_agent not in valid_agents:                          │
+│      logger.error(f"Invalid agent choice: {next_agent}")       │
+│      return "end"                                              │
+│                                                                │
+│    logger.info(f"Routing to: {next_agent}")                    │
+│    return next_agent  # Returns "librarian" in this example    │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            │ LangGraph routes to librarian_node
+                            ▼
+                    ┌───────────────┐
+                    │   LIBRARIAN   │
+                    │     NODE      │
+                    └───────────────┘
+
+
+SUPERVISOR SYSTEM PROMPT (Guides Reasoning):
+════════════════════════════════════════════
+
+SUPERVISOR_SYSTEM_PROMPT = """
+You are the Supervisor of an autonomous penetration testing team. Your role 
+is to coordinate specialist agents to achieve the mission goal through 
+intelligent decision-making.
+
+AVAILABLE AGENTS:
+═════════════════
+
+scout:
+  - Discovers targets, ports, services
+  - Use when: Need to find/scan new targets
+  - Tools: nmap, arp-scan
+
+fuzzer:
+  - Enumerates web directories and APIs
+  - Use when: Found HTTP/HTTPS services
+  - Tools: gobuster, ffuf, nikto
+
+librarian:
+  - Researches exploits and vulnerabilities
+  - Use when: Found vulnerable services, need exploit details
+  - Tools: RAG search, OSINT databases
+
+striker:
+  - Executes exploits to gain access
+  - Use when: Have exploit details, ready to attack
+  - Tools: Metasploit modules
+
+resident:
+  - Post-exploitation (privilege escalation, persistence, pivoting)
+  - Use when: Have shell access, need to expand foothold
+  - Tools: Meterpreter, system enumeration
+
+automotive:
+  - Specializes in CAN bus / vehicle systems
+  - Use when: Targeting ICSim or automotive protocols
+  - Tools: candump, cansend, UDS
+
+DECISION-MAKING FRAMEWORK:
+══════════════════════════
+
+Standard Attack Progression:
+1. Reconnaissance (scout) → Identify targets
+2. Enumeration (fuzzer for web, scout for services)
+3. Research (librarian) → Find exploits
+4. Initial Access (striker) → Gain foothold
+5. Post-Exploitation (resident) → Escalate, persist, pivot
+
+Best Practices:
+- Always research before exploiting (librarian before striker)
+- Don't re-scan the same target repeatedly
+- If stuck, try different approach or end mission
+- Consider what information you NEED vs. what you HAVE
+
+Typical Decision Patterns:
+- Found port 80 → Call fuzzer (enumerate web)
+- Found vulnerable service → Call librarian (research exploit)
+- Have exploit details → Call striker (execute)
+- Got shell → Call resident (post-exploit)
+- Unknown CAN traffic → Call automotive (analyze)
+
+CRITICAL RULES:
+══════════════
+1. Never call the same agent 3+ times in a row (indicates loop)
+2. Check recent actions before deciding (avoid redundancy)
+3. Provide detailed rationale for every decision
+4. Estimate confidence honestly (0.0-1.0)
+5. Describe expected outcome clearly
+
+Current mission context will be provided. Analyze it and decide which 
+agent to call next.
+"""
+
+
+EXAMPLE DECISION CHAINS:
+═══════════════════════
+
+Scenario 1: Standard Web Application
+────────────────────────────────────
+Found port 80 → fuzzer (enumerate web)
+Found /admin → librarian (research admin panel exploits)
+Found SQL injection → striker (exploit SQLi)
+Got www-data shell → resident (escalate to root)
+
+Scenario 2: Backdoored Service
+──────────────────────────────
+Found vsftpd 2.3.4 → librarian (research backdoor)
+Got exploit details → striker (execute backdoor)
+Got root shell → resident (persist, explore network)
+
+Scenario 3: Automotive Target
+────────────────────────────
+Found MQTT broker → fuzzer (enumerate topics)
+Found CAN gateway → automotive (sniff CAN traffic)
+Identified speedometer ID → automotive (inject frames)
+
+Scenario 4: Dead End
+───────────────────
+Tried 3 exploits, all failed → librarian (research alternatives)
+No more exploits available → end (mission failed)

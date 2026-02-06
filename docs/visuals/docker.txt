@@ -1,0 +1,427 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     Docker Deployment Architecture                          │
+│                    (All containers on vt-saiber-network)                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           HOST MACHINE                                      │
+│                                                                             │
+│  ┌────────────────────────────────────────────────────────────────────┐     │
+│  │              Docker Network: vt-saiber-network                     │     │
+│  │              Subnet: 172.20.0.0/16                                 │     │
+│  └────────────────────────────────────────────────────────────────────┘     │
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  CONTAINER: vt-saiber-agents                                         │   │
+│  │  Image: python:3.11                                                  │   │
+│  │  IP: 172.20.0.10                                                     │   │
+│  │  ┌────────────────────────────────────────────────────────────┐      │   │
+│  │  │  /home/claude/VT-SaiBER/                                   │      │   │
+│  │  │  ├── src/                                                  │      │   │
+│  │  │  │   ├── main.py          ◄─── Entry point                 │      │   │
+│  │  │  │   ├── agents/          ◄─── All agent logic             │      │   │
+│  │  │  │   ├── graph/           ◄─── LangGraph workflow          │      │   │
+│  │  │  │   ├── mcp/client.py    ◄─── MCP routing                 │      │   │
+│  │  │  │   └── database/        ◄─── DB connection               │      │   │
+│  │  │  └── .env                 ◄─── API keys                    │      │   │
+│  │  │                                                            │      │   │
+│  │  │  Environment:                                              │      │   │
+│  │  │  - ANTHROPIC_API_KEY=sk-...                                │      │   │
+│  │  │  - OPENAI_API_KEY=sk-...                                   │      │   │
+│  │  │  - DB_HOST=postgres                                        │      │   │
+│  │  │  - KALI_MCP_URL=http://kali-mcp:8080                       │      │   │
+│  │  │  - MSF_MCP_URL=http://msf-mcp:8081                         │      │   │
+│  │  │  - AUTO_MCP_URL=http://auto-mcp:8082                       │      │   │
+│  │  └────────────────────────────────────────────────────────────┘      │   │
+│  │  Ports: None exposed (internal only)                                 │   │
+│  │  Volumes: ./src:/app/src (for development)                           │   │
+│  └──────────────────┬───────────────────────────────────────────────────┘   │
+│                     │                                                       │
+│                     │ HTTP requests to MCP servers                          │
+│                     │                                                       │
+│       ┌─────────────┼─────────────────┬──────────────────┐                  │
+│       │             │                 │                  │                  │
+│       ▼             ▼                 ▼                  ▼                  │
+│  ┌─────────┐  ┌─────────┐  ┌──────────────┐  ┌──────────────┐               │
+│  │         │  │         │  │              │  │              │               │
+│  │ KALI    │  │ MSF     │  │ AUTOMOTIVE   │  │ POSTGRES     │               │
+│  │ MCP     │  │ MCP     │  │ MCP          │  │ DATABASE     │               │
+│  │         │  │         │  │              │  │              │               │
+│  └─────────┘  └─────────┘  └──────────────┘  └──────────────┘               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+DETAILED CONTAINER BREAKDOWN:
+═════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CONTAINER 1: vt-saiber-agents (Main Application)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Image: Built from docker/agents.Dockerfile                                 │
+│  Base: python:3.11-slim                                                     │
+│  IP: 172.20.0.10                                                            │
+│  Hostname: vt-agents                                                        │
+│                                                                             │
+│  Installed Packages:                                                        │
+│  - langchain, langgraph, langsmith                                          │
+│  - httpx (for MCP communication)                                            │
+│  - psycopg2 (for PostgreSQL)                                                │
+│  - pydantic (for structured outputs)                                        │
+│  - openai, anthropic (LLM SDKs)                                             │
+│                                                                             │
+│  Command: python src/main.py                                                │
+│                                                                             │
+│  Volumes:                                                                   │
+│  - ./src:/app/src:rw                   (live code reload during dev)        │
+│  - ./data:/app/data:rw                 (logs and outputs)                   │
+│  - ./.env:/app/.env:ro                 (secrets)                            │
+│                                                                             │
+│  Networks:                                                                  │
+│  - vt-saiber-network                                                        │
+│                                                                             │
+│  Depends On:                                                                │
+│  - postgres (waits for DB to be ready)                                      │
+│  - kali-mcp (waits for tool server)                                         │
+│  - msf-mcp (waits for exploit server)                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CONTAINER 2: kali-mcp (Kali Tool Server)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Image: kalilinux/kali-rolling:latest + MCP server                          │
+│  IP: 172.20.0.20                                                            │
+│  Hostname: kali-mcp                                                         │
+│  Exposed Port: 8080 (internal only, not to host)                            │
+│                                                                             │
+│  Installed Tools:                                                           │
+│  - nmap, masscan                       (port scanning)                      │
+│  - gobuster, ffuf, dirb                (web fuzzing)                        │
+│  - nikto                               (web vuln scanning)                  │
+│  - sqlmap                              (SQL injection)                      │
+│  - hydra, john, hashcat                (password cracking)                  │
+│  - arp-scan                            (network discovery)                  │
+│                                                                             │
+│  MCP Server:                                                                │
+│  - Listens on port 8080                                                     │
+│  - Validates tool requests                                                  │
+│  - Enforces scope restrictions                                              │
+│  - Parses tool output to JSON                                               │
+│                                                                             │
+│  Example Request:                                                           │
+│  POST http://kali-mcp:8080/tools/nmap                                       │
+│  {                                                                          │
+│    "target": "192.168.1.50",                                                │
+│    "flags": "-sV -sC"                                                       │
+│  }                                                                          │
+│                                                                             │
+│  Security:                                                                  │
+│  - Scope whitelist: 192.168.1.0/24, 10.0.0.0/8                              │
+│  - Tool whitelist: Only approved tools                                      │
+│  - Rate limiting: 100 req/min                                               │
+│  - No direct shell access from agents                                       │
+│                                                                             │
+│  Volumes:                                                                   │
+│  - /usr/share/wordlists (Kali wordlists)                                    │
+│                                                                             │
+│  Networks:                                                                  │
+│  - vt-saiber-network                                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CONTAINER 3: msf-mcp (Metasploit Server)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Image: metasploitframework/metasploit-framework:latest                     │
+│  IP: 172.20.0.30                                                            │
+│  Hostname: msf-mcp                                                          │
+│  Exposed Port: 8081 (internal), 55553 (msfrpcd)                             │
+│                                                                             │
+│  Services:                                                                  │
+│  - msfrpcd (Metasploit RPC daemon) on 55553                                 │
+│  - MCP HTTP server on 8081                                                  │
+│                                                                             │
+│  Capabilities:                                                              │
+│  - search_modules: Find exploits by CVE/service                             │
+│  - run_exploit: Execute Metasploit modules                                  │
+│  - list_sessions: Show active shells                                        │
+│  - execute_command: Run commands in sessions                                │
+│  - upload_file: Upload files to target                                      │
+│                                                                             │
+│  Example Request:                                                           │
+│  POST http://msf-mcp:8081/tools/run_exploit                                 │
+│  {                                                                          │
+│    "module": "exploit/unix/ftp/vsftpd_234_backdoor",                        │
+│    "options": {                                                             │
+│      "RHOSTS": "192.168.1.50",                                              │
+│      "RPORT": 21                                                            │
+│    },                                                                       │
+│    "payload": "cmd/unix/interact"                                           │
+│  }                                                                          │
+│                                                                             │
+│  Security:                                                                  │
+│  - Scope validation (same as Kali MCP)                                      │
+│  - Exploit whitelist (no DoS modules)                                       │
+│  - Session timeout: 3600s                                                   │
+│  - Automatic cleanup on container stop                                      │
+│                                                                             │
+│  Volumes:                                                                   │
+│  - ./msf_data:/root/.msf4 (persistence)                                     │
+│                                                                             │
+│  Networks:                                                                  │
+│  - vt-saiber-network                                                        │
+│  - Can reach target VMs network (bridge or host)                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CONTAINER 4: auto-mcp (Automotive/CAN Tools)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Image: Built from docker/automotive_mcp.Dockerfile                         │
+│  Base: ubuntu:22.04                                                         │
+│  IP: 172.20.0.40                                                            │
+│  Hostname: auto-mcp                                                         │
+│  Exposed Port: 8082 (internal)                                              │
+│                                                                             │
+│  Installed Tools:                                                           │
+│  - can-utils (candump, cansend, cansniffer)                                 │
+│  - python3 with custom UDS scanner                                          │
+│  - ICSim (for testing, if needed)                                           │
+│                                                                             │
+│  Capabilities:                                                              │
+│  - can_sniff: Monitor CAN traffic                                           │
+│  - can_send: Inject CAN frames                                              │
+│  - can_fuzz: Automated fuzzing of CAN IDs                                   │
+│  - uds_scan: UDS service discovery                                          │
+│                                                                             │
+│  Example Request:                                                           │
+│  POST http://auto-mcp:8082/tools/can_sniff                                  │
+│  {                                                                          │
+│    "interface": "vcan0",                                                    │
+│    "duration": 10                                                           │
+│  }                                                                          │
+│                                                                             │
+│  Networks:                                                                  │
+│  - vt-saiber-network                                                        │
+│  - Can access vcan0 interface (requires privileged mode)                    │
+│                                                                             │
+│  Privileged: true (needed for CAN interface access)                         │
+│                                                                             │
+│  Volumes:                                                                   │
+│  - /sys/class/net (for vcan access)                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CONTAINER 5: postgres (Database)                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Image: pgvector/pgvector:pg16                                              │
+│  IP: 172.20.0.50                                                            │
+│  Hostname: postgres                                                         │
+│  Exposed Port: 5432 (internal), optionally 5432:5432 for debugging          │
+│                                                                             │
+│  Database: vtsaiber                                                         │
+│  User: vtsaiber                                                             │
+│  Password: (from .env)                                                      │
+│                                                                             │
+│  Extensions:                                                                │
+│  - pgvector (for RAG embeddings)                                            │
+│                                                                             │
+│  Tables:                                                                    │
+│  - targets                                                                  │
+│  - services                                                                 │
+│  - findings                                                                 │
+│  - agent_log                                                                │
+│  - sessions                                                                 │
+│  - knowledge_base (with vector column)                                      │
+│  - checkpoints (LangGraph)                                                  │
+│                                                                             │
+│  Initialization:                                                            │
+│  - Runs src/database/schema.sql on first start                              │
+│                                                                             │
+│  Volumes:                                                                   │
+│  - postgres_data:/var/lib/postgresql/data (persistence)                     │
+│  - ./src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql         │
+│                                                                             │
+│  Networks:                                                                  │
+│  - vt-saiber-network                                                        │
+│                                                                             │
+│  Backup:                                                                    │
+│  - Automatic daily backups to ./backups/                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+DOCKER-COMPOSE.YML STRUCTURE:
+═════════════════════════════
+
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: vt-saiber-postgres
+    environment:
+      POSTGRES_DB: vtsaiber
+      POSTGRES_USER: vtsaiber
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - vt-saiber-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vtsaiber"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  kali-mcp:
+    build:
+      context: .
+      dockerfile: docker/kali_mcp.Dockerfile
+    container_name: vt-saiber-kali-mcp
+    ports:
+      - "8080"  # Internal only
+    networks:
+      - vt-saiber-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  msf-mcp:
+    build:
+      context: .
+      dockerfile: docker/msf_mcp.Dockerfile
+    container_name: vt-saiber-msf-mcp
+    ports:
+      - "8081"  # Internal only
+      - "55553"  # msfrpcd
+    volumes:
+      - msf_data:/root/.msf4
+    networks:
+      - vt-saiber-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  auto-mcp:
+    build:
+      context: .
+      dockerfile: docker/automotive_mcp.Dockerfile
+    container_name: vt-saiber-auto-mcp
+    privileged: true  # Needed for CAN access
+    ports:
+      - "8082"  # Internal only
+    networks:
+      - vt-saiber-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  agents:
+    build:
+      context: .
+      dockerfile: docker/agents.Dockerfile
+    container_name: vt-saiber-agents
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=vtsaiber
+      - DB_USER=vtsaiber
+      - DB_PASSWORD=${DB_PASSWORD}
+      - KALI_MCP_URL=http://kali-mcp:8080
+      - MSF_MCP_URL=http://msf-mcp:8081
+      - AUTO_MCP_URL=http://auto-mcp:8082
+    volumes:
+      - ./src:/app/src:rw
+      - ./data:/app/data:rw
+      - ./.env:/app/.env:ro
+    networks:
+      - vt-saiber-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kali-mcp:
+        condition: service_healthy
+      msf-mcp:
+        condition: service_healthy
+      auto-mcp:
+        condition: service_healthy
+    command: python src/main.py
+
+networks:
+  vt-saiber-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+  msf_data:
+
+
+NETWORK FLOW:
+═════════════
+
+┌─────────────┐
+│   Agents    │
+│ (Main App)  │
+└──────┬──────┘
+       │
+       │ HTTP POST /tools/nmap
+       ├──────────────────────────────────►  ┌──────────────┐
+       │                                     │   Kali MCP   │
+       │                                     └──────────────┘
+       │
+       │ HTTP POST /tools/run_exploit
+       ├──────────────────────────────────►  ┌──────────────┐
+       │                                     │   MSF MCP    │
+       │                                     └──────────────┘
+       │
+       │ HTTP POST /tools/can_sniff
+       ├──────────────────────────────────►  ┌──────────────┐
+       │                                     │   Auto MCP   │
+       │                                     └──────────────┘
+       │
+       │ PostgreSQL queries
+       └──────────────────────────────────►  ┌──────────────┐
+                                             │  PostgreSQL  │
+                                             └──────────────┘
+
+All communication is over Docker's internal network (172.20.0.0/16).
+No ports are exposed to the host except for debugging PostgreSQL (optional).
+
+
+DEPLOYMENT COMMANDS:
+════════════════════
+
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f agents
+
+# Stop everything
+docker-compose down
+
+# Rebuild after code changes
+docker-compose up --build
+
+# Reset database
+docker-compose down -v  # Removes volumes
+docker-compose up
+
+# Access PostgreSQL for debugging
+docker exec -it vt-saiber-postgres psql -U vtsaiber -d vtsaiber
+
+# Run a single mission
+docker-compose run --rm agents python src/main.py --mission "Exploit 192.168.1.50"
