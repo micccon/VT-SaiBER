@@ -1,5 +1,5 @@
 #!/bin/bash
-# docker/start_msf_mcp.sh
+# scripts/docker/start_msf_mcp.sh
 
 # Exit on error
 set -e
