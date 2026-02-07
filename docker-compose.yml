@@ -81,12 +81,17 @@ services:
     # Not mapped to host (only accessible inside Docker network)
     ports:
       - "5000"
-    
+
+    # Mount startup script (in case we need to update it without rebuilding)
+    volumes:
+      - ./scripts/docker/start_kali_mcp.sh:/app/start_kali_mcp.sh:ro
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 20s
     
     restart: unless-stopped
 
@@ -122,6 +127,7 @@ services:
     # Persist Metasploit data
     volumes:
       - msf_data:/root/.msf4
+      - ./scripts/docker/start_msf_mcp.sh:/app/start_msf_mcp.sh:ro
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8085/docs"]
@@ -146,15 +152,15 @@ services:
     
     # All environment variables your app needs
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
-      - KALI_MCP_URL=http://kali-mcp:5000
-      - MSF_MCP_URL=http://msf-mcp:8085
+      - KALI_MCP_URL=${KALI_MCP_URL}
+      - MSF_MCP_URL=${MSF_MCP_URL}
+      #- ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      #- OPENAI_API_KEY=${OPENAI_API_KEY}
     
     # Mount source code - allows live editing without rebuilding
     volumes:
