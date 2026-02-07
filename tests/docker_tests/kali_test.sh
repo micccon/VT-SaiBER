@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/test_kali.sh
+# scripts/docker_tests/test_kali.sh
 
 echo "==================================================="
 echo "🧪 TESTING KALI MCP SERVER"
