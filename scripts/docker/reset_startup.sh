@@ -10,6 +10,8 @@ echo "[1/4] Performing aggressive cleanup..."
 echo "   👉 Removing orphans..."
 docker-compose down --remove-orphans 2>/dev/null
 
+chmod +x scripts/docker/*.sh
+
 echo "   👉 Pruning build cache..."
 docker builder prune -f > /dev/null
 
