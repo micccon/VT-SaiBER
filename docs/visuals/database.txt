@@ -88,7 +88,7 @@ Example FINDINGS rows:
 
 
 ┌──────────────────────────────────────────┐
-│           AGENT_LOG                      │
+│           AGENT_LOGS                      │
 │──────────────────────────────────────────│
 │ PK  id (SERIAL)                          │
 │     mission_id (VARCHAR)                 │
