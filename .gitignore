@@ -5,3 +5,4 @@ __pycache__/
 logs/
 .venv
 database/logger
+saiber_env/
