@@ -1,5 +1,13 @@
 #!/bin/bash
-# scripts/validate_testbed.sh
+# scripts/docker/full_reset_startup.sh
+
+# This script performs a full reset of the VT-SaiBER Docker environment, including:
+# - Stopping and removing all containers
+# - Removing all volumes (data reset)
+# - Pruning build cache
+# - Rebuilding and starting all containers
+
+# Use when you change Dockerfiles or want to ensure a completely clean environment. For faster resets without rebuilding, use scripts/docker/reset.sh
 
 echo "==================================================="
 echo "🚀 VT-SaiBER FULL SYSTEM REBUILD & VALIDATION"

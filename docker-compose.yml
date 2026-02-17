@@ -81,10 +81,12 @@ services:
     # Not mapped to host (only accessible inside Docker network)
     ports:
       - "5000"
+      - "5001"
 
     # Mount startup script (in case we need to update it without rebuilding)
     volumes:
       - ./scripts/docker/start_kali_mcp.sh:/app/start_kali_mcp.sh:ro
+      - ./src/mcp/kali_mcp_server.py:/app/kali-mcp/mcp_server.py:ro
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]

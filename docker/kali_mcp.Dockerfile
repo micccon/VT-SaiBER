@@ -1,86 +1,81 @@
-# =============================================================================
-# Kali MCP Server Dockerfile
-# =============================================================================
-# This Dockerfile creates an image with Kali Linux and the MCP server package
-#
-# What it does:
-#   1. Starts from official Kali Linux image
-#   2. Installs mcp-kali-server package
-#   3. Configures it to run on port 5000
-#
-# Built by: docker-compose build kali-mcp
-
-# -----------------------------------------------------------------------------
-# Base Image
-# -----------------------------------------------------------------------------
 FROM kalilinux/kali-rolling:latest
 
-# -----------------------------------------------------------------------------
-# Install Dependencies
-# -----------------------------------------------------------------------------
-# Only install tools that are SUPPORTED by mcp-kali-server:
-# dirb, enum4linux, gobuster, hydra, john, metasploit-framework, nikto, nmap, sqlmap, wpscan
+# Install dependencies
 RUN apt-get update && \
     apt-get install -y \
-    # MCP Server
-    mcp-kali-server \
-    \
-    # --- ACTIVE TOOLS (Keep these) ---
-    dirb \
-    gobuster \
-    nikto \
-    nmap \
-    sqlmap \
-    metasploit-framework \
-    \
-    # --- UNUSED TOOLS (Commented out to save space) ---
-    # enum4linux \
-    # hydra \
-    # john \
-    # wpscan \
-    \
-    # --- Utilities (Keep these, they are small and useful) ---
+    # Core tools
     curl \
-    wget \
-    dnsutils \
-    whois \
-    wordlists \
-    \
-    # --- Python for MCP SDK ---
     python3 \
     python3-pip \
-    python3-venv \
+    git \
+    # Security tools
+    nmap \
+    masscan \
+    gobuster \
+    ffuf \
+    dirb \
+    nikto \
+    sqlmap \
+    hydra \
+    john \
+    enum4linux \
+    wpscan \
+    # Networking utilities
+    netcat-traditional \
+    iputils-ping \
+    dnsutils \
+    whois \
+    # Wordlists
+    wordlists \
     && rm -rf /var/lib/apt/lists/*
 
-# Unzip rockyou.txt (only needed for john and hyrda)
-# RUN gunzip /usr/share/wordlists/rockyou.txt.gz || true
-
 # -----------------------------------------------------------------------------
-# Install MCP SDK
-# -----------------------------------------------------------------------------
-# The mcp_server.py wrapper needs the MCP SDK to expose the REST API via MCP protocol
-RUN pip3 install --break-system-packages \
-    mcp \
-    httpx \
-    httpx-sse
-
-# -----------------------------------------------------------------------------
-# Working Directory
+# 2. Clone Kali MCP Server Repository
 # -----------------------------------------------------------------------------
 WORKDIR /app
 
+RUN git clone https://github.com/Wh0am123/MCP-Kali-Server.git /app/kali-mcp
+
+WORKDIR /app/kali-mcp
+
 # -----------------------------------------------------------------------------
-# Copy Startup Script
+# 3. Install Dependencies from Repo
 # -----------------------------------------------------------------------------
+RUN pip3 install --no-cache-dir --break-system-packages \
+    -r requirements.txt
+
+# Install uvicorn for SSE support
+RUN pip3 install --no-cache-dir --break-system-packages uvicorn
+
+# -----------------------------------------------------------------------------
+# 4. Overwrite with Fixed MCP Server
+# -----------------------------------------------------------------------------
+# Copy our fixed mcp_server.py that supports --host and --port
+COPY src/mcp/kali_mcp_server.py /app/kali-mcp/mcp_server.py
+
+# Copy startup script
 COPY scripts/docker/start_kali_mcp.sh /app/start_kali_mcp.sh
-RUN chmod +x /app/start_kali_mcp.sh
+
+# Make executable
+RUN chmod +x /app/kali-mcp/kali_server.py \
+    /app/kali-mcp/mcp_server.py \
+    /app/start_kali_mcp.sh
 
 # -----------------------------------------------------------------------------
-# Expose Ports
+# 5. Expose Ports
 # -----------------------------------------------------------------------------
-EXPOSE 5000
+# 5000: REST API (kali_server.py)
+# 5001: MCP SSE server (mcp_server.py)
+EXPOSE 5000 5001
 
 # -----------------------------------------------------------------------------
-# Startup Command
+# 6. Health Check
+# -----------------------------------------------------------------------------
+# Check if REST API is responding
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+# -----------------------------------------------------------------------------
+# 7. Start Script
 # -----------------------------------------------------------------------------
 CMD ["/app/start_kali_mcp.sh"]
