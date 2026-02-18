@@ -29,7 +29,7 @@ CREATE TABLE services (
   service_name    VARCHAR,
   service_version VARCHAR,
   banner          TEXT,         -- raw banner
-  discovered_at   TIMESTAMP DEFAULT NOW(),
+  discovered_at   TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE findings (
@@ -71,29 +71,6 @@ CREATE TABLE sessions (
   notes          TEXT
 );
 
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE knowledge_base (
-  id         SERIAL PRIMARY KEY,
-  doc_name   VARCHAR,
-  chunk_text TEXT,
-  embedding  VECTOR(1536),
-  metadata   JSONB,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX knowledge_base_embedding_idx
-  ON knowledge_base
-  USING ivfflat (embedding vector_cosine_ops);
-
-CREATE TABLE checkpoints (
-  thread_id       VARCHAR NOT NULL,
-  checkpoint_id   VARCHAR NOT NULL,
-  parent_id       VARCHAR,
-  checkpoint_data JSONB,            -- Serialized CyberState
-  created_at      TIMESTAMP DEFAULT NOW(),
-  PRIMARY KEY (thread_id, checkpoint_id)
-);
 
 CREATE TABLE attack_chain (
   id          SERIAL PRIMARY KEY,
@@ -105,3 +82,37 @@ CREATE TABLE attack_chain (
   outcome     VARCHAR,    -- 'success', 'failed'
   timestamp   TIMESTAMP
 );
+
+
+-- ===== KNOWLEDGE BASE TABLE =====
+CREATE EXTENSION IF NOT EXISTS vector;
+-- data is from external sources (e.g. pdf documents)
+CREATE TABLE knowledge_base (
+  id         SERIAL PRIMARY KEY,
+  doc_name   VARCHAR,
+  chunk_text TEXT,
+  embedding  VECTOR(1536), -- change based on the model used
+  metadata   JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX knowledge_base_embedding_idx
+  ON knowledge_base
+  USING ivfflat (embedding vector_cosine_ops);
+
+
+-- ===== FINDINGS EMBEDDINGS TABLE =====
+--data is from findings table, used for RAG
+CREATE TABLE findings_embeddings (
+  id                SERIAL PRIMARY KEY,
+  finding_id        INTEGER NOT NULL UNIQUE REFERENCES findings(id) ON DELETE CASCADE,
+  embedding         VECTOR(1536),
+  embedding_model   VARCHAR DEFAULT 'text-embedding-3-small', -- based on what model is used
+  embedded_text     TEXT,
+  created_at        TIMESTAMP DEFAULT NOW(),
+  updated_at        TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX findings_embeddings_idx
+  ON findings_embeddings
+  USING hnsw (embedding vector_cosine_ops);

@@ -2,6 +2,7 @@ import os
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from pgvector.psycopg2 import register_vector
 
 
 DB_USER = os.getenv("DB_USER", "vtsaiber")
@@ -11,14 +12,17 @@ DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "vtsaiber")
 
 
+# ===== CONNECTION =====
 def get_connection():
-    return psycopg2.connect(
+    conn  = psycopg2.connect(
         dbname=DB_NAME,
         user=DB_USER,
         password=DB_PASSWORD,
         host=DB_HOST,
         port=DB_PORT,
     )
+    register_vector(conn)
+    return conn
 
 
 def test_connection():
@@ -82,6 +86,85 @@ def get_targets_by_mission(mission_id):
                 (mission_id,),
             )
             return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_target_info(mission_id, target_ip):
+    """
+    aggregate certain complete information for a mission + target_ip：
+    - targets basic info（using mission_id + ip_address）
+    - services（using target_id）
+    - findings（using mission_id + target_ip）
+    - sessions（using mission_id + target_ip）
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 1) look for target row
+            cur.execute(
+                """
+                SELECT *
+                FROM targets
+                WHERE mission_id = %s AND ip_address = %s
+                LIMIT 1;
+                """,
+                (mission_id, target_ip),
+            )
+            target = cur.fetchone()
+
+            if not target:
+                return {
+                    "target": None,
+                    "services": [],
+                    "findings": [],
+                    "sessions": [],
+                }
+
+            target_id = target["id"]
+
+            # 2) look for services
+            cur.execute(
+                """
+                SELECT *
+                FROM services
+                WHERE target_id = %s
+                ORDER BY port;
+                """,
+                (target_id,),
+            )
+            services = cur.fetchall()
+
+            # 3) look for findings
+            cur.execute(
+                """
+                SELECT *
+                FROM findings
+                WHERE mission_id = %s AND target_ip = %s
+                ORDER BY severity DESC, created_at DESC;
+                """,
+                (mission_id, target_ip),
+            )
+            findings = cur.fetchall()
+
+            # 4) look for sessions
+            cur.execute(
+                """
+                SELECT *
+                FROM sessions
+                WHERE mission_id = %s AND target_ip = %s
+                ORDER BY established_at DESC;
+                """,
+                (mission_id, target_ip),
+            )
+            sessions = cur.fetchall()
+
+            return {
+                "target": target,
+                "services": services,
+                "findings": findings,
+                "sessions": sessions,
+            }
     finally:
         conn.close()
 
@@ -218,7 +301,7 @@ def delete_services_by_target(target_id):
 
 # ===== FINDINGS =====
 def create_finding(mission_id, agent_name, finding_type, severity, target_ip, target_port,
-                   title, description, data=None):
+                   title, description, data=None, auto_embed=True):
     conn = get_connection()
     try:
 
@@ -240,6 +323,7 @@ def create_finding(mission_id, agent_name, finding_type, severity, target_ip, ta
             )
             row = cur.fetchone()
         conn.commit()
+
         return row
     finally:
         conn.close()
@@ -330,3 +414,175 @@ def get_agent_logs_by_mission(mission_id):
     finally:
         conn.close()
 
+
+# ===== FINDINGS EMBEDDINGS =====
+def create_finding_embedding(finding_id, embedding_vector, embedded_text, embedding_model='text-embedding-3-small'):
+    """
+    Store finding's embedding vector
+
+    Args:
+        finding_id: ID from findings table
+        embedding_vector: 1536-dimensional embedding vector (list or array)
+        embedded_text: Source text used to generate embedding (title + description)
+        embedding_model: Name of the embedding model used
+
+    Returns:
+        Inserted record (dict)
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO findings_embeddings (finding_id, embedding, embedded_text, embedding_model)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (finding_id) DO UPDATE SET
+                    embedding = EXCLUDED.embedding,
+                    embedded_text = EXCLUDED.embedded_text,
+                    embedding_model = EXCLUDED.embedding_model,
+                    updated_at = NOW()
+                RETURNING *;
+                """,
+                (finding_id, embedding_vector, embedded_text, embedding_model),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+
+def search_similar_findings(embedding_vector, limit=5, threshold=0.7):
+    """
+    Vector similarity search - Find findings most similar to given embedding
+    Uses cosine similarity (1 - cosine_distance)
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                WITH scored AS (
+                    SELECT
+                        finding_id,
+                        (1 - (embedding <=> %s::vector)) AS similarity
+                    FROM findings_embeddings
+                )
+                SELECT
+                    scored.finding_id,
+                    f.id,
+                    f.mission_id,
+                    f.agent_name,
+                    f.finding_type,
+                    f.severity,
+                    f.target_ip,
+                    f.target_port,
+                    f.title,
+                    f.description,
+                    f.data,
+                    f.created_at,
+                    scored.similarity
+                FROM scored
+                JOIN findings f ON scored.finding_id = f.id
+                WHERE scored.similarity > %s
+                ORDER BY scored.similarity DESC
+                LIMIT %s;
+                """,
+                (embedding_vector, threshold, limit),
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_finding_embedding(finding_id):
+    """
+    Get embedding for a specific finding
+
+    Args:
+        finding_id: ID from findings table
+
+    Returns:
+        Embedding record (dict) or None
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM findings_embeddings WHERE finding_id = %s;",
+                (finding_id,),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def update_finding_embedding(finding_id, embedding_vector, embedded_text):
+    """
+    Update existing finding's embedding
+
+    Args:
+        finding_id: ID from findings table
+        embedding_vector: New embedding vector
+        embedded_text: New source text
+
+    Returns:
+        Updated record (dict)
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE findings_embeddings
+                SET embedding = %s, embedded_text = %s, updated_at = NOW()
+                WHERE finding_id = %s
+                RETURNING *;
+                """,
+                (embedding_vector, embedded_text, finding_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+
+def delete_finding_embedding(finding_id):
+    """
+    Delete embedding for a finding
+
+    Args:
+        finding_id: ID from findings table
+
+    Returns:
+        Deleted record (dict)
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "DELETE FROM findings_embeddings WHERE finding_id = %s RETURNING *;",
+                (finding_id,),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+
+def get_all_findings_embeddings():
+    """
+    Get all findings embeddings
+
+    Returns:
+        List of all embeddings
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM findings_embeddings ORDER BY created_at DESC;")
+            return cur.fetchall()
+    finally:
+        conn.close()
