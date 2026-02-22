@@ -22,7 +22,7 @@ services:
   # Stores: targets, findings, sessions, agent logs
   # Yi-Chen is responsible for schema.sql
   postgres:
-    image: postgres:15              # Official PostgreSQL 15 image from Docker Hub
+    image: pgvector/pgvector:pg15     # Official PostgreSQL 15 image with pgvector extension
     container_name: vt-saiber-postgres
     
     # Environment variables passed to the container
