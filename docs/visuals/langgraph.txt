@@ -3,12 +3,9 @@
 │                   (Agents follow logical attack progression)                │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-STATUS NOTE (February 23, 2026):
+STATUS NOTE:
 - This is a target-state workflow diagram.
 - The target architecture is all-agent ReAct (non-hybrid).
-- Striker is currently the only partially finished worker in this graph style.
-- Resident is partially implemented/transitional.
-- Supervisor, Scout, Fuzzer, and Librarian are not near finished yet.
 - Embedded/IoT agent has been removed from active scope.
 
                                     START

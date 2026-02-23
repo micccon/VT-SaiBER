@@ -1,21 +1,17 @@
 
-## Implementation Status Note
+## Scope and Intent
 
 This file is a requirements/specification document, not a strict implementation mirror.
 
 Current implementation reference points:
 - Dynamic MCP bridge: `src/mcp/mcp_tool_bridge.py`
-- ReAct reference worker: `src/agents/striker.py`
 - Supervisor routing + safety checks: `src/agents/supervisor.py`, `src/graph/router.py`
 - Embedded/IoT agent: removed from active project scope
 
 In other words, treat this document as target behavior and guardrail intent, and verify runtime specifics against code paths above.
 
-Current maturity snapshot (February 23, 2026):
-- Design direction: all agents are intended to be ReAct; a hybrid architecture is not the target.
-- Striker: partially finished
-- Resident: partially implemented/transitional
-- Supervisor, Scout, Fuzzer, Librarian: early-stage, not near finished
+Design direction:
+- All agents are intended to be ReAct; a hybrid architecture is not the target.
 
 ---
 

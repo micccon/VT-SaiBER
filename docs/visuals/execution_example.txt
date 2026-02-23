@@ -3,12 +3,9 @@
 │         Updated for LangGraph + MCP ToolBridge + ReAct worker pattern      │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-STATUS NOTE (February 23, 2026):
+STATUS NOTE:
 - This timeline represents intended end-to-end orchestration behavior.
 - The target architecture is all-agent ReAct (non-hybrid).
-- Striker is the only partially finished worker in this flow.
-- Resident is partial/transitional.
-- Other workers are currently early-stage and not near finished.
 - Embedded/IoT agent has been removed from active project scope.
 
 MISSION:
@@ -20,7 +17,7 @@ PARTICIPANTS:
 - Fuzzer (web enumeration)
 - Librarian (intel)
 - Striker (ReAct exploitation)
-- Resident (post-exploitation, optional/transitional)
+- Resident (post-exploitation)
 - MCP ToolBridge (dynamic SSE discovery)
 - Kali MCP / Metasploit MCP
 
@@ -99,7 +96,7 @@ TURN 8 (ReAct Tool Loop in Striker)
 
 TURN 9
 - Supervisor re-evaluates:
-  - if session exists: route to `resident` (when enabled) or end on mission criteria
+  - if session exists: route to `resident` or end on mission criteria
   - if no session: route back to librarian/striker/fuzzer based on context
 
 

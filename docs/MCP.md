@@ -2,11 +2,8 @@
 
 This document describes how VT-SaiBER agents connect to MCP servers today.
 
-Implementation maturity note (February 23, 2026):
-- The intended end state is all-agent ReAct (no hybrid target model).
-- The most representative, actively used MCP ReAct path is `src/agents/striker.py`.
-- `src/agents/resident.py` is partially implemented and transitional.
-- Other agents are not near finished yet, so this document describes platform capability and intended usage, not complete parity across all agents.
+Architecture direction:
+- All agents use ReAct loops with MCP ToolBridge-discovered tools.
 
 ## 1. Integration Pattern
 
@@ -104,8 +101,8 @@ Pattern:
 - Agent defines an allowlist (base names or prefixed names)
 - Bridge returns only allowed tools via `get_tools_for_agent(...)`
 
-Example in `src/agents/striker.py`:
-- allowlist includes `list_exploits`, `run_exploit`, `run_auxiliary_module`, `list_active_sessions`
+Example allowlist:
+- `list_exploits`, `run_exploit`, `run_auxiliary_module`, `list_active_sessions`
 - runtime tool names provided to ReAct are `msf_*`
 
 ## 6. Operational Notes

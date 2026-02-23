@@ -2,17 +2,12 @@
 
 This document reflects the current architecture in the `VT-SaiBER` codebase, including the newer MCP ToolBridge pattern and LangGraph orchestration.
 
-## 0. Implementation Direction and Maturity (As of February 23, 2026)
+## 0. Architecture Direction
 
 Architecture direction:
 - VT-SaiBER is targeting a **full ReAct agent model across all agents**.
 - A hybrid long-term model is **not** the goal.
-
-Agent status snapshot:
-- **Striker**: partially finished; primary working reference for ReAct + MCP ToolBridge flow.
-- **Resident**: partially implemented; not yet fully integrated end-to-end in active graph routing.
-- **Supervisor / Scout / Fuzzer / Librarian**: not near finished; current implementations are still early-stage/prototyping.
-- **Embedded/IoT agent**: removed from active project scope.
+- Embedded/IoT agent is out of active scope.
 
 ## 1. High-Level Overview
 
@@ -95,11 +90,6 @@ Important detail:
 Target pattern (non-hybrid):
 - **All agents** should run as ReAct-style workers with MCP ToolBridge-backed tool access.
 
-Migration status:
-- **Striker**: active partial ReAct implementation and reference path
-- **Resident**: ReAct-style implementation exists in `src/agents/resident.py` but graph wiring is transitional and incomplete
-- **Supervisor / Scout / Fuzzer / Librarian**: still being migrated to mature ReAct implementations
-
 Reference ReAct implementation:
 - `src/agents/striker.py`
 
@@ -161,7 +151,7 @@ Example:
 
 ## 8. Supervisor Principle (Unchanged)
 
-Even with migration toward full ReAct adoption, the control principle remains:
+With full ReAct adoption, the control principle remains:
 - Supervisor coordinates mission progression.
 - Workers execute specialized tasks.
 - Workers return state updates.
@@ -169,11 +159,7 @@ Even with migration toward full ReAct adoption, the control principle remains:
 
 This preserves the original supervisor framework while modernizing tool connectivity.
 
-## 9. Notes on Transitional Areas
-
-The codebase currently contains both:
-- older documentation/assumptions (static MCP client routing)
-- newer MCP ToolBridge + ReAct migration paths toward all-agent ReAct
+## 9. Canonical References
 
 For implementation truth, prefer these files first:
 - `src/mcp/mcp_tool_bridge.py`

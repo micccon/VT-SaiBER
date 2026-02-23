@@ -4,11 +4,9 @@
 
 This file documents tool naming and access policy for the MCP ToolBridge model.
 
-Status note (February 23, 2026):
+Status note:
 - This is the intended access policy/target model.
 - Architecture direction is all-agent ReAct (non-hybrid target).
-- Current code enforcement is strongest in Striker (and partially in Resident).
-- Supervisor, Scout, Fuzzer, and Librarian are still early-stage and not near finished.
 - Embedded/IoT agent has been removed from active project scope.
 
 Naming conventions:
@@ -97,28 +95,26 @@ METASPLOIT TOOLS
 | terminate_session     | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
 
 
-3) CURRENT CODE ENFORCEMENT SNAPSHOT
-═════════════════════════════════════
+3) REACT ALLOWLIST PATTERN
+══════════════════════════
 
 Bridge filtering implementation:
 - `src/mcp/mcp_tool_bridge.py`
 
-Actively wired ReAct tool allowlists:
+Example ReAct tool allowlists:
 - `src/agents/striker.py`
   - `list_exploits`
   - `run_exploit`
   - `run_auxiliary_module`
   - `list_active_sessions`
-- `src/agents/resident.py` (implementation exists; graph wiring is transitional)
+- `src/agents/resident.py`
   - `list_active_sessions`
   - `send_session_command`
   - `run_post_module`
   - `list_exploits`
   - `terminate_session`
 
-Migration note:
-- Scout/Fuzzer/Librarian are still in migration to ReAct + bridge-allowlist-driven
-  execution, with Striker/Resident currently the most advanced implementations.
+All agents should follow this same allowlist pattern through MCP ToolBridge.
 
 
 4) HOW TO READ TOOL NAMES IN AGENT CODE

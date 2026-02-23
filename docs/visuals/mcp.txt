@@ -6,7 +6,6 @@ AGENT NODE (LangGraph)
 ══════════════════════
 
 All agents (target-state ReAct model) request tool access through the bridge.
-Current most exercised paths are Striker/Resident while migration continues.
   -> bridge.get_tools_for_agent(allowed_tools)
 
 Bridge returns filtered tools (example):
