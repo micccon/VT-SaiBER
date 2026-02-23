@@ -1,3 +1,10 @@
+LEGACY DIAGRAM NOTICE (Updated Feb 2026):
+- This file includes historical ports/tool labels from the pre-ToolBridge phase.
+- For current container wiring and MCP flow, use:
+  - docker-compose.yml
+  - docs/ARCHITECTURE.md
+  - docs/MCP.md
+
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                     Docker Deployment Architecture                          │
 │                    (All containers on vt-saiber-network)                    │

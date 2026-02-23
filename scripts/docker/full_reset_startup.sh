@@ -16,8 +16,11 @@ echo "==================================================="
 # 1. Aggressive Cleanup
 echo "[1/4] Performing aggressive cleanup..."
 echo "   👉 Removing orphans..."
-docker-compose down --remove-orphans 2>/dev/null
 
+#docker-compose down --remove-orphans 2>/dev/null
+
+# Alternative with docker compose:
+docker compose down --remove-orphans 2>/dev/null
 chmod +x scripts/docker/*.sh
 
 echo "   👉 Pruning build cache..."
@@ -27,7 +30,7 @@ docker builder prune -f > /dev/null
 echo "[2/4] Building and starting full stack..."
 
 # Capture the exit code. If build fails, STOP HERE.
-if ! docker-compose up --build -d; then
+if ! docker compose up --build -d; then
     echo "❌ ERROR: Docker Build failed! Check the output above."
     exit 1
 fi

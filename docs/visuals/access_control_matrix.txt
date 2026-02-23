@@ -1,403 +1,133 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Tool Access Control Matrix                             │
-│              (Which Agents Can Call Which Tools & Why)                      │
+│                   VT-SaiBER Tool Access Control Matrix (Current)           │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-AGENT ACCESS CONTROL:
-═════════════════════
+This file documents tool naming and access policy for the MCP ToolBridge model.
 
-┌──────────┬────────┬────────┬─────────┬────────┬────────────┬──────────┐
-│  TOOL    │ SCOUT  │ FUZZER │LIBRARIAN│STRIKER │  RESIDENT  │AUTOMOTIVE│
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ KALI MCP TOOLS:                                                       │
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ nmap     │   ✅   │   ❌  │   ❌    │   ❌  │     ❌     │    ❌   │
-│ arp-scan │   ✅   │   ❌  │   ❌    │   ❌  │     ❌     │    ❌   │
-│ masscan  │   ✅   │   ❌  │   ❌    │   ❌  │     ❌     │    ❌   │
-│ gobuster │   ❌   │   ✅  │   ❌    │   ❌  │     ❌     │    ❌   │
-│ ffuf     │   ❌   │   ✅  │   ❌    │   ❌  │     ❌     │    ❌   │
-│ nikto    │   ❌   │   ✅  │   ❌    │   ❌  │     ❌     │    ❌   │
-│ sqlmap   │   ❌   │   ❌  │   ❌    │   ✅  │     ⚠️     │    ❌   │
-│ hydra    │   ❌   │   ❌  │   ❌    │   ❌  │     ⚠️     │    ❌   │
-│ john     │   ❌   │   ❌  │   ❌    │   ❌  │     ⚠️     │    ❌   │
-│ hashcat  │   ❌   │   ❌  │   ❌    │   ❌  │     ⚠️     │    ❌   │
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ METASPLOIT MCP TOOLS:                                                 │
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ search_  │   ❌  │   ❌   │   ✅    │   ✅  │     ❌     │    ❌   │
-│ modules  │        │        │         │        │            │          │
-│ run_     │   ❌  │   ❌   │   ❌    │   ✅  │     ❌     │    ❌   │
-│ exploit  │        │        │         │        │            │          │
-│ list_    │   ❌  │   ❌   │   ❌    │   ✅  │     ✅     │    ❌   │
-│ sessions │        │        │         │        │            │          │
-│ execute_ │   ❌  │   ❌   │   ❌    │   ❌  │     ✅     │    ❌   │
-│ command  │        │        │         │        │            │          │
-│ upload_  │   ❌  │   ❌   │   ❌    │   ❌  │     ✅     │    ❌   │
-│ file     │        │        │         │        │            │          │
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ AUTOMOTIVE MCP TOOLS:                                                 │
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ can_sniff│   ❌   │   ❌  │   ❌    │   ❌  │     ❌     │    ✅   │
-│ can_send │   ❌   │   ❌  │   ❌    │   ❌  │     ❌     │    ✅   │
-│ can_fuzz │   ❌   │   ❌  │   ❌    │   ❌  │     ❌     │    ✅   │
-│ uds_scan │   ❌   │   ❌  │   ❌    │   ❌  │     ❌     │    ✅   │
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ DATABASE TOOLS:                                                       │
-├──────────┼────────┼────────┼─────────┼────────┼────────────┼──────────┤
-│ RAG      │   ❌   │   ❌  │   ✅    │   ❌  │     ❌     │    ❌   │
-│ search   │        │        │         │        │            │          │
-│ OSINT    │   ❌   │   ❌  │   ✅    │   ❌  │     ❌     │    ❌   │
-│ (Tavily) │        │        │         │        │            │          │
-└──────────┴────────┴────────┴─────────┴────────┴────────────┴──────────┘
+Status note (February 23, 2026):
+- This is the intended access policy/target model.
+- Architecture direction is all-agent ReAct (non-hybrid target).
+- Current code enforcement is strongest in Striker (and partially in Resident).
+- Supervisor, Scout, Fuzzer, and Librarian are still early-stage and not near finished.
+- Embedded/IoT agent has been removed from active project scope.
+
+Naming conventions:
+- MCP server native tool names: `run_exploit`, `nmap_scan`, etc.
+- Bridge-exposed names to LangGraph agents:
+  - `kali_<tool_name>`
+  - `msf_<tool_name>`
+
+Example:
+- Native: `list_active_sessions`
+- In agent toolset: `msf_list_active_sessions`
+
+
+1) TOOL INVENTORY (NATIVE MCP NAMES)
+═════════════════════════════════════
+
+KALI MCP (`src/mcp/kali_mcp_server.py`):
+- nmap_scan
+- gobuster_scan
+- dirb_scan
+- nikto_scan
+- sqlmap_scan
+- metasploit_run
+- hydra_attack
+- john_crack
+- wpscan_analyze
+- enum4linux_scan
+- server_health
+- execute_command
+
+METASPLOIT MCP (`src/mcp/Metasploit.py`):
+- list_exploits
+- list_payloads
+- generate_payload
+- run_exploit
+- run_post_module
+- run_auxiliary_module
+- list_active_sessions
+- send_session_command
+- list_listeners
+- start_listener
+- stop_job
+- terminate_session
+
+
+2) ACCESS POLICY MATRIX (ROLE-BASED TARGET)
+════════════════════════════════════════════
 
 Legend:
-  ✅ = Full Access
-  ⚠️ = Conditional Access (requires approval)
-  ❌ = No Access
+- ✅ allowed
+- ⚠ conditional / approval-gated
+- ❌ denied
+
+KALI TOOLS
+
+| Tool             | Supervisor | Scout | Fuzzer | Librarian | Striker | Resident |
+|------------------|------------|-------|--------|-----------|---------|----------|
+| nmap_scan        | ❌         | ✅    | ❌     | ❌        | ❌      | ❌       |
+| gobuster_scan    | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| dirb_scan        | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| nikto_scan       | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| sqlmap_scan      | ❌         | ❌    | ⚠      | ❌        | ⚠       | ⚠        |
+| execute_command  | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| hydra_attack     | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| john_crack       | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| wpscan_analyze   | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| enum4linux_scan  | ❌         | ✅    | ❌     | ❌        | ❌      | ❌       |
+| server_health    | ❌         | ✅    | ✅     | ✅        | ✅      | ✅       |
+| metasploit_run   | ❌         | ❌    | ❌     | ❌        | ❌      | ❌       |
+
+METASPLOIT TOOLS
+
+| Tool                  | Supervisor | Scout | Fuzzer | Librarian | Striker | Resident |
+|-----------------------|------------|-------|--------|-----------|---------|----------|
+| list_exploits         | ❌         | ❌    | ❌     | ✅        | ✅      | ✅       |
+| list_payloads         | ❌         | ❌    | ❌     | ✅        | ⚠       | ⚠        |
+| generate_payload      | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| run_exploit           | ❌         | ❌    | ❌     | ❌        | ✅      | ❌       |
+| run_auxiliary_module  | ❌         | ❌    | ❌     | ❌        | ✅      | ❌       |
+| run_post_module       | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
+| list_active_sessions  | ❌         | ❌    | ❌     | ❌        | ✅      | ✅       |
+| send_session_command  | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
+| list_listeners        | ❌         | ❌    | ❌     | ❌        | ⚠       | ✅       |
+| start_listener        | ❌         | ❌    | ❌     | ❌        | ⚠       | ✅       |
+| stop_job              | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
+| terminate_session     | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
 
 
-RATIONALE FOR ACCESS CONTROL:
-══════════════════════════════
+3) CURRENT CODE ENFORCEMENT SNAPSHOT
+═════════════════════════════════════
 
-┌─────────────────────────────────────────────────────────────────┐
-│  SCOUT AGENT                                                    │
-│─────────────────────────────────────────────────────────────────│
-│  Role: Network reconnaissance                                   │
-│  Risk Level: LOW (read-only operations)                         │
-│                                                                 │
-│  Allowed Tools:                                                 │
-│  • nmap      - Port scanning, service detection                 │
-│  • arp-scan  - Host discovery                                   │
-│  • masscan   - Fast port scanning                               │
-│                                                                 │
-│  Denied Tools:                                                  │
-│  • gobuster  - Not needed (web-specific)                        │
-│  • exploits  - Scout doesn't attack                             │
-│  • CAN tools - Doesn't work with automotive systems             │
-│                                                                 │
-│  Why: Scout's job is purely observational. It discovers         │
-│       targets but never modifies them. Limiting access          │
-│       prevents accidental damage.                               │
-└─────────────────────────────────────────────────────────────────┘
+Bridge filtering implementation:
+- `src/mcp/mcp_tool_bridge.py`
 
-┌─────────────────────────────────────────────────────────────────┐
-│  FUZZER AGENT                                                   │
-│─────────────────────────────────────────────────────────────────│
-│  Role: Web enumeration                                          │
-│  Risk Level: LOW-MEDIUM (can trigger IDS, but no exploitation)  │
-│                                                                 │
-│  Allowed Tools:                                                 │
-│  • gobuster  - Directory brute-forcing                          │
-│  • ffuf      - Fast web fuzzing                                 │
-│  • nikto     - Web vulnerability scanning                       │
-│                                                                 │
-│  Denied Tools:                                                  │
-│  • nmap      - Already done by Scout                            │
-│  • exploits  - Fuzzer doesn't exploit                           │
-│  • sqlmap    - Too dangerous without explicit approval          │
-│                                                                 │
-│  Why: Fuzzer finds attack surface but doesn't exploit it.       │
-│       Keeping it read-only prevents accidental SQL injection    │
-│       or other active attacks.                                  │
-└─────────────────────────────────────────────────────────────────┘
+Actively wired ReAct tool allowlists:
+- `src/agents/striker.py`
+  - `list_exploits`
+  - `run_exploit`
+  - `run_auxiliary_module`
+  - `list_active_sessions`
+- `src/agents/resident.py` (implementation exists; graph wiring is transitional)
+  - `list_active_sessions`
+  - `send_session_command`
+  - `run_post_module`
+  - `list_exploits`
+  - `terminate_session`
 
-┌─────────────────────────────────────────────────────────────────┐
-│  LIBRARIAN AGENT                                                │
-│─────────────────────────────────────────────────────────────────│
-│  Role: Research & intelligence gathering                        │
-│  Risk Level: VERY LOW (no interaction with targets)             │
-│                                                                 │
-│  Allowed Tools:                                                 │
-│  • search_modules (Metasploit) - Find exploit modules           │
-│  • RAG search - Query local knowledge base                      │
-│  • OSINT (Tavily) - Web search for CVEs, exploits               │
-│                                                                 │
-│  Denied Tools:                                                  │
-│  • ALL scanning tools - Doesn't interact with targets           │
-│  • ALL exploits - Doesn't execute anything                      │
-│                                                                 │
-│  Why: Librarian is purely informational. It provides            │
-│       guidance to other agents but never touches the network.   │
-└─────────────────────────────────────────────────────────────────┘
+Migration note:
+- Scout/Fuzzer/Librarian are still in migration to ReAct + bridge-allowlist-driven
+  execution, with Striker/Resident currently the most advanced implementations.
 
-┌─────────────────────────────────────────────────────────────────┐
-│  STRIKER AGENT                                                  │
-│─────────────────────────────────────────────────────────────────│
-│  Role: Exploitation                                             │
-│  Risk Level: HIGH (active attacks, can crash services)          │
-│                                                                 │
-│  Allowed Tools:                                                 │
-│  • search_modules - Find appropriate exploits                   │
-│  • run_exploit - Execute Metasploit modules                     │
-│  • list_sessions - Check active shells                          │
-│  • sqlmap - SQL injection (conditional)                         │
-│                                                                 │
-│  Denied Tools:                                                  │
-│  • Scanning tools - Already done by Scout/Fuzzer                │
-│  • Post-exploit tools - Reserved for Resident                   │
-│  • DoS modules - Forbidden (destructive)                        │
-│                                                                 │
-│  Why: Striker is the "trigger puller." Strict controls prevent  │
-│       it from doing reconnaissance (redundant) or persistence   │
-│       (Resident's job). Only exploits.                          │
-│                                                                 │
-│  Safety Measures:                                               │
-│  • Exploit whitelist (no DoS modules)                           │
-│  • Timeout enforcement (60s max)                                │
-│  • 3-attempt limit per target                                   │
-│  • Session verification required                                │
-└─────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────────┐
-│  RESIDENT AGENT                                                 │
-│─────────────────────────────────────────────────────────────────│
-│  Role: Post-exploitation, persistence, lateral movement         │
-│  Risk Level: VERY HIGH (can leave backdoors, modify systems)    │
-│                                                                 │
-│  Allowed Tools:                                                 │
-│  • list_sessions - View active shells                           │
-│  • execute_command - Run commands in sessions                   │
-│  • upload_file - Upload tools/backdoors                         │
-│  • hydra - Password cracking (conditional)                      │
-│  • john - Hash cracking (conditional)                           │
-│  • hashcat - GPU hash cracking (conditional)                    │
-can you generate requirements for each agent?11:15 AM             |                                                     │
-│  Denied Tools:                                                  │
-│  • Scanning tools - Not its job                                 │
-│  • run_exploit - Initial exploitation done by Striker           │
-│                                                                 │
-│  Why: Resident operates AFTER initial access is gained. It      │
-│       needs powerful post-exploit tools but shouldn't scan      │
-│       or exploit (that's redundant).                            │
-│                                                                 │
-│  Safety Measures:                                               │
-│  • Change logging (tracks every modification)                   │
-│  • Non-destructive escalation only                              │
-│  • Cleanup plan required                                        │
-│  • Exfiltration throttling (1MB/s max)                          │
-└─────────────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────────────┐
-│  AUTOMOTIVE AGENT                                               │
-│─────────────────────────────────────────────────────────────────│
-│  Role: CAN bus / vehicle system specialist                      │
-│  Risk Level: CRITICAL (can affect physical systems)             │
-│                                                                 │
-│  Allowed Tools:                                                 │
-│  • can_sniff - Monitor CAN traffic                              │
-│  • can_send - Inject CAN frames                                 │
-│  • can_fuzz - Fuzz CAN IDs                                      │
-│  • uds_scan - UDS service discovery                             │
-│                                                                 │
-│  Denied Tools:                                                  │
-│  • ALL IT tools - Completely different domain                   │
-│  • Network scans - Not relevant to CAN bus                      │
-│                                                                 │
-│  Why: Automotive systems are isolated. This agent only works    │
-│       with ICS/OT targets, not traditional IT systems.          │
-│                                                                 │
-│  Safety Measures:                                               │
-│  • Bus flood protection (100 msg/s max)                         │
-│  • Critical ID whitelist (can't touch brakes/airbags)           │
-│  • Pre-injection sniff (3s baseline)                            │
-│  • State verification after injection                           │
-└─────────────────────────────────────────────────────────────────┘
-IMPLEMENTATION IN CODE:
-═══════════════════════
-┌────────────────────────────────────────────────────────────────┐
-│  Base Agent with Tool Access Control                           │
-│────────────────────────────────────────────────────────────────│
-│                                                                │
-│  from abc import ABC, abstractmethod                           │
-│  from typing import List                                       │
-│                                                                │
-│  class BaseAgent(ABC):                                         │
-│      # Each agent defines its allowed tools                    │
-│      ALLOWED_TOOLS: List[str] = []                             │
-│                                                                │
-│      async def call_tool(                                      │
-│          self,                                                 │
-│          tool_name: str,                                       │
-│          params: Dict[str, Any]                                │
-│      ) -> Dict[str, Any]:                                      │
-│          """                                                   │
-│          Wrapper around MCP client that enforces access control│
-│          """                                                   │
-│                                                                │
-│          # Check if agent is allowed to use this tool          │
-│          if tool_name not in self.ALLOWED_TOOLS:               │
-│              raise ToolAccessDeniedError(                      │
-│                  f"{self.name} is not allowed to use {tool_name}"│
-│              )                                                 │
-│                                                                │
-│          # Log the tool call                                   │
-│          logger.info(                                          │
-│              f"{self.name} calling tool: {tool_name}"          │
-│          )                                                     │
-│                                                                │
-│          # Call the tool via MCP                               │
-│          return await self.mcp.call_tool(tool_name, params)    │
-└────────────────────────────────────────────────────────────────┘
-┌────────────────────────────────────────────────────────────────┐
-│  Scout Agent Implementation                                    │
-│────────────────────────────────────────────────────────────────│
-│                                                                │
-│  class ScoutAgent(BaseAgent):                                  │
-│      # Define allowed tools for Scout                          │
-│      ALLOWED_TOOLS = [                                         │
-│          "nmap",                                               │
-│          "arp-scan",                                           │
-│          "masscan"                                             │
-│      ]                                                         │
-│                                                                │
-│      async def call_llm(self, state: CyberState):              │
-│          # Scout can ONLY call tools in ALLOWED_TOOLS          │
-│          result = await self.call_tool("nmap", {...})          │
-│          # ✅ Works                                            │
-│                                                                │
-│          result = await self.call_tool("run_exploit", {...})   │
-│          # ❌ Raises ToolAccessDeniedError                     │
-└────────────────────────────────────────────────────────────────┘
-┌────────────────────────────────────────────────────────────────┐
-│  Striker Agent Implementation                                  │
-│────────────────────────────────────────────────────────────────│
-│                                                                │
-│  class StrikerAgent(BaseAgent):                                │
-│      ALLOWED_TOOLS = [                                         │
-│          "search_modules",                                     │
-│          "run_exploit",                                        │
-│          "list_sessions"                                       │
-│      ]                                                         │
-│                                                                │
-│      # Additional safety: Exploit whitelist                    │
-│      FORBIDDEN_MODULES = [                                     │
-│          "dos",      # Denial of Service                       │
-│          "auxiliary/dos",                                      │
-│          "auxiliary/scanner/http/apache_mod_cgi_bash_env"  # DoS│
-│      ]                                                         │
-│                                                                │
-│      async def call_llm(self, state: CyberState):              │
-│          exploit_module = select_exploit(...)                  │
-│                                                                │
-│          # Check if module is forbidden                        │
-│          if any(forbidden in exploit_module                    │
-│                 for forbidden in self.FORBIDDEN_MODULES):      │
-│              raise ForbiddenExploitError(                      │
-│                  f"Module {exploit_module} is forbidden"       │
-│              )                                                 │
-│                                                                │
-│          result = await self.call_tool("run_exploit", {        │
-│              "module": exploit_module,                         │
-│              ...                                               │
-│          })                                                    │
-└────────────────────────────────────────────────────────────────┘
-MCP SERVER-SIDE VALIDATION:
-═══════════════════════════
-Even if an agent bypasses client-side checks, MCP servers validate:
-┌────────────────────────────────────────────────────────────────┐
-│  Kali MCP Server (Tool Whitelist)                              │
-│────────────────────────────────────────────────────────────────│
-│                                                                │
-│  REGISTERED_TOOLS = [                                          │
-│      "nmap",                                                   │
-│      "arp-scan",                                               │
-│      "gobuster",                                               │
-│      "ffuf",                                                   │
-│      "nikto"                                                   │
-│  ]                                                             │
-│                                                                │
-│  @app.post("/tools/{tool_name}")                               │
-│  async def execute_tool(tool_name: str, params: dict):         │
-│      # Validate tool exists                                    │
-│      if tool_name not in REGISTERED_TOOLS:                     │
-│          return {                                              │
-│              "error": "Unknown tool",                          │
-│              "code": 404                                       │
-│          }                                                     │
-│                                                                │
-│      # Validate target is in scope                             │
-│      if not is_in_scope(params.get("target")):                 │
-│          return {                                              │
-│              "error": "Target out of scope",                   │
-│              "code": 403                                       │
-│          }                                                     │
-│                                                                │
-│      # Execute the tool                                        │
-│      result = execute(tool_name, params)                       │
-│      return result                                             │
-└────────────────────────────────────────────────────────────────┘
-CONDITIONAL ACCESS (⚠️):
-═══════════════════════
-Some tools require human approval:
-┌────────────────────────────────────────────────────────────────┐
-│  Resident Agent: Conditional Tool Access                       │
-│────────────────────────────────────────────────────────────────│
-│                                                                │
-│  class ResidentAgent(BaseAgent):                               │
-│      ALLOWED_TOOLS = [                                         │
-│          "list_sessions",                                      │
-│          "execute_command",                                    │
-│          "upload_file"                                         │
-│      ]                                                         │
-│                                                                │
-│      CONDITIONAL_TOOLS = [                                     │
-│          "hydra",     # Password cracking                      │
-│          "john",      # Hash cracking                          │
-│          "hashcat"    # GPU cracking                           │
-│      ]                                                         │
-│                                                                │
-│      async def call_tool(self, tool_name, params):             │
-│          if tool_name in self.CONDITIONAL_TOOLS:               │
-│              # Require human approval                          │
-│              approval = await request_human_approval(          │
-│                  f"Resident wants to use {tool_name} "         │
-│                  f"with params: {params}"                      │
-│              )                                                 │
-│                                                                │
-│              if not approval:                                  │
-│                  raise ToolAccessDeniedError(                  │
-│                      f"Human declined {tool_name} usage"       │
-│                  )                                             │
-│                                                                │
-│          # Proceed if allowed or approved                      │
-│          return await super().call_tool(tool_name, params)     │
-└────────────────────────────────────────────────────────────────┘
-AUDIT LOGGING:
-══════════════
-Every tool call is logged for security review:
-┌────────────────────────────────────────────────────────────────┐
-│  Tool Call Audit Log                                           │
-│────────────────────────────────────────────────────────────────│
-│                                                                │
-│  CREATE TABLE tool_audit_log (                                 │
-│      id SERIAL PRIMARY KEY,                                    │
-│      mission_id VARCHAR(255),                                  │
-│      agent_name VARCHAR(50),                                   │
-│      tool_name VARCHAR(100),                                   │
-│      params JSONB,                                             │
-│      allowed BOOLEAN,                                          │
-│      result TEXT,                                              │
-│      timestamp TIMESTAMP DEFAULT NOW()                         │
-│  );                                                            │
-│                                                                │
-│  Example entries:                                              │
-│                                                                │
-│  {                                                             │
-│    "mission_id": "mission-001",                                │
-│    "agent_name": "scout",                                      │
-│    "tool_name": "nmap",                                        │
-│    "params": {"target": "192.168.1.50", "flags": "-sV"},       │
-│    "allowed": true,                                            │
-│    "result": "success",                                        │
-│    "timestamp": "2026-02-02T14:30:00Z"                         │
-│  }                                                             │
-│                                                                │
-│  {                                                             │
-│    "mission_id": "mission-001",                                │
-│    "agent_name": "scout",                                      │
-│    "tool_name": "run_exploit",                                 │
-│    "params": {...},                                            │
-│    "allowed": false,  ◄── Blocked!                             │
-│    "result": "ToolAccessDeniedError",                          │
-│    "timestamp": "2026-02-02T14:30:05Z"                         │
-│  }                                                             │
-└────────────────────────────────────────────────────────────────┘
+4) HOW TO READ TOOL NAMES IN AGENT CODE
+═══════════════════════════════════════
+
+Allowlist can be written using native names:
+- `run_exploit`
+
+At runtime, actual registered tool names are prefixed:
+- `msf_run_exploit`
+
+Both forms are accepted by bridge filtering.

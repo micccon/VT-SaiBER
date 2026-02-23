@@ -1,4 +1,24 @@
 
+## Implementation Status Note
+
+This file is a requirements/specification document, not a strict implementation mirror.
+
+Current implementation reference points:
+- Dynamic MCP bridge: `src/mcp/mcp_tool_bridge.py`
+- ReAct reference worker: `src/agents/striker.py`
+- Supervisor routing + safety checks: `src/agents/supervisor.py`, `src/graph/router.py`
+- Embedded/IoT agent: removed from active project scope
+
+In other words, treat this document as target behavior and guardrail intent, and verify runtime specifics against code paths above.
+
+Current maturity snapshot (February 23, 2026):
+- Design direction: all agents are intended to be ReAct; a hybrid architecture is not the target.
+- Striker: partially finished
+- Resident: partially implemented/transitional
+- Supervisor, Scout, Fuzzer, Librarian: early-stage, not near finished
+
+---
+
 ## Supervisor Agent
 
 The Supervisor must be implemented as a centralized routing node that manages the transition between worker agents based on the evaluation of the CyberState.
@@ -183,29 +203,6 @@ class CANCommand(BaseModel):
 
 ---
 
-## Embedded / IoT Agent
-
-This agent targets MQTT, Modbus, and CoAP gateways.
-
-```python
-class EmbeddedFinding(BaseModel):
-    protocol: str
-    endpoint: str
-    access_level: str
-    critical_path: str
-    suggested_action: str
-    rationale: str
-```
-
-### Deep Protocol Capabilities
-
-* MQTT wildcard topic sniffing
-* Modbus register brute-forcing
-* Firmware analysis using `binwalk`
-* Credential caching and reuse
-
----
-
 ## Librarian Agent (RAG & OSINT)
 
 The Librarian prevents hallucinations by supplying verified intelligence.
@@ -258,4 +255,4 @@ class SessionAudit(BaseModel):
 3. Librarian retrieves exploit intelligence
 4. Striker gains initial access
 5. Resident pivots and persists
-6. Automotive and Embedded agents compromise OT systems
+6. Automotive agent (optional path) handles CAN/OT-specific operations

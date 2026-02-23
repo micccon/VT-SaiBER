@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup_testbed.sh
-# Starts the automotive pentesting testbed and connects it to vt-saiber-network
-# so that kali-mcp and msf-mcp containers can reach it by hostname.
+# start_testbed.sh
+# Starts an already-built automotive testbed without rebuilding the image.
+# Use setup_testbed.sh for first-time setup or after Dockerfile changes.
 #
 # Usage:
-#   bash scripts/testbed/setup_testbed.sh
+#   bash scripts/testbed/start_testbed.sh
 #
 # Prerequisites:
+#   - setup_testbed.sh has been run at least once (image already built)
 #   - Main VT-SaiBER stack must be running (creates vt-saiber-network):
 #       docker-compose up -d   (from project root)
-#   - Native Linux or Linux VM (for vcan CAN bus support)
 # =============================================================================
 
 set -euo pipefail
 
-# Anchor to this script's directory so the -f path is always correct
 cd "$(dirname "$0")"
 
 COMPOSE_FILE="../../automotive_testbed/docker-compose.yml"
@@ -51,13 +50,11 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Step 2: Build and start the testbed container
+# Step 2: Start the existing testbed container (no rebuild)
 # -----------------------------------------------------------------------------
-info "Starting automotive testbed (this may take a few minutes on first build)..."
-#docker-compose -f "$COMPOSE_FILE" up -d --build
+info "Starting automotive testbed (using existing image, no rebuild)..."
+docker compose -f "$COMPOSE_FILE" up -d
 
-# Alternative with build output:
-docker compose -f "$COMPOSE_FILE" up -d --build
 # -----------------------------------------------------------------------------
 # Step 3: Wait for Validation API to become healthy
 # -----------------------------------------------------------------------------
@@ -68,6 +65,7 @@ until curl -sf "$VALIDATION_URL" > /dev/null 2>&1; do
     if [ "$attempt" -ge "$MAX_RETRIES" ]; then
         error "Timed out waiting for testbed to become healthy after $((MAX_RETRIES * RETRY_SLEEP))s."
         error "Check logs: docker logs $CONTAINER_NAME"
+        error "If the image is missing, run setup_testbed.sh instead."
         exit 1
     fi
     printf "."
@@ -83,7 +81,6 @@ info "Connecting $CONTAINER_NAME to $SHARED_NETWORK ..."
 if docker network connect "$SHARED_NETWORK" "$CONTAINER_NAME" 2>/dev/null; then
     success "$CONTAINER_NAME joined $SHARED_NETWORK."
 else
-    # Already connected is fine
     success "$CONTAINER_NAME already on $SHARED_NETWORK (no action needed)."
 fi
 
@@ -115,4 +112,5 @@ curl -s "$VALIDATION_URL" | python3 -m json.tool 2>/dev/null || curl -s "$VALIDA
 echo ""
 echo "  Run validate:  bash scripts/testbed/validate_testbed.sh"
 echo "  Run reset:     bash scripts/testbed/reset_testbed.sh"
+echo "  Full setup:    bash scripts/testbed/setup_testbed.sh  (rebuilds image)"
 echo "============================================================"

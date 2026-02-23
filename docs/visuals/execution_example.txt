@@ -1,329 +1,130 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│           Mission Execution Timeline: Complete Attack Sequence              │
-│                  (Example: Exploiting 192.168.1.50)                         │
+│                 VT-SaiBER Execution Example (Supervisor Framework)         │
+│         Updated for LangGraph + MCP ToolBridge + ReAct worker pattern      │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-USER          SUPERVISOR      SCOUT       FUZZER    LIBRARIAN   STRIKER   RESIDENT
-  │                │            │            │           │          │         │
-  │ Start Mission  │            │            │           │          │         │
-  │ "Exploit       │            │            │           │          │         │
-  │ 192.168.1.50"  │            │            │           │          │         │
-  ├───────────────►│            │            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │ Initial    │            │           │          │         │
-  │                │ State:     │            │           │          │         │
-  │                │ {}         │            │           │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 1             │            │            │           │          │         │
-Time: 14:30:00     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │ Analyze:   │            │           │          │         │
-  │                │ "No targets│            │           │          │         │
-  │                │  discovered│            │           │          │         │
-  │                │  yet. Need │            │           │          │         │
-  │                │  recon."   │            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │ Decision:  │            │           │          │         │
-  │                │ next_agent │            │           │          │         │
-  │                │ = "scout"  │            │           │          │         │
-  │                ├────────────┤            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │    State   │            │           │          │         │
-  │                │    Update  │            │           │          │         │
-  │                ├───────────►│            │           │          │         │
-  │                │ checkpoint │            │           │          │         │
-  │                │   saved    │            │           │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 2             │            │            │           │          │         │
-Time: 14:30:05     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │            │ Receive    │           │          │         │
-  │                │            │ state      │           │          │         │
-  │                │            │            │           │          │         │
-  │                │            │ LLM:       │           │          │         │
-  │                │            │ "Run nmap  │           │          │         │
-  │                │            │  -sV -sC"  │           │          │         │
-  │                │            │            │           │          │         │
-  │                │            │ MCP Call   │           │          │         │
-  │                │            │ nmap───────┼───────────┼──────────┼─────────►
-  │                │            │            │           │          │    KALI MCP
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ $ nmap -sV
-  │                │            │            │           │          │   192.168.1.50
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ Found:  │
-  │                │            │            │           │          │ 21/vsftpd
-  │                │            │            │           │          │ 22/ssh  │
-  │                │            │            │           │          │ 80/http │
-  │                │            │◄───────────┴───────────┴──────────┴─────────┤
-  │                │            │ Result:    │           │          │         │
-  │                │            │ {ports:    │           │          │         │
-  │                │            │  [21,22,   │           │          │         │
-  │                │            │   80]}     │           │          │         │
-  │                │            │            │           │          │         │
-  │                │            │ Parse &    │           │          │         │
-  │                │            │ Interpret  │           │          │         │
-  │                │            │            │           │          │         │
-  │                │            │ Return:    │           │          │         │
-  │                │            │ discovered_│           │          │         │
-  │                │            │ targets    │           │          │         │
-  │                │◄───────────┤            │           │          │         │
-  │                │ checkpoint │            │           │          │         │
-  │                │   saved    │            │           │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 3             │            │            │           │          │         │
-Time: 14:30:35     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │ Analyze:   │            │           │          │         │
-  │                │ "Found 3   │            │           │          │         │
-  │                │  ports.    │            │           │          │         │
-  │                │  Port 80   │            │           │          │         │
-  │                │  is HTTP.  │            │           │          │         │
-  │                │  Should    │            │           │          │         │
-  │                │  enumerate │            │           │          │         │
-  │                │  web."     │            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │ Decision:  │            │           │          │         │
-  │                │ next_agent │            │           │          │         │
-  │                │ = "fuzzer" │            │           │          │         │
-  │                ├────────────┼────────────┤           │          │         │
-  │                │            │            │           │          │         │
-  │                │            │   State    │           │          │         │
-  │                │            │   Update   │           │          │         │
-  │                │            ├───────────►│           │          │         │
-  │                │            │checkpoint  │           │          │         │
-  │                │            │  saved     │           │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 4             │            │            │           │          │         │
-Time: 14:30:40     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │            │            │ Receive   │          │         │
-  │                │            │            │ state     │          │         │
-  │                │            │            │           │          │         │
-  │                │            │            │ LLM:      │          │         │
-  │                │            │            │ "Fuzz     │          │         │
-  │                │            │            │  port 80" │          │         │
-  │                │            │            │           │          │         │
-  │                │            │            │ MCP Call  │          │         │
-  │                │            │            │ gobuster──┼──────────┼─────────►
-  │                │            │            │           │          │    KALI MCP
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ $ gobuster
-  │                │            │            │           │          │   dir -u
-  │                │            │            │           │          │   http://
-  │                │            │            │           │          │   192...
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ Found:  │
-  │                │            │            │           │          │ /admin  │
-  │                │            │            │           │          │ /api    │
-  │                │            │            │◄──────────┴──────────┴─────────┤
-  │                │            │            │ Result    │          │         │
-  │                │            │            │           │          │         │
-  │                │            │            │ Return:   │          │         │
-  │                │            │            │ web_      │          │         │
-  │                │            │            │ findings  │          │         │
-  │                │◄───────────┴────────────┤           │          │         │
-  │                │ checkpoint │            │           │          │         │
-  │                │   saved    │            │           │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 5             │            │            │           │          │         │
-Time: 14:31:20     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │ Analyze:   │            │           │          │         │
-  │                │ "Found     │            │           │          │         │
-  │                │  vsftpd    │            │           │          │         │
-  │                │  2.3.4.    │            │           │          │         │
-  │                │  Should    │            │           │          │         │
-  │                │  research  │            │           │          │         │
-  │                │  exploit   │            │           │          │         │
-  │                │  before    │            │           │          │         │
-  │                │  attacking"│            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │ Decision:  │            │           │          │         │
-  │                │ next_agent │            │           │          │         │
-  │                │ ="librarian│            │           │          │         │
-  │                ├────────────┼────────────┼───────────┤          │         │
-  │                │            │            │           │          │         │
-  │                │            │            │  State    │          │         │
-  │                │            │            │  Update   │          │         │
-  │                │            │            ├──────────►│          │         │
-  │                │            │            │checkpoint │          │         │
-  │                │            │            │  saved    │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 6             │            │            │           │          │         │
-Time: 14:31:25     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │            │            │           │ Receive  │         │
-  │                │            │            │           │ state    │         │
-  │                │            │            │           │          │         │
-  │                │            │            │           │ Query:   │         │
-  │                │            │            │           │ "vsftpd  │         │
-  │                │            │            │           │  2.3.4   │         │
-  │                │            │            │           │  exploit"│         │
-  │                │            │            │           │          │         │
-  │                │            │            │           │ RAG      │         │
-  │                │            │            │           │ Search───┼─────────►
-  │                │            │            │           │          │  POSTGRES
-  │                │            │            │           │          │  pgvector
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ Found:  │
-  │                │            │            │           │          │ CVE-2011│
-  │                │            │            │           │          │ -2523   │
-  │                │            │            │           │          │ Module: │
-  │                │            │            │           │          │ exploit/│
-  │                │            │            │           │          │ unix/ftp│
-  │                │            │            │           │◄─────────┴─────────┤
-  │                │            │            │           │ Result   │         │
-  │                │            │            │           │          │         │
-  │                │            │            │           │ Return:  │         │
-  │                │            │            │           │ research_│         │
-  │                │            │            │           │ results  │         │
-  │                │◄───────────┴────────────┴───────────┤          │         │
-  │                │ checkpoint │            │           │          │         │
-  │                │   saved    │            │           │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 7             │            │            │           │          │         │
-Time: 14:31:55     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │ Analyze:   │            │           │          │         │
-  │                │ "Librarian │            │           │          │         │
-  │                │  provided  │            │           │          │         │
-  │                │  exploit   │            │           │          │         │
-  │                │  details.  │            │           │          │         │
-  │                │  Ready to  │            │           │          │         │
-  │                │  attack."  │            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │ Decision:  │            │           │          │         │
-  │                │ next_agent │            │           │          │         │
-  │                │ ="striker" │            │           │          │         │
-  │                ├────────────┼────────────┼───────────┼──────────┤         │
-  │                │            │            │           │          │         │
-  │                │            │            │           │ State    │         │
-  │                │            │            │           │ Update   │         │
-  │                │            │            │           ├─────────►│         │
-  │                │            │            │           │checkpoint│         │
-  │                │            │            │           │ saved    │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 8             │            │            │           │          │         │
-Time: 14:32:00     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ Receive │
-  │                │            │            │           │          │ state   │
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ LLM:    │
-  │                │            │            │           │          │ "Use    │
-  │                │            │            │           │          │  vsftpd │
-  │                │            │            │           │          │  exploit│
-  │                │            │            │           │          │  on port│
-  │                │            │            │           │          │  21"    │
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ MCP Call│
-  │                │            │            │           │          │run_explt│
-  │                │            │            │           │          ├─────────►
-  │                │            │            │           │          │    MSF  │
-  │                │            │            │           │          │    MCP  │
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ $ msfcon│
-  │                │            │            │           │          │   use   │
-  │                │            │            │           │          │   exploit│
-  │                │            │            │           │          │   /unix/│
-  │                │            │            │           │          │   ftp/  │
-  │                │            │            │           │          │   vsftpd│
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ set     │
-  │                │            │            │           │          │ RHOSTS  │
-  │                │            │            │           │          │ 192...  │
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ exploit │
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ SUCCESS!│
-  │                │            │            │           │          │ Session │
-  │                │            │            │           │          │ 1 opened│
-  │                │            │            │           │          │ (root)  │
-  │                │            │            │           │          │◄────────┤
-  │                │            │            │           │          │ Result  │
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ Verify: │
-  │                │            │            │           │          │ $ whoami│
-  │                │            │            │           │          │ root    │
-  │                │            │            │           │          │         │
-  │                │            │            │           │          │ Return: │
-  │                │            │            │           │          │ active_ │
-  │                │            │            │           │          │ sessions│
-  │                │◄───────────┴────────────┴───────────┴──────────┤         │
-  │                │ checkpoint │            │           │          │         │
-  │                │   saved    │            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │ mission_   │            │           │          │         │
-  │                │ status:    │            │           │          │         │
-  │                │ "success"  │            │           │          │         │
-  │                │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-TURN 9             │            │            │           │          │         │
-Time: 14:35:05     │            │            │           │          │         │
-═══════════════════╪════════════╪════════════╪═══════════╪══════════╪═════════╪═══
-  │                │            │            │           │          │         │
-  │                │ Analyze:   │            │           │          │         │
-  │                │ "Got root  │            │           │          │         │
-  │                │  shell.    │            │           │          │         │
-  │                │  Mission   │            │           │          │         │
-  │                │  goal      │            │           │          │         │
-  │                │  achieved!"│            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │ Decision:  │            │           │          │         │
-  │                │ next_agent │            │           │          │         │
-  │                │ = "end"    │            │           │          │         │
-  │                │            │            │           │          │         │
-  │                │  MISSION   │            │           │          │         │
-  │                │  COMPLETE  │            │           │          │         │
-  │◄───────────────┤            │            │           │          │         │
-  │   Report:      │            │            │           │          │         │
-  │   - Target:    │            │           │          │         │
-  │     192.168.1. │            │            │           │          │         │
-  │     50         │            │            │           │          │         │
-  │   - Time:      │            │            │           │          │         │
-  │     5m 5s      │            │            │           │          │         │
-  │   - Access:    │            │            │           │          │         │
-  │     ROOT shell │            │            │           │          │         │
-  │                │            │            │           │          │         │
+STATUS NOTE (February 23, 2026):
+- This timeline represents intended end-to-end orchestration behavior.
+- The target architecture is all-agent ReAct (non-hybrid).
+- Striker is the only partially finished worker in this flow.
+- Resident is partial/transitional.
+- Other workers are currently early-stage and not near finished.
+- Embedded/IoT agent has been removed from active project scope.
+
+MISSION:
+- "Gain initial access to target 192.168.1.50"
+
+PARTICIPANTS:
+- Supervisor (routing brain)
+- Scout (recon)
+- Fuzzer (web enumeration)
+- Librarian (intel)
+- Striker (ReAct exploitation)
+- Resident (post-exploitation, optional/transitional)
+- MCP ToolBridge (dynamic SSE discovery)
+- Kali MCP / Metasploit MCP
 
 
-SUMMARY STATISTICS:
-═══════════════════
+PRE-RUN (Tool Discovery)
+═════════════════════════
 
-Total Iterations: 9
-Total Time: 5 minutes 5 seconds
-Agents Called: Scout (1x), Fuzzer (1x), Librarian (1x), Striker (1x)
-Tools Used: nmap, gobuster, RAG search, Metasploit
-Final Outcome: ROOT shell on 192.168.1.50
-Checkpoints Saved: 9 (one after each turn)
+[agents container startup]
+  -> MCPToolBridge connects:
+     - kali URL: http://kali-mcp:5001  (SSE /sse)
+     - msf  URL: http://msf-mcp:8085   (SSE /sse)
 
-Attack Chain:
-1. Scout discovered ports 21, 22, 80
-2. Fuzzer found /admin and /api endpoints
-3. Librarian researched vsftpd 2.3.4 exploit
-4. Striker executed exploit and gained root shell
+  -> Bridge lists tools from both servers
+  -> Tools registered with prefixes:
+     - kali_nmap_scan, kali_gobuster_scan, ...
+     - msf_list_exploits, msf_run_exploit, msf_list_active_sessions, ...
 
-Critical Findings:
-- vsftpd 2.3.4 backdoor (CVE-2011-2523)
-- Admin panel at /admin
-- API endpoint at /api
 
-This demonstrates the AI making intelligent routing decisions without
-any hardcoded "if port 80 then call fuzzer" rules.
+TURN-BY-TURN (Supervisor-Controlled)
+════════════════════════════════════
+
+TURN 1
+- Supervisor reads CyberState (no targets yet)
+- Decision: `next_agent = "scout"`
+- State update: route decision logged
+
+TURN 2
+- Scout runs reconnaissance workflow
+- New state added:
+  - discovered_targets["192.168.1.50"]
+  - ports/services discovered (example: 21, 22, 80)
+- Control returns to Supervisor
+
+TURN 3
+- Supervisor sees HTTP service and recon complete
+- Decision: `next_agent = "fuzzer"`
+
+TURN 4
+- Fuzzer enumerates web surface
+- New state added:
+  - web_findings (example: `/admin`, `/api`, status codes)
+- Control returns to Supervisor
+
+TURN 5
+- Supervisor decides exploitation should be research-informed first
+- Decision: `next_agent = "librarian"`
+
+TURN 6
+- Librarian adds intelligence
+- New state added:
+  - research_cache
+  - osint_findings (CVE/module hints)
+- Control returns to Supervisor
+
+TURN 7
+- Supervisor sees prerequisites met for exploitation
+- Decision: `next_agent = "striker"`
+
+TURN 8 (ReAct Tool Loop in Striker)
+- Striker gets filtered MSF tools from bridge allowlist:
+  - list_exploits
+  - run_exploit
+  - run_auxiliary_module
+  - list_active_sessions
+
+- ReAct sequence (example):
+  1. `msf_list_exploits(search_term="vsftpd")`
+  2. choose module strategy
+  3. `msf_run_exploit(...)` or `msf_run_auxiliary_module(...)`
+  4. `msf_list_active_sessions()` for verification
+
+- Striker parses tool messages and updates state:
+  - exploited_services
+  - active_sessions (if opened)
+  - critical_findings
+
+TURN 9
+- Supervisor re-evaluates:
+  - if session exists: route to `resident` (when enabled) or end on mission criteria
+  - if no session: route back to librarian/striker/fuzzer based on context
+
+
+SAFETY AND STOP CONDITIONS
+══════════════════════════
+
+Router checks (`src/graph/router.py`) enforce:
+- max iterations
+- scope validation
+- valid agent name
+- mission end conditions
+
+These checks are guardrails only.
+Business routing decisions remain with Supervisor reasoning.
+
+
+CORE PRINCIPLE PRESERVED
+════════════════════════
+
+The architecture still follows the same command model:
+- Supervisor decides
+- Specialist executes
+- State is updated
+- Supervisor decides again
+
+What changed is tool connectivity:
+- Old model: static client routing assumptions
+- Current model: dynamic MCP discovery + filtered tool exposure per agent

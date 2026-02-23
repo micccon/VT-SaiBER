@@ -6,13 +6,13 @@
 # Use this for normal startups. For a full reset and rebuild, use scripts/docker/full_reset_startup.sh
 
 echo "🚀 Starting VT-SaiBER containers..."
-docker-compose up -d
+docker compose up -d
 
 echo ""
 echo "⏳ Waiting for services to be healthy..."
 sleep 5
 
-docker-compose ps
+docker compose ps
 
 echo ""
-echo "✅ Done! View logs with: docker-compose logs -f"
+echo "✅ Done! View logs with: docker compose logs -f"
