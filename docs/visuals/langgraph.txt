@@ -3,6 +3,11 @@
 │                   (Agents follow logical attack progression)                │
 └─────────────────────────────────────────────────────────────────────────────┘
 
+STATUS NOTE:
+- This is a target-state workflow diagram.
+- The target architecture is all-agent ReAct (non-hybrid).
+- Embedded/IoT agent has been removed from active scope.
+
                                     START
                                       │
                                       ▼
@@ -110,4 +115,3 @@ CONDITIONAL EDGES (Safety Only, Not Business Logic):
 
 The graph doesn't have rules like "if port 80, then fuzzer"
 Instead, the Supervisor's LLM reasons about what makes sense.
-

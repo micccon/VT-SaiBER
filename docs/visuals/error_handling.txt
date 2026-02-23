@@ -1,3 +1,9 @@
+LEGACY DIAGRAM NOTICE (Updated Feb 2026):
+- This file contains historical examples from older MCP transport assumptions.
+- For current MCP integration and tool naming, refer to:
+  - docs/MCP.md
+  - docs/visuals/mcp.txt
+
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                   Error Handling & Recovery Mechanisms                      │
 └─────────────────────────────────────────────────────────────────────────────┘

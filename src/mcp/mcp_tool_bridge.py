@@ -167,16 +167,17 @@ class MCPToolBridge:
     def get_tools_for_agent(self, allowed_tools: Optional[Set[str]] = None) -> List[StructuredTool]:
         """
         Get tools filtered for a specific agent.
-        
+
         Args:
             allowed_tools: Set of tool names agent is allowed to use.
-                          If None, returns all tools.
-        
+                          If None, returns an empty list (deny by default).
+
         Returns:
             List of tools agent can use
         """
         if allowed_tools is None:
-            return self.all_tools
+            logger.warning("get_tools_for_agent called with no allowlist — returning no tools")
+            return []
         
         # Filter tools
         filtered = []
