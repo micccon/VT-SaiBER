@@ -14,7 +14,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")"
 
-COMPOSE_FILE="../../automotive_testbed/docker-compose.yml"
+COMPOSE_FILE="../../third_party/automotive_testbed/docker-compose.yml"
 CONTAINER_NAME="automotive-testbed"
 SHARED_NETWORK="vt-saiber-network"
 CLEAN=false

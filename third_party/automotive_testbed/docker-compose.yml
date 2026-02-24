@@ -1,0 +1,21 @@
+services:
+  automotive-testbed:
+    build: .
+    image: automotive-testbed
+    container_name: automotive-testbed
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "2222:22"     # SSH
+      - "8000:8000"   # Infotainment web app
+      - "8080:8080"   # Gateway firmware service
+      - "9555:9555"   # OBD-II simulator
+      - "9556:9556"   # UDS Gateway
+      - "9999:9999"   # Validation API
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opt/automotive-testbed/health_check.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3

@@ -15,7 +15,7 @@ from src.agents.scout import scout_node
 from src.agents.fuzzer import fuzzer_node
 from src.agents.librarian import librarian_node
 from src.agents.striker import striker_node
-# from src.agents.resident import resident_node
+from src.agents.resident import resident_node
 
 def build_graph(checkpointer=None):
     """
@@ -37,7 +37,7 @@ def build_graph(checkpointer=None):
     workflow.add_node("fuzzer", fuzzer_node)
     workflow.add_node("librarian", librarian_node)
     workflow.add_node("striker", striker_node)
-    # workflow.add_node("resident", resident_node)
+    workflow.add_node("resident", resident_node)
     
     # Set entry point
     workflow.set_entry_point("supervisor")

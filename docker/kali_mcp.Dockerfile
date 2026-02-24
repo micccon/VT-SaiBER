@@ -7,7 +7,6 @@ RUN apt-get update && \
     curl \
     python3 \
     python3-pip \
-    git \
     # Security tools
     nmap \
     masscan \
@@ -30,11 +29,11 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# 2. Clone Kali MCP Server Repository
+# 2. Add Kali MCP Server Source (local pinned copy)
 # -----------------------------------------------------------------------------
 WORKDIR /app
 
-RUN git clone https://github.com/Wh0am123/MCP-Kali-Server.git /app/kali-mcp
+COPY third_party/MCP-Kali-Server /app/kali-mcp
 
 WORKDIR /app/kali-mcp
 

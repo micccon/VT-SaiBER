@@ -17,7 +17,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-COMPOSE_FILE="../../automotive_testbed/docker-compose.yml"
+COMPOSE_FILE="../../third_party/automotive_testbed/docker-compose.yml"
 CONTAINER_NAME="automotive-testbed"
 SHARED_NETWORK="vt-saiber-network"
 VALIDATION_URL="http://localhost:9999/status"
@@ -85,7 +85,18 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Step 5: Print status summary
+# Step 5: Run internal testbed validation
+# -----------------------------------------------------------------------------
+info "Running internal testbed validation (validate_setup.sh)..."
+if docker exec "$CONTAINER_NAME" /opt/automotive-testbed/validate_setup.sh 2>&1 | sed 's/^/  | /'; then
+    success "Internal validation passed."
+else
+    error "Internal validation failed. Check logs: docker logs $CONTAINER_NAME"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# Step 6: Print status summary
 # -----------------------------------------------------------------------------
 echo ""
 echo "============================================================"

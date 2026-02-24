@@ -18,7 +18,7 @@ set -euo pipefail
 # Anchor to this script's directory so the -f path is always correct
 cd "$(dirname "$0")"
 
-COMPOSE_FILE="../../automotive_testbed/docker-compose.yml"
+COMPOSE_FILE="../../third_party/automotive_testbed/docker-compose.yml"
 CONTAINER_NAME="automotive-testbed"
 SHARED_NETWORK="vt-saiber-network"
 VALIDATION_URL="http://localhost:9999/status"

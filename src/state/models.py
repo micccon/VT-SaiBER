@@ -15,7 +15,6 @@ class AgentName(str, Enum):
     STRIKER = "striker"
     LIBRARIAN = "librarian"
     RESIDENT = "resident"
-    AUTOMOTIVE = "automotive"
 
 
 class MissionStatus(str, Enum):

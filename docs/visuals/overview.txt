@@ -1,5 +1,6 @@
 LEGACY DIAGRAM NOTICE (Updated Feb 2026):
 - This diagram contains historical/static-client references and may not match current MCP ToolBridge behavior.
+- Automotive/Embedded agent and MCP blocks shown below are legacy references and are not active scope.
 - Canonical docs for current architecture are:
   - docs/ARCHITECTURE.md
   - docs/MCP.md

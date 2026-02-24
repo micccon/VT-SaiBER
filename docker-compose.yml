@@ -168,6 +168,7 @@ services:
     volumes:
       - ./src:/app/src:rw      # Read-write access
       - ./data:/app/data:rw
+      - ./tests:/app/tests:rw
     
     networks:
       - vt-saiber-network
