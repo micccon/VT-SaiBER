@@ -37,7 +37,7 @@ KALI MCP (`src/mcp/kali_mcp_server.py`):
 - server_health
 - execute_command
 
-METASPLOIT MCP (`src/mcp/Metasploit.py`):
+METASPLOIT MCP (`src/mcp/msf_mcp_server.py`):
 - list_exploits
 - list_payloads
 - generate_payload

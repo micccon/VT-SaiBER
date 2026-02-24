@@ -152,32 +152,22 @@ class WebFinding(BaseModel):
 
 ## Striker Agent (Exploitation)
 
-The Striker executes precision exploits using Metasploit.
-
-### Exploit Plan
-
-```python
-class StrikerPlan(BaseModel):
-    selected_module: str
-    payload: str
-    target_id: int
-    required_options: Dict[str, str]
-    rationale: str
-```
+The Striker is a ReAct exploitation worker that dynamically selects reconnaissance and exploit steps from MCP tools (no static exploit playbook).
 
 ### Constraints
 
-* Exploit rank MUST be Great or higher
-* Maximum of 3 attempts per exploit
-* Hard timeout required for every run
-* DoS and fuzzing modules are forbidden
-* Successful sessions MUST be verified with `getuid` or `whoami`
+* Must inspect module options before execution (`get_module_options`)
+* Maximum of 3 exploit attempts per run
+* DoS/flood/destructive modules are forbidden
+* Manual confirmation gate is required before `run_exploit` / `run_auxiliary_module` execution (unless explicitly auto-approved for automation)
+* Session success must be validated using `list_active_sessions`
+* Preferred non-paid model paths are OpenRouter and Ollama
 
 ---
 
 ## Automotive Agent (CAN / OT)
 
-The Automotive Agent interacts with the CAN bus and UDS services.
+The Automotive Agent section is retained as design reference only and is not in active implementation scope.
 
 ### Command Schema
 
@@ -223,7 +213,7 @@ class IntelligenceBrief(BaseModel):
 
 ## Resident Agent (Post-Exploitation)
 
-The Resident maintains access and enables lateral movement.
+Resident handles post-exploitation for active sessions and is part of the current graph execution path.
 
 ```python
 class SessionAudit(BaseModel):
@@ -250,5 +240,5 @@ class SessionAudit(BaseModel):
 2. Web Fuzzer finds the entry point
 3. Librarian retrieves exploit intelligence
 4. Striker gains initial access
-5. Resident pivots and persists
-6. Automotive agent (optional path) handles CAN/OT-specific operations
+5. Resident performs post-exploitation on active sessions
+6. Supervisor decides next loop or mission end

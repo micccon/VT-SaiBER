@@ -2,6 +2,10 @@
 │              Supervisor Decision-Making Process (Step-by-Step)              │
 └─────────────────────────────────────────────────────────────────────────────┘
 
+STATUS NOTE (Updated Feb 2026):
+- Automotive/Embedded agent references in this file are historical and not part of active scope.
+- Active supervisor routing targets are: scout, fuzzer, librarian, striker, resident.
+
 ENTRY: supervisor_node(state: CyberState)
 ═══════════════════════════════════════════
 

@@ -11,7 +11,6 @@ RUN apk update && \
     apk add --no-cache \
     python3 \
     py3-pip \
-    git \
     curl \
     bash \
     postgresql-client \
@@ -20,11 +19,11 @@ RUN apk update && \
     && rm -rf /var/cache/apk/*
 
 # -----------------------------------------------------------------------------
-# Clone MetasploitMCP Repository
+# Add MetasploitMCP Source (local pinned copy)
 # -----------------------------------------------------------------------------
 WORKDIR /app
 
-RUN git clone https://github.com/GH05TCREW/MetasploitMCP.git /app/MetasploitMCP
+COPY third_party/MetasploitMCP /app/MetasploitMCP
 
 # -----------------------------------------------------------------------------
 # Install Python Dependencies
@@ -32,6 +31,11 @@ RUN git clone https://github.com/GH05TCREW/MetasploitMCP.git /app/MetasploitMCP
 WORKDIR /app/MetasploitMCP
 
 RUN pip3 install --no-cache-dir -r requirements.txt
+
+# -----------------------------------------------------------------------------
+# Overwrite with VT-SaiBER custom MCP server implementation
+# -----------------------------------------------------------------------------
+COPY src/mcp/msf_mcp_server.py /app/MetasploitMCP/MetasploitMCP.py
 
 # -----------------------------------------------------------------------------
 # Copy Startup Script

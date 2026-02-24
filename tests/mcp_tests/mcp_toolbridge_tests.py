@@ -301,7 +301,8 @@ async def test_msf_list_exploits():
             raise AssertionError("list_exploits tool not found")
         
         # Search for common exploits
-        result = await list_tool.coroutine(query="ms17")
+        # list_exploits uses search_term= (not query=) — wrong param silently returns all
+        result = await list_tool.coroutine(search_term="ms17")
         
         if not result:
             raise AssertionError("Empty result from list_exploits")
@@ -382,7 +383,6 @@ async def test_msf_list_sessions():
         results.add_fail("test_msf_list_sessions", str(e))
         traceback.print_exc()
 
-
 # =============================================================================
 # Tool Filtering Tests
 # =============================================================================
@@ -441,21 +441,24 @@ async def test_tool_filtering_striker():
         traceback.print_exc()
 
 
-async def test_no_filter_returns_all():
-    """Test that no filter returns all tools."""
+async def test_none_filter_returns_empty():
+    """Test that None allowlist returns no tools (deny by default)."""
     try:
         bridge = await get_mcp_bridge()
-        
-        all_tools = bridge.get_tools_for_agent(None)
-        
-        if len(all_tools) != len(bridge.all_tools):
-            raise AssertionError(f"No filter should return all tools. Got {len(all_tools)}, expected {len(bridge.all_tools)}")
-        
-        print(f"   All tools ({len(all_tools)}): {[t.name for t in all_tools]}")
-        results.add_pass("test_no_filter_returns_all")
-        
+
+        no_tools = bridge.get_tools_for_agent(None)
+
+        if len(no_tools) != 0:
+            raise AssertionError(
+                f"None allowlist should return 0 tools (deny by default). "
+                f"Got {len(no_tools)}: {[t.name for t in no_tools]}"
+            )
+
+        print(f"   None filter correctly returned 0 tools (total available: {len(bridge.all_tools)})")
+        results.add_pass("test_none_filter_returns_empty")
+
     except Exception as e:
-        results.add_fail("test_no_filter_returns_all", str(e))
+        results.add_fail("test_none_filter_returns_empty", str(e))
         traceback.print_exc()
 
 
@@ -501,7 +504,7 @@ async def run_all_tests():
     print("\n--- TOOL FILTERING TESTS ---")
     await test_tool_filtering_scout()
     await test_tool_filtering_striker()
-    await test_no_filter_returns_all()
+    await test_none_filter_returns_empty()
     
     # Print summary
     success = results.summary()

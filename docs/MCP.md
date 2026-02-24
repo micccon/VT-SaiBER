@@ -43,7 +43,7 @@ Typical internal URL used by bridge:
 
 Runtime files:
 - `scripts/docker/start_msf_mcp.sh`
-- `src/mcp/Metasploit.py` (project MCP implementation)
+- `src/mcp/msf_mcp_server.py` (project MCP implementation)
 
 Ports:
 - `55553`: `msfrpcd`
@@ -74,7 +74,7 @@ Bridge-exposed names are prefixed, e.g.:
 
 ## 4. Metasploit MCP Tool Names
 
-From `src/mcp/Metasploit.py`:
+From `src/mcp/msf_mcp_server.py`:
 - `list_exploits`
 - `list_payloads`
 - `generate_payload`

@@ -95,15 +95,17 @@ else
     echo "$STATUS_JSON" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-vulns = data.get('vulnerabilities', data)
-if isinstance(vulns, dict):
-    for k, v in vulns.items():
+vulns = data.get('exploits') or data.get('vulnerabilities') or {}
+if isinstance(vulns, dict) and vulns:
+    for k in sorted(vulns.keys()):
+        v = bool(vulns[k])
         status = 'exploited' if v else 'not exploited'
         icon = '[x]' if v else '[ ]'
         print(f'    {icon} {k}: {status}')
-elif isinstance(data, dict):
-    # Fallback: print whole status
-    print(json.dumps(data, indent=4))
+else:
+    print('    [WARN] No exploit status map found in /status payload')
+    if isinstance(data, dict):
+        print(json.dumps(data, indent=4))
 " 2>/dev/null || echo "$STATUS_JSON" | python3 -m json.tool | sed 's/^/  /'
 fi
 

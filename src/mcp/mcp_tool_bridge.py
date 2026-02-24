@@ -93,16 +93,27 @@ class MCPToolBridge:
         # Build fields for Pydantic model
         fields = {}
         required = input_schema.get("required", [])
+        defaults: Dict[str, Any] = {}
         
         for prop_name, prop_schema in input_schema.get("properties", {}).items():
             field_type = self._json_type_to_python(prop_schema.get("type", "string"))
-            field_required = prop_name in required
+            has_default = "default" in prop_schema
+            default_value = prop_schema.get("default")
+            # If schema provides a default, treat field as optional even if listed in "required".
+            # Some MCP servers emit required+default, and LLMs may send null for those fields.
+            field_required = (prop_name in required) and (not has_default)
             field_description = prop_schema.get("description", "")
             
             if field_required:
                 fields[prop_name] = (field_type, Field(description=field_description))
             else:
-                fields[prop_name] = (Optional[field_type], Field(default=None, description=field_description))
+                effective_default = default_value if has_default else None
+                fields[prop_name] = (
+                    Optional[field_type],
+                    Field(default=effective_default, description=field_description),
+                )
+                if has_default:
+                    defaults[prop_name] = default_value
         
         # Create dynamic Pydantic model
         from pydantic import BaseModel
@@ -115,23 +126,58 @@ class MCPToolBridge:
         async def execute_tool(**kwargs) -> str:
             """Execute the MCP tool via SSE and return results."""
             try:
-                logger.info(f"[{server_name}] Executing {mcp_tool.name} with args: {kwargs}")
+                # Normalize null-ish values for optional/defaulted fields.
+                # LLMs often emit null for optional strings; use schema default where available.
+                cleaned_kwargs: Dict[str, Any] = {}
+                for key, value in kwargs.items():
+                    if value is None:
+                        if key in defaults:
+                            cleaned_kwargs[key] = defaults[key]
+                        # If no default for a null optional, omit the key.
+                        continue
+                    cleaned_kwargs[key] = value
+
+                logger.info(f"[{server_name}] Executing {mcp_tool.name} with args: {cleaned_kwargs}")
                 
                 # Call MCP tool
-                result = await session.call_tool(mcp_tool.name, kwargs)
+                result = await session.call_tool(mcp_tool.name, cleaned_kwargs)
+
+                def _normalize_mcp_payload(payload: Any) -> Any:
+                    """
+                    Normalize common MCP envelopes for stable downstream parsing.
+                    Some servers/sdk versions return {"result": <tool_payload>}.
+                    """
+                    if isinstance(payload, dict) and "result" in payload and len(payload) == 1:
+                        return payload.get("result")
+                    return payload
                 
-                # Extract content
-                if result.content:
-                    content = result.content[0].text
-                    
-                    # Try to parse as JSON for cleaner output
+                # Prefer structured content when present (including empty lists/dicts).
+                structured = getattr(result, "structuredContent", None)
+                if structured is not None:
                     try:
-                        parsed = json.loads(content)
-                        return json.dumps(parsed, indent=2)
-                    except:
-                        return content
-                
-                return "No output from tool"
+                        return json.dumps(_normalize_mcp_payload(structured), indent=2)
+                    except Exception:
+                        return str(_normalize_mcp_payload(structured))
+
+                # Fallback to textual content.
+                content_blocks = getattr(result, "content", None)
+                if content_blocks:
+                    text_parts: List[str] = []
+                    for block in content_blocks:
+                        text = getattr(block, "text", None)
+                        if text is not None:
+                            text_parts.append(text)
+                    combined = "\n".join(text_parts).strip()
+                    if combined:
+                        # Try to parse as JSON for cleaner output
+                        try:
+                            parsed = json.loads(combined)
+                            return json.dumps(_normalize_mcp_payload(parsed), indent=2)
+                        except Exception:
+                            return combined
+                    return "[]"
+
+                return "{}"
                 
             except Exception as e:
                 logger.error(f"[{server_name}] Tool execution failed: {e}")

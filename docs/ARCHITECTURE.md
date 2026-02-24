@@ -49,6 +49,9 @@ Environment variables used by bridge:
 - `KALI_MCP_URL` (example: `http://kali-mcp:5001`)
 - `MSF_MCP_URL` (example: `http://msf-mcp:8085`)
 
+Environment variable used by agent LLM selection:
+- `LLM_CLIENT` (set to `openrouter` in the current configuration)
+
 ## 3. Orchestration Model (LangGraph)
 
 Key files:
@@ -65,6 +68,13 @@ Execution pattern:
 6. Control returns to supervisor and repeats
 
 `CyberState` is the shared state contract across nodes.
+
+Current active worker nodes in graph:
+- `scout`
+- `fuzzer`
+- `librarian`
+- `striker`
+- `resident`
 
 ## 4. MCP Integration Model (Updated)
 
@@ -98,6 +108,8 @@ In Striker, the ReAct loop:
 - selects tools autonomously from MCP allowlist
 - executes exploitation attempts
 - parses tool messages back into structured state updates
+- enforces manual approval before exploit-execution tools unless explicitly auto-approved
+- supports non-paid provider paths (`openrouter`, `ollama`) via env configuration
 
 ## 6. Current MCP Tool Surfaces
 
@@ -117,7 +129,7 @@ Primary tool names:
 - `server_health`
 - `execute_command`
 
-### Metasploit MCP (`src/mcp/Metasploit.py`)
+### Metasploit MCP (`src/mcp/msf_mcp_server.py`)
 
 Primary tool names:
 - `list_exploits`
@@ -164,7 +176,7 @@ This preserves the original supervisor framework while modernizing tool connecti
 For implementation truth, prefer these files first:
 - `src/mcp/mcp_tool_bridge.py`
 - `src/mcp/kali_mcp_server.py`
-- `src/mcp/Metasploit.py`
+- `src/mcp/msf_mcp_server.py`
 - `src/agents/striker.py`
 - `src/graph/builder.py`
 - `src/graph/router.py`
