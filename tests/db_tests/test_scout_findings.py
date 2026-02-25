@@ -1,3 +1,4 @@
+# pytest tests/db_tests/test_scout_findings.py
 """
 Integration test: Scout agent writing findings to database
 

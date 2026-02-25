@@ -1,4 +1,9 @@
 # src/database/rag/rag_manager.py
+"""
+RAG Database Operations Module
+Handle all knowledge_base table operations: insert, search, delete, update.
+Uses existing manager.py connection but provides RAG-specific interface.
+"""
 
 import json
 from psycopg2.extras import RealDictCursor
