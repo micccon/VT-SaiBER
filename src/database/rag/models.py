@@ -1,5 +1,11 @@
 # src/database/rag/models.py
 
+"""
+RAG Data Models Module
+Define core data structures for RAG system: Chunk represents a document fragment with metadata and embeddings.
+Used by indexing and retrieval pipelines.
+"""
+
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
 
