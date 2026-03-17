@@ -8,9 +8,10 @@ Provides high-level API for agents and CLI tools.
 
 from typing import Optional, Dict, Any, List
 from .embedding import EmbeddingClient
-from .chunking import ChunkingStrategy, simple_chunking
+from .chunking import simple_chunking
 from .indexing import IndexingPipeline
 from .retriever import RAGRetriever
+from .rag_manager import insert_kb_chunk, clear_kb_by_source_dir
 
 class RAGOrchestrator:
     
@@ -19,7 +20,6 @@ class RAGOrchestrator:
         self.embedding_client = EmbeddingClient()
         self.chunking_strategy = simple_chunking
         self.indexing_pipeline = IndexingPipeline(
-            embedding_client=self.embedding_client,
             chunking_strategy=self.chunking_strategy
         )
         self.retriever = RAGRetriever(
@@ -34,11 +34,27 @@ class RAGOrchestrator:
         Suitable for: initial setup
         """
         print("[RAG] Starting full knowledge base indexing...")
-        await self.indexing_pipeline.index_documents(
-            source_paths=source_dirs,
-            mode="full"
-        )
-        print("[RAG] Knowledge base indexing completed")
+        
+        # Clear existing data
+        clear_kb_by_source_dir(None)  # Clear all
+        
+        # Process documents and get chunks
+        chunks = await self.indexing_pipeline.process_documents(source_dirs, mode="full")
+        
+        if not chunks:
+            print("[RAG] No chunks generated")
+            return
+        
+        # Generate embeddings in batch
+        texts = [chunk.chunk_text for chunk in chunks]
+        embeddings = await self.embedding_client.embed_texts(texts)
+        
+        # Assign embeddings and store chunks
+        for chunk, embedding in zip(chunks, embeddings):
+            chunk.embedding = embedding
+            insert_kb_chunk(chunk)
+        
+        print(f"[RAG] Knowledge base indexing completed - {len(chunks)} chunks processed")
     
     async def index_knowledge_base_incremental(self, source_dirs: List[str]):
         """
@@ -46,11 +62,24 @@ class RAGOrchestrator:
         Suitable for: periodic updates
         """
         print("[RAG] Starting incremental knowledge base indexing...")
-        await self.indexing_pipeline.index_documents(
-            source_paths=source_dirs,
-            mode="incremental"
-        )
-        print("[RAG] Incremental indexing completed")
+        
+        # For now, treat as full indexing (TODO: implement true incremental logic)
+        chunks = await self.indexing_pipeline.process_documents(source_dirs, mode="incremental")
+        
+        if not chunks:
+            print("[RAG] No new chunks to process")
+            return
+        
+        # Generate embeddings in batch
+        texts = [chunk.chunk_text for chunk in chunks]
+        embeddings = await self.embedding_client.embed_texts(texts)
+        
+        # Assign embeddings and store chunks
+        for chunk, embedding in zip(chunks, embeddings):
+            chunk.embedding = embedding
+            insert_kb_chunk(chunk)
+        
+        print(f"[RAG] Incremental indexing completed - {len(chunks)} chunks processed")
     
     # ===== Online Pipeline =====
     
@@ -133,7 +162,7 @@ class RAGOrchestrator:
         Knowledge Base Results:
         """
         for i, kb_result in enumerate(results["kb_results"], 1):
-            report += f"""{i}. Source: {kb_result['source']}
+            report += f"""{i}. Source: {kb_result['doc_name']}
                             Similarity: {kb_result['similarity']:.2f}
                             Text: {kb_result['chunk_text'][:200]}...
                         """
