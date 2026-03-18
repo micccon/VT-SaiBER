@@ -1,60 +1,54 @@
 # MCP Integration (Current)
 
-This document describes how VT-SaiBER agents connect to MCP servers today.
-
-Architecture direction:
-- All agents use ReAct loops with MCP ToolBridge-discovered tools.
+This document describes how MCP tools are discovered, filtered, guarded, and executed in VT-SaiBER.
 
 ## 1. Integration Pattern
 
-Key bridge file:
+Key bridge:
 - `src/mcp/mcp_tool_bridge.py`
 
-Flow:
-1. Bridge reads `KALI_MCP_URL` and `MSF_MCP_URL`
-2. Bridge connects to each server via SSE (`{url}/sse`)
-3. Bridge runs `list_tools()`
-4. Discovered tools are wrapped as LangChain `StructuredTool`
-5. Tools are exposed to agents with server-prefixed names
+Bridge lifecycle:
+1. Read `KALI_MCP_URL` and `MSF_MCP_URL`.
+2. Connect to each MCP server via SSE (`{url}/sse`).
+3. Call `list_tools()` and capture schemas.
+4. Convert each discovered MCP tool into LangChain `StructuredTool`.
+5. Prefix runtime names by server id:
+   - `kali_<tool_name>`
+   - `msf_<tool_name>`
+6. Filter by agent allowlist with `get_tools_for_agent(...)`.
 
-Prefix convention:
-- Kali tools: `kali_<tool_name>`
-- Metasploit tools: `msf_<tool_name>`
+The bridge is dynamic. Tool exposure comes from live server discovery, not static hardcoded HTTP mappings.
 
-Example:
-- MCP tool `run_exploit` from msf server becomes `msf_run_exploit` in the agent tool list.
+## 2. Server Ports and Endpoints
 
-## 2. Server Endpoints and Ports
+Kali MCP:
+- MCP SSE service: `5001`
+- Kali REST backend: `5000`
+- Typical bridge URL: `http://kali-mcp:5001`
 
-### Kali MCP Container
+Metasploit MCP:
+- MCP service: `8085`
+- `msfrpcd`: `55553`
+- Typical bridge URL: `http://msf-mcp:8085`
 
-Runtime files:
-- `scripts/docker/start_kali_mcp.sh`
-- `src/mcp/kali_mcp_server.py`
+## 3. Tool Naming and Filtering
 
-Ports:
-- `5000`: Kali REST API backend
-- `5001`: Kali MCP server (SSE)
+Native MCP names (server-defined):
+- `run_exploit`, `nmap_scan`, etc.
 
-Typical internal URL used by bridge:
-- `http://kali-mcp:5001`
+Bridge-exposed names (agent runtime):
+- `msf_run_exploit`
+- `kali_nmap_scan`
 
-### Metasploit MCP Container
+Allowlist matching supports:
+- base names (`run_exploit`)
+- prefixed names (`msf_run_exploit`)
 
-Runtime files:
-- `scripts/docker/start_msf_mcp.sh`
-- `src/mcp/msf_mcp_server.py` (project MCP implementation)
+This allows agent configs to remain readable while still binding to concrete prefixed runtime tools.
 
-Ports:
-- `55553`: `msfrpcd`
-- `8085`: Metasploit MCP service (bridge target)
+## 4. Current Tool Inventory
 
-Typical internal URL used by bridge:
-- `http://msf-mcp:8085`
-
-## 3. Kali MCP Tool Names
-
-From `src/mcp/kali_mcp_server.py`:
+Kali MCP (`src/mcp/kali_mcp_server.py`):
 - `nmap_scan`
 - `gobuster_scan`
 - `dirb_scan`
@@ -68,15 +62,11 @@ From `src/mcp/kali_mcp_server.py`:
 - `server_health`
 - `execute_command`
 
-Bridge-exposed names are prefixed, e.g.:
-- `kali_nmap_scan`
-- `kali_execute_command`
-
-## 4. Metasploit MCP Tool Names
-
-From `src/mcp/msf_mcp_server.py`:
+Metasploit MCP (`src/mcp/msf_mcp_server.py`):
 - `list_exploits`
 - `list_payloads`
+- `get_module_options`
+- `get_module_info`
 - `generate_payload`
 - `run_exploit`
 - `run_post_module`
@@ -88,26 +78,57 @@ From `src/mcp/msf_mcp_server.py`:
 - `stop_job`
 - `terminate_session`
 
-Bridge-exposed names are prefixed, e.g.:
-- `msf_list_exploits`
-- `msf_run_exploit`
-- `msf_list_active_sessions`
+## 5. Runtime Guardrails Around MCP Tool Calls
 
-## 5. Agent Tool Filtering
+Guardrail stack:
+1. Router-level mission/scope/iteration controls (`src/graph/router.py`).
+2. Per-agent tool allowlists from MCP bridge.
+3. Tool-call pre/post guards (`src/utils/tool_guard.py`, `src/utils/tool_guard_profiles.py`).
+4. Server-side MCP validations and execution logic.
 
-Agents do not receive all discovered tools by default.
+Striker guard profile currently enforces:
+- non-empty `msf_list_exploits.search_term`
+- module-info sequencing gates (when enabled)
+- payload compatibility checks
+- manual confirmation for exploit-class tools
+- post-call caching from `msf_get_module_info`
 
-Pattern:
-- Agent defines an allowlist (base names or prefixed names)
-- Bridge returns only allowed tools via `get_tools_for_agent(...)`
+## 6. Tool Call Lifecycle (Striker Example)
 
-Example allowlist:
-- `list_exploits`, `run_exploit`, `run_auxiliary_module`, `list_active_sessions`
-- runtime tool names provided to ReAct are `msf_*`
+1. Striker requests filtered tools from bridge.
+2. Tools are wrapped by `wrap_tools_with_rules(...)`.
+3. On each call:
+   - pre-rules may modify args, skip, or block.
+   - if allowed, call executes via MCP bridge.
+   - post-rules may cache metadata for later calls.
+4. Tool results are parsed into state updates (e.g., `ExploitResult` projection in Striker extractor).
 
-## 6. Operational Notes
+## 7. Error and Result Shape Notes
 
-- This is not a static hardcoded HTTP `/tools/<name>` router in the agent process.
-- Tool discovery is runtime-driven from MCP servers.
-- If a tool name changes at MCP server level, bridge discovery reflects it immediately.
-- Access control still requires each agent allowlist to be updated intentionally.
+Bridge normalizes common payload patterns (including `{"result": ...}` envelopes) before handing tool outputs to agents.
+
+Agent-side parsing helpers:
+- `src/utils/parsers.py`
+  - `normalize_tool_result(...)`
+  - `metasploit_module_key(...)`
+
+Common blocked/aborted action payloads:
+- `status: "skipped"` for policy skips (e.g., empty search term)
+- `status: "aborted"` for manual confirmation denial
+- structured error payloads when tool invocation fails
+
+## 8. Practical Add/Change Workflow
+
+When adding a tool:
+1. Add MCP tool in server (`kali_mcp_server.py` or `msf_mcp_server.py`).
+2. Rebuild/restart target container.
+3. Bridge rediscovers tool on startup.
+4. Add tool name to specific agent allowlist.
+5. Add or adjust guard rules if execution is sensitive.
+6. Update docs (`docs/MCP.md`, `docs/visuals/access_control_matrix.txt`).
+
+When changing tool args:
+1. Update MCP tool schema.
+2. Revalidate agent prompts/usage patterns.
+3. Re-run relevant agent tests (for Striker: `tests/agent_tests/striker/...`).
+

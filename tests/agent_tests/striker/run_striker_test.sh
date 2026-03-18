@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/agent_tests/run_striker_test.sh
+# tests/agent_tests/striker/run_striker_test.sh
 # Unified Striker test runner:
 #   - react:                  mocked/unit-style ReAct node tests
 #   - openrouter:             live OpenRouter smoke test with real striker_node + MCP bridge
@@ -23,7 +23,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$PROJECT_ROOT" ]]; then
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+fi
 MODE="react"
 MODEL_OVERRIDE=""
 
@@ -117,17 +120,18 @@ fi
 
 echo ""
 echo "📋 Copying test script to container..."
-docker exec vt-saiber-agents mkdir -p /app/tests/agent_tests
-docker cp "${SCRIPT_DIR}/${TEST_FILE}" "vt-saiber-agents:/app/tests/agent_tests/${TEST_FILE}"
+REMOTE_TEST_DIR="/app/tests/agent_tests/striker"
+docker exec vt-saiber-agents mkdir -p "${REMOTE_TEST_DIR}"
+docker cp "${SCRIPT_DIR}/${TEST_FILE}" "vt-saiber-agents:${REMOTE_TEST_DIR}/${TEST_FILE}"
 
 echo ""
 echo "🚀 Running test..."
-echo "   test: /app/tests/agent_tests/${TEST_FILE}"
+echo "   test: ${REMOTE_TEST_DIR}/${TEST_FILE}"
 echo "======================================"
 echo ""
 
 if [[ "$MODE" == "react" ]]; then
-  docker exec ${DOCKER_EXEC_FLAGS} vt-saiber-agents python3 -u "/app/tests/agent_tests/${TEST_FILE}"
+  docker exec ${DOCKER_EXEC_FLAGS} vt-saiber-agents python3 -u "${REMOTE_TEST_DIR}/${TEST_FILE}"
   TEST_EXIT=$?
 else
   OPENROUTER_API_KEY_VAL="${OPENROUTER_API_KEY:-$(get_env_from_file OPENROUTER_API_KEY)}"
@@ -166,7 +170,7 @@ else
     -e NMAP_PORTS="${NMAP_PORTS:-}" \
     -e NMAP_ADDITIONAL_ARGS="${NMAP_ADDITIONAL_ARGS:--Pn -T4}" \
     vt-saiber-agents \
-    python3 -u "/app/tests/agent_tests/${TEST_FILE}"
+    python3 -u "${REMOTE_TEST_DIR}/${TEST_FILE}"
   TEST_EXIT=$?
 fi
 

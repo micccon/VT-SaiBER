@@ -10,8 +10,15 @@ All agents (target-state ReAct model) request tool access through the bridge.
 
 Bridge returns filtered tools (example):
   - msf_list_exploits
+  - msf_get_module_info
+  - msf_get_module_options
   - msf_run_exploit
   - msf_list_active_sessions
+
+Before actual MCP execution, runtime guard rules may run:
+- pre-rules: arg hygiene, sequencing checks, manual confirmation gate
+- post-rules: cache/normalize metadata for follow-up calls
+(`src/utils/tool_guard.py`, `src/utils/tool_guard_profiles.py`)
 
 
 MCP TOOLBRIDGE LAYER (`src/mcp/mcp_tool_bridge.py`)
