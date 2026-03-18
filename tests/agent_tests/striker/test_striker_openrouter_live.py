@@ -15,7 +15,7 @@ Run inside agents container:
     -e LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free \
     -e STRIKER_REQUIRE_CONFIRMATION=true \
     vt-saiber-agents \
-    python /app/tests/agent_tests/test_striker_openrouter_live.py
+    python /app/tests/agent_tests/striker/test_striker_openrouter_live.py
 """
 
 import asyncio

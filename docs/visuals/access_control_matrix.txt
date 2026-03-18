@@ -83,6 +83,8 @@ METASPLOIT TOOLS
 |-----------------------|------------|-------|--------|-----------|---------|----------|
 | list_exploits         | ❌         | ❌    | ❌     | ✅        | ✅      | ✅       |
 | list_payloads         | ❌         | ❌    | ❌     | ✅        | ⚠       | ⚠        |
+| get_module_info       | ❌         | ❌    | ❌     | ✅        | ✅      | ⚠        |
+| get_module_options    | ❌         | ❌    | ❌     | ✅        | ✅      | ⚠        |
 | generate_payload      | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
 | run_exploit           | ❌         | ❌    | ❌     | ❌        | ✅      | ❌       |
 | run_auxiliary_module  | ❌         | ❌    | ❌     | ❌        | ✅      | ❌       |
@@ -127,3 +129,25 @@ At runtime, actual registered tool names are prefixed:
 - `msf_run_exploit`
 
 Both forms are accepted by bridge filtering.
+
+
+5) RUNTIME GUARDRAILS (CURRENT IMPLEMENTATION)
+══════════════════════════════════════════════
+
+Guardrail stack:
+1. Graph router checks: iteration cap, scope, valid routing (`src/graph/router.py`)
+2. Bridge filtering: per-agent tool allowlists (`src/mcp/mcp_tool_bridge.py`)
+3. Tool call rules: pre/post rule chains (`src/utils/tool_guard.py`, `src/utils/tool_guard_profiles.py`)
+4. MCP server-side validations (`src/mcp/msf_mcp_server.py`, `src/mcp/kali_mcp_server.py`)
+
+Current Striker rule highlights:
+- block empty `msf_list_exploits.search_term`
+- optional `get_module_info` sequencing checks before option/exploit calls
+- optional payload compatibility checks
+- manual confirmation gate for exploit-class tools
+- post-call module-info cache for follow-up checks
+
+Note on maturity:
+- Access matrix is the target policy.
+- `striker` and `resident` are the most implementation-complete workers today.
+- `scout`, `fuzzer`, and `librarian` are still under active build-out.

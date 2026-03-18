@@ -79,20 +79,30 @@ TURN 7
 TURN 8 (ReAct Tool Loop in Striker)
 - Striker gets filtered MSF tools from bridge allowlist:
   - list_exploits
+  - get_module_info
+  - get_module_options
   - run_exploit
   - run_auxiliary_module
   - list_active_sessions
 
+- Runtime guard rules applied before execution:
+  - empty exploit search term blocked
+  - module-info sequencing enforced when configured
+  - manual approval required for exploit-class calls
+  - payload compatibility checks when configured
+
 - ReAct sequence (example):
   1. `msf_list_exploits(search_term="vsftpd")`
-  2. choose module strategy
-  3. `msf_run_exploit(...)` or `msf_run_auxiliary_module(...)`
-  4. `msf_list_active_sessions()` for verification
+  2. `msf_get_module_info(...)`
+  3. `msf_get_module_options(...)`
+  4. `msf_run_exploit(...)` or `msf_run_auxiliary_module(...)`
+  5. `msf_list_active_sessions()` for verification
 
 - Striker parses tool messages and updates state:
   - exploited_services
   - active_sessions (if opened)
   - critical_findings
+  - typed exploit projection (`ExploitResult`) in update extraction path
 
 TURN 9
 - Supervisor re-evaluates:

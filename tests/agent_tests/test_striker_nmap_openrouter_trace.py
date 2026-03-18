@@ -16,7 +16,7 @@ Run inside agents container:
     -e STRIKER_REQUIRE_CONFIRMATION=true \
     -e TARGET_HOST=automotive-testbed \
     vt-saiber-agents \
-    python3 -u /app/tests/agent_tests/striker/test_striker_nmap_openrouter_trace.py
+    python3 -u /app/tests/agent_tests/test_striker_nmap_openrouter_trace.py
 """
 
 import asyncio

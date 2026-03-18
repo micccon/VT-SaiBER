@@ -5,7 +5,7 @@ Striker ReAct Agent Tests
 Validates current src/agents/striker.py behavior without requiring live MCP/model calls.
 
 Run inside agents container:
-    docker exec vt-saiber-agents python tests/agent_tests/test_striker_react.py
+    docker exec vt-saiber-agents python tests/agent_tests/striker/test_striker_react.py
 """
 
 import asyncio
