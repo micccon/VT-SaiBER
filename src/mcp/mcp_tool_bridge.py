@@ -38,47 +38,103 @@ class MCPToolBridge:
             name: Server name (e.g., "kali", "msf")
             url: Server URL (e.g., "http://kali-mcp:5001")
         """
-        try:
-            logger.info(f"Connecting to {name} MCP at {url}...")
-            
-            # Connect via SSE
-            transport = await self.exit_stack.enter_async_context(
-                sse_client(f"{url}/sse")
-            )
-            read, write = transport
-            
-            # Create session
-            session = await self.exit_stack.enter_async_context(
-                ClientSession(read, write)
-            )
-            await session.initialize()
-            
-            # Store session
-            self.sessions[name] = session
-            
-            # Discover tools
-            tools_result = await session.list_tools()
-            
-            logger.info(f"✅ {name}: Discovered {len(tools_result.tools)} tools")
-            
-            # Convert MCP tools to LangChain tools
-            for mcp_tool in tools_result.tools:
-                lc_tool = self._mcp_to_langchain(mcp_tool, name, session)
-                self.all_tools.append(lc_tool)
-                
-                if name not in self.tools_by_server:
-                    self.tools_by_server[name] = []
-                self.tools_by_server[name].append(lc_tool)
-            
-            # Log discovered tools
-            for tool in tools_result.tools:
-                logger.debug(f"  - {tool.name}: {tool.description}")
-            
-            logger.info(f"✅ {name}: Connected successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to connect to {name}: {e}")
-            raise
+        if not url:
+            raise ValueError(f"{name} MCP URL is empty")
+
+        candidates = self._build_sse_candidates(name, url)
+        errors: List[str] = []
+
+        for candidate in candidates:
+            try:
+                logger.info(f"Connecting to {name} MCP at {candidate}...")
+
+                # Connect via SSE
+                transport = await self.exit_stack.enter_async_context(
+                    sse_client(candidate)
+                )
+                read, write = transport
+
+                # Create session
+                session = await self.exit_stack.enter_async_context(
+                    ClientSession(read, write)
+                )
+                await session.initialize()
+
+                # Store session
+                self.sessions[name] = session
+
+                # Discover tools
+                tools_result = await session.list_tools()
+
+                logger.info(f"✅ {name}: Discovered {len(tools_result.tools)} tools")
+
+                # Convert MCP tools to LangChain tools
+                for mcp_tool in tools_result.tools:
+                    lc_tool = self._mcp_to_langchain(mcp_tool, name, session)
+                    self.all_tools.append(lc_tool)
+
+                    if name not in self.tools_by_server:
+                        self.tools_by_server[name] = []
+                    self.tools_by_server[name].append(lc_tool)
+
+                for tool in tools_result.tools:
+                    logger.debug(f"  - {tool.name}: {tool.description}")
+
+                logger.info(f"✅ {name}: Connected successfully")
+                return
+            except Exception as e:
+                msg = f"{candidate} -> {type(e).__name__}: {e}"
+                errors.append(msg)
+                logger.warning(f"{name} MCP connect attempt failed: {msg}")
+
+        hint = ""
+        if name == "kali":
+            hint = "Hint: Kali MCP SSE is usually http://kali-mcp:5001/sse (not port 5000)."
+        elif name == "msf":
+            hint = "Hint: MSF MCP SSE is usually http://msf-mcp:8085/sse."
+
+        joined = "; ".join(errors)
+        raise RuntimeError(
+            f"Failed to connect to {name} MCP after trying {len(candidates)} endpoint(s). "
+            f"Attempts: {joined}. {hint}"
+        )
+
+    def _build_sse_candidates(self, name: str, raw_url: str) -> List[str]:
+        """
+        Build ordered SSE endpoint candidates for robust startup/misconfig recovery.
+        """
+        cleaned = (raw_url or "").strip().rstrip("/")
+        if not cleaned:
+            return []
+
+        bases: List[str] = []
+
+        # If already an SSE endpoint, try it first and also its base URL.
+        if cleaned.endswith("/sse"):
+            bases.append(cleaned[: -len("/sse")])
+            direct_sse = cleaned
+        else:
+            bases.append(cleaned)
+            direct_sse = f"{cleaned}/sse"
+
+        # Common auto-correction: kali URL accidentally points to REST port 5000.
+        if name == "kali":
+            for base in list(bases):
+                if ":5000" in base:
+                    bases.append(base.replace(":5000", ":5001"))
+            bases.append("http://kali-mcp:5001")
+
+        if name == "msf":
+            bases.append("http://msf-mcp:8085")
+
+        # De-duplicate while preserving order.
+        ordered: List[str] = []
+        seen = set()
+        for candidate in [direct_sse, *[f"{base}/sse" for base in bases]]:
+            if candidate not in seen:
+                seen.add(candidate)
+                ordered.append(candidate)
+        return ordered
     
     def _mcp_to_langchain(
         self, 
@@ -253,8 +309,8 @@ async def get_mcp_bridge() -> MCPToolBridge:
         _bridge = MCPToolBridge()
         
         # Get URLs from environment
-        kali_url = os.getenv("KALI_MCP_URL")  # Port 5000 for MCP bridge
-        msf_url = os.getenv("MSF_MCP_URL")
+        kali_url = os.getenv("KALI_MCP_URL", "http://kali-mcp:5001")
+        msf_url = os.getenv("MSF_MCP_URL", "http://msf-mcp:8085")
         
         # Connect to both servers via SSE
         await _bridge.connect_server("kali", kali_url)

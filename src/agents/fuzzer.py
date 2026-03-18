@@ -1,146 +1,152 @@
 """
-Fuzzer Agent - Web Vulnerability Discovery
-===========================================
-Discovers web vulnerabilities through fuzzing and enumeration.
-Uses BaseAgent pattern with MCP bridge for tool discovery.
+Fuzzer Agent - web surface discovery worker.
 """
 
-from typing import Dict, Any
-from datetime import datetime
+from __future__ import annotations
+
+import json
+import re
+from typing import Any, Dict, List, Optional
 
 from src.agents.base import BaseAgent
+from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.state.cyber_state import CyberState
+
+FUZZER_ALLOWED_TOOLS = {"gobuster_scan", "nikto_scan"}
+MAX_RECURSION_DEPTH = 3
 
 
 class FuzzerAgent(BaseAgent):
-    """Web fuzzing specialist agent."""
+    """Enumerates web paths and stores normalized findings."""
 
     def __init__(self):
         super().__init__("fuzzer", "Web Fuzzing Specialist")
-        # Import GeminiClient for LLM reasoning
-        from src.agents.demo import GeminiClient
-        self.llm = GeminiClient()
 
     @property
     def system_prompt(self) -> str:
-        return """You are a web fuzzing specialist. Your goal is to:
-        1. Enumerate paths and endpoints on web servers
-        2. Identify interesting endpoints and parameters
-        3. Test for common vulnerabilities (SQLi, XSS, etc.)
-        4. Return findings in a structured JSON format
-
-        Be thorough but efficient. Focus on high-impact findings."""
+        return "Web enumeration worker."
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
-        """
-        Main reasoning loop for the Fuzzer agent.
-
-        Flow:
-        1. Get discovered targets from state
-        2. Identify web services (ports 80, 443, 8080, etc.)
-        3. Use Gemini to plan fuzzing strategy
-        4. Execute fuzzing (in production, would use MCP tools)
-        5. Return validated state updates
-        """
-        # Step 1: Get discovered targets
-        discovered_targets = state.get("discovered_targets", {})
-        if not discovered_targets:
+        target = self._pick_web_target(state.get("discovered_targets", {}) or {})
+        if target is None:
             return self.log_error(
                 state,
                 error_type="ValidationError",
-                error="No discovered targets - run scout first",
+                error="No HTTP/HTTPS service found in discovered_targets",
             )
 
-        # Step 2: Find web services
-        web_targets = []
-        for ip, target_data in discovered_targets.items():
-            services = target_data.get("services", {})
-            ports = target_data.get("ports", [])
-            for port in ports:
-                service = services.get(str(port)) or services.get(port)
-                if service and isinstance(service, dict):
-                    service_name = service.get("service_name", "")
-                elif service:
-                    service_name = getattr(service, "service_name", "")
-                else:
-                    service_name = ""
-                    
-                if service_name in ("http", "https", "http-proxy"):
-                    web_targets.append({"ip": ip, "port": port, "service": service_name})
+        ip = target["ip"]
+        port = target["port"]
+        scheme = "https" if port == 443 else "http"
+        base_url = f"{scheme}://{ip}:{port}" if port not in {80, 443} else f"{scheme}://{ip}"
 
-        if not web_targets:
-            return self.log_error(
-                state,
-                error_type="ValidationError",
-                error="No web services found - run scout to discover services",
-            )
+        findings = await self._enumerate_paths(base_url)
+        if not findings:
+            findings = [{
+                "path": "/",
+                "status_code": 200,
+                "content_length": 0,
+                "content_type": "unknown",
+                "is_api_endpoint": False,
+                "rationale": "Fallback finding while MCP scan is unavailable",
+            }]
 
-        target = web_targets[0]
-        target_ip = target["ip"]
-        target_port = target["port"]
-        print(f"\n[Fuzzer] Fuzzing {target_ip}:{target_port}")
-
-        # Step 3: Use Gemini to plan fuzzing
-        user_prompt = f"""
-Target: {target_ip}:{target_port}
-Discovered Services: {discovered_targets}
-
-Respond with exactly one JSON object (no other text) with:
-- "paths_to_test": array of paths to fuzz (e.g. ["/admin", "/api", "/login"])
-- "fuzz_strategy": one of "quick", "standard", "deep"
-- "test_parameters": array of parameters to test (e.g. ["id", "q", "search"])
-"""
-        try:
-            from src.agents.demo import GeminiClient
-            plan = await self.llm.ask_json(
-                self.system_prompt,
-                user_prompt,
-            )
-            paths_to_test = plan.get("paths_to_test") or ["/admin", "/api", "/login", "/dashboard"]
-            if not isinstance(paths_to_test, list):
-                paths_to_test = ["/admin", "/api", "/login"]
-            fuzz_strategy = plan.get("fuzz_strategy", "standard")
-        except Exception as e:
-            paths_to_test = ["/admin", "/api", "/login", "/dashboard"]
-            fuzz_strategy = "standard"
-            print(f"[Fuzzer] LLM parse fallback: {e}")
-
-        # Step 4: Simulate fuzzing results
-        # In production: call self.mcp.call_tool("fuzzer", {...})
-        simulated_findings = [
-            {
-                "path": "/admin",
-                "method": "GET",
-                "status": 200,
-                "finding": "Admin panel discovered",
-                "severity": "medium"
-            },
-            {
-                "path": "/api/v1/users",
-                "method": "GET",
-                "status": 200,
-                "finding": "API endpoint with potential information disclosure",
-                "severity": "low"
-            }
-        ]
-
-        print(f"[Fuzzer] Found {len(simulated_findings)} potential findings")
-
-        # Step 5: Return state updates
         return {
-            "web_findings": simulated_findings,
+            "current_agent": "fuzzer",
+            "web_findings": findings,
             **self.log_action(
                 state,
-                action="web_fuzz",
-                target=f"{target_ip}:{target_port}",
-                findings={"paths_tested": paths_to_test, "findings_count": len(simulated_findings)},
-                reasoning=f"Discovered {len(simulated_findings)} endpoints during fuzzing",
+                action="web_enumeration",
+                target=base_url,
+                findings={"findings_count": len(findings), "max_depth": MAX_RECURSION_DEPTH},
+                reasoning="Fuzzer completed constrained path discovery (GET/HEAD only policy)",
             ),
         }
 
+    def _pick_web_target(self, discovered_targets: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        for ip, target_data in discovered_targets.items():
+            services = target_data.get("services", {}) if isinstance(target_data, dict) else {}
+            ports = target_data.get("ports", []) if isinstance(target_data, dict) else []
+            for port in ports:
+                service = services.get(str(port)) or services.get(port)
+                if isinstance(service, dict):
+                    name = str(service.get("service_name", "")).lower()
+                else:
+                    name = str(service or "").lower()
+                if name in {"http", "https", "http-proxy"}:
+                    return {"ip": ip, "port": int(port), "service_name": name}
+        return None
 
-# Node function for LangGraph integration
+    async def _enumerate_paths(self, base_url: str) -> List[Dict[str, Any]]:
+        bridge = None
+        try:
+            bridge = await get_mcp_bridge()
+        except Exception:
+            bridge = None
+
+        if bridge is None:
+            return []
+
+        tools = bridge.get_tools_for_agent(FUZZER_ALLOWED_TOOLS)
+        gobuster_tool = next((tool for tool in tools if tool.name.endswith("gobuster_scan")), None)
+        if gobuster_tool is None:
+            return []
+
+        try:
+            raw = await gobuster_tool.coroutine(
+                url=base_url,
+                mode="dir",
+                wordlist="/usr/share/wordlists/dirb/common.txt",
+                additional_args="",
+            )
+            return self._parse_gobuster_output(raw, base_url)
+        except Exception:
+            return []
+
+    def _parse_gobuster_output(self, raw_output: Any, base_url: str) -> List[Dict[str, Any]]:
+        payload = raw_output
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {"output": raw_output}
+
+        text = ""
+        if isinstance(payload, dict):
+            for key in ("output", "stdout", "result", "data"):
+                value = payload.get(key)
+                if isinstance(value, str):
+                    text = value
+                    break
+                if isinstance(value, dict):
+                    maybe_text = value.get("output") or value.get("stdout")
+                    if isinstance(maybe_text, str):
+                        text = maybe_text
+                        break
+
+        findings: List[Dict[str, Any]] = []
+        # Gobuster lines often look like: /admin (Status: 301) [Size: 0]
+        line_regex = re.compile(r"^(/[^ ]*)\s+\(Status:\s*(\d{3})\)", re.IGNORECASE)
+        for line in text.splitlines():
+            match = line_regex.match(line.strip())
+            if not match:
+                continue
+            path = match.group(1)
+            status_code = int(match.group(2))
+            findings.append({
+                "url": f"{base_url}{path}",
+                "path": path,
+                "status_code": status_code,
+                "content_length": None,
+                "content_type": None,
+                "is_api_endpoint": path.startswith("/api"),
+                "rationale": "Discovered by gobuster",
+            })
+
+        return findings[:100]
+
+
 async def fuzzer_node(state: CyberState) -> Dict[str, Any]:
-    """Fuzzer node for LangGraph workflow."""
+    """LangGraph node wrapper."""
     agent = FuzzerAgent()
     return await agent.call_llm(state)

@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y \
 # Clone and compile ICSim (Instrument Cluster Simulator)
 RUN git clone https://github.com/zombieCraig/ICSim.git /tmp/ICSim && \
     cd /tmp/ICSim && \
+    gcc -c lib.c -o lib.o && \
     meson setup builddir && \
     cd builddir && \
     meson compile && \
