@@ -2,6 +2,16 @@
 │              Inside a Single Agent Call (Example: SCOUT)                    │
 └─────────────────────────────────────────────────────────────────────────────┘
 
+STATUS NOTE (Current Code Alignment):
+- This file illustrates the generic agent-call pattern, not exact implementation details for every node.
+- `striker` and `resident` are current ReAct-focused references.
+- For current runtime guardrails around tool execution, see:
+  - `src/utils/tool_guard.py`
+  - `src/utils/tool_guard_profiles.py`
+- For authoritative architecture details, see:
+  - `docs/ARCHITECTURE.md`
+  - `docs/MCP.md`
+
                         ┌──────────────────────┐
                         │  LangGraph calls:    │
                         │  scout_node(state)   │

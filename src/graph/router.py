@@ -9,13 +9,14 @@ Business logic belongs in the Supervisor's LLM.
 
 import logging
 from langgraph.graph import END
+from src.config import get_runtime_config
 from src.state.cyber_state import CyberState
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 # Maximum iterations to prevent infinite loops
-MAX_ITERATIONS = 20
+MAX_ITERATIONS = get_runtime_config().max_iterations
 
 # Valid agent names
 VALID_AGENTS = ["scout", "fuzzer", "striker", "librarian", "resident"]
@@ -95,13 +96,13 @@ def route_next_agent(state: CyberState) -> str:
     
     # Safety check 1: Max iterations to prevent infinite loops
     iteration_count = state.get("iteration_count", 0)
-    if iteration_count >= MAX_ITERATIONS:
-        logger.warning(f"Max iterations ({MAX_ITERATIONS}) reached")
+    if iteration_count > MAX_ITERATIONS:
+        logger.warning(f"Max iterations ({MAX_ITERATIONS}) exceeded")
         return END
     
     # Safety check 2: Mission already complete or failed
     mission_status = state.get("mission_status", "active")
-    if mission_status in ["success", "failed"]:
+    if mission_status in ["success", "failed", "wait_for_human"]:
         logger.info(f"Mission status is '{mission_status}', ending")
         return END
     
