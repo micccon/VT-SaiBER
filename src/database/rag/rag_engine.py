@@ -184,7 +184,7 @@ class RAGOrchestrator:
         try:
             # Test Embedding API
             test_embedding = await self.embedding_client.embed_text("test")
-            embedding_ok = len(test_embedding) == 1536
+            embedding_ok = len(test_embedding) == 1024
             
             # Test database connectionFF
             from src.database import manager

@@ -23,10 +23,10 @@ text
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              src/database/  (Memory & Persistence)           │
+│              src/database/  (Memory & Persistence)          │
 │                                                             │
 │   schema.sql ──► knowledge_base  (content, embedding)       │
-│                  findings_embeddings  (VECTOR 1536)         │
+│                  findings_embeddings  (VECTOR 1024)         │
 │   manager.py ──► ingest_document() / retrieve_context()     │
 └───────────────────────────┬─────────────────────────────────┘
                             │  vector search (top‑k)
@@ -64,10 +64,10 @@ text
   [Knowledge Source]
        │ ingest_docs.py
        ▼
-  [pgvector DB]  ◄──────────────────────────────┐
+  [pgvector DB]  ◄────────────────────────────── ┐
        │ retrieve_context()                      │
        ▼                                         │
-  [Librarian] ──► LLM ──► CyberState.results    │
+  [Librarian] ──► LLM ──► CyberState.results     │
        ▲                                         │
        │ research_query                          │
   [Supervisor] ──► [Striker / Other Agents] ─────┘
@@ -75,9 +75,9 @@ text
 3. RAG Components (in VT‑SaiBER)
 Component type	Description	VT‑SaiBER mapping
 Data sources / docs	Knowledge to search	docs/, mission reports, data/ PDFs, findings logs
-Embedding model	Turn text into vectors	text-embedding-3-small (OpenAI) or compatible, 1536‑d 
+Embedding model	Turn text into vectors	BAAI/bge-m3 (or compatible), 1024‑d 
 ​
-Vector store / DB	Stores embeddings, supports similarity search	PostgreSQL 16+ with pgvector (VECTOR(1536)), defined in src/database/schema.sql 
+Vector store / DB	Stores embeddings, supports similarity search	PostgreSQL 16+ with pgvector (VECTOR(1024)), defined in src/database/schema.sql 
 ​
 Retriever	Wraps query embedding → vector search → top‑k	Extend src/database/manager.py or add rag_engine.py
 LLM	Generates answers from context	Claude 3.5 Sonnet / GPT‑4o, called from src/agents/
@@ -90,7 +90,7 @@ Step	Description	VT‑SaiBER implementation
 Collect documents	Load docs/*.md, data/*.pdf, mission logs	scripts/ingest_docs.py (to be created) 
 ​
 Chunking	Split long docs into 300–800 token chunks	same script, calling rag_engine.ingest_document()
-Embedding	Call embedding API for each chunk (1536‑d)	text-embedding-3-small via OpenAI SDK
+Embedding	Call embedding API for each chunk (1024‑d)	BAAI/bge-m3 via OpenRouter/OpenAI compatible SDK
 Store in DB	Write to Postgres + pgvector	src/database/manager.py or rag_engine.py
 Suggested pgvector schema:
 
@@ -101,7 +101,7 @@ CREATE TABLE knowledge_base (
     mission_id  INTEGER,        -- optional, bind to mission
     content     TEXT,           -- raw chunk text
     metadata    JSONB,          -- e.g. agent, target_ip, tags
-    embedding   VECTOR(1536)
+    embedding   VECTOR(1024)
 );
 
 CREATE INDEX ON knowledge_base USING ivfflat (embedding vector_cosine_ops);
@@ -112,7 +112,7 @@ Supervisor or user writes a research question into CyberState
 
 Librarian (src/agents/librarian.py) reads the query
 
-Embed query using text-embedding-3-small
+Embed query using BAAI/bge-m3
 
 Run pgvector similarity search, for example:
 ORDER BY embedding <-> %s::vector LIMIT 5
