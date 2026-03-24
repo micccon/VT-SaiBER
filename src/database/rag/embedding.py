@@ -1,40 +1,39 @@
 """
 Embedding Client Module
-Unified API to generate vector embeddings using text-embedding-3-small via OpenRouter.
-Supports single/batch embedding with built-in caching and retry logic.
+Use local SentenceTransformer with BAAI/bge-large-en-v1.5 for RAG embeddings.
 """
 
 # src/database/rag/embedding.py
 
 from typing import List
-import os
-from openai import OpenAI  # 或你最後選的 provider[web:372]
+import asyncio
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
+from sentence_transformers import SentenceTransformer
+
+
+EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
+EMBEDDING_DIM = 1024  # bge-large-en-v1.5 output dimension
 
 
 class EmbeddingClient:
     def __init__(self):
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is not set")
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
+        # Load model once at startup; this may take some time the first run
+        self.model = SentenceTransformer(EMBEDDING_MODEL)
 
     async def embed_text(self, text: str) -> List[float]:
         return (await self.embed_texts([text]))[0]
 
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        import asyncio
-
-        def _call():
-            resp = self.client.embeddings.create(
-                model=EMBEDDING_MODEL,
-                input=texts,
+        """
+        Async wrapper around SentenceTransformer.encode.
+        Normalizes embeddings as recommended for BGE models.
+        """
+        def _encode_batch() -> List[List[float]]:
+            emb = self.model.encode(
+                texts,
+                normalize_embeddings=True,   # cosine similarity works better
+                convert_to_numpy=True,
             )
-            return [item.embedding for item in resp.data]
+            return emb.tolist()  # numpy array -> nested Python list
 
-        return await asyncio.to_thread(_call)
+        return await asyncio.to_thread(_encode_batch)

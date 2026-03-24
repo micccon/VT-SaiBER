@@ -43,7 +43,7 @@ def test_insert_kb_chunk_smoke():
     doc_name = "insert_test_document"
     text = "This is a short text used to test DB insertion via insert_kb_chunk."
     metadata: Dict[str, Any] = {"source": "pytest_insert"}
-    fake_embedding = [0.0] * 1536
+    fake_embedding = [0.0] * 1024
 
 
     chunk = Chunk(

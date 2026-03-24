@@ -416,13 +416,13 @@ def get_agent_logs_by_mission(mission_id):
 
 
 # ===== FINDINGS EMBEDDINGS =====
-def create_finding_embedding(finding_id, embedding_vector, embedded_text, embedding_model='text-embedding-3-small'):
+def create_finding_embedding(finding_id, embedding_vector, embedded_text, embedding_model='BAAI/bge-m3'):
     """
     Store finding's embedding vector
 
     Args:
         finding_id: ID from findings table
-        embedding_vector: 1536-dimensional embedding vector (list or array)
+        embedding_vector: 1024-dimensional embedding vector (list or array)
         embedded_text: Source text used to generate embedding (title + description)
         embedding_model: Name of the embedding model used
 

@@ -91,7 +91,7 @@ CREATE TABLE knowledge_base (
   id         SERIAL PRIMARY KEY,
   doc_name   VARCHAR,
   chunk_text TEXT,
-  embedding  VECTOR(1536), -- change based on the model used
+  embedding  VECTOR(1024),
   metadata   JSONB,
   created_at TIMESTAMP DEFAULT NOW()
 );
@@ -100,17 +100,14 @@ CREATE INDEX knowledge_base_embedding_idx
   ON knowledge_base
   USING ivfflat (embedding vector_cosine_ops);
 
-
--- ===== FINDINGS EMBEDDINGS TABLE =====
---data is from findings table, used for RAG
 CREATE TABLE findings_embeddings (
-  id                SERIAL PRIMARY KEY,
-  finding_id        INTEGER NOT NULL UNIQUE REFERENCES findings(id) ON DELETE CASCADE,
-  embedding         VECTOR(1536),
-  embedding_model   VARCHAR DEFAULT 'text-embedding-3-small', -- based on what model is used
-  embedded_text     TEXT,
-  created_at        TIMESTAMP DEFAULT NOW(),
-  updated_at        TIMESTAMP DEFAULT NOW()
+  id              SERIAL PRIMARY KEY,
+  finding_id      INTEGER NOT NULL UNIQUE REFERENCES findings(id) ON DELETE CASCADE,
+  embedding       VECTOR(1024),
+  embedding_model VARCHAR DEFAULT 'BAAI/bge-large-en-v1.5',
+  embedded_text   TEXT,
+  created_at      TIMESTAMP DEFAULT NOW(),
+  updated_at      TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX findings_embeddings_idx
