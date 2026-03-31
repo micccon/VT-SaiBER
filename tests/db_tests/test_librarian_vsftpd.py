@@ -51,4 +51,4 @@ async def test_librarian_vsftpd_exploit():
 
     first = osint_findings[0]
     desc = first.get("description", "").lower()
-    assert "vsftpd" in desc
+    assert "vsftpd" in desc  
