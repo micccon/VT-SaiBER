@@ -7,11 +7,11 @@ from src.config import get_runtime_config
 
 
 class OSINTClient:
-    """Thin wrapper around Tavily (or其他 OSINT) for Librarian."""
+    """Thin wrapper around Tavily (or other OSINT) for Librarian."""
 
     def __init__(self, api_key: Optional[str] = None, max_results: Optional[int] = None):
         cfg = get_runtime_config()
-        key = api_key or cfg.tavily_api_key
+        key = api_key or getattr(cfg, "tavily_api_key", None)
         self._client: Optional[AsyncTavilyClient] = (
             AsyncTavilyClient(api_key=key) if key else None
         )

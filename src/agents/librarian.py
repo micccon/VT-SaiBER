@@ -40,30 +40,42 @@ class LibrarianAgent(BaseAgent):
                 timeout_seconds=cfg.supervisor_timeout_seconds,
             )
 
-        # 2. 內部工具封裝
+        # 2. RAG Orchestrator
         self._rag = RAGOrchestrator()
         self._telemetry_processor = TelemetryProcessor()
 
         # 3. OSINT
         self._osint_client = OSINTClient()
 
+    @property
+    def system_prompt(self) -> str:
+        return LibrarianPrompts.SYSTEM_PROMPT
+
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
+
         # A. build query from telemetry
         query = self._telemetry_processor.build_research_query(state)
-
-        # B. RAG
-        kb_results = await self._retrieve_from_kb(query)
-
-        # C. OSINT
-        osint_results = await self._retrieve_osint(query)
-
-        # D. generate Intelligence Brief
-        brief = await self._research_brief(query, kb_results, osint_results)
-
-        # E. Update State
         cache_key = self._cache_key(query)
+
+        # check cache first (simple in-memory cache keyed by query hash)
         research_cache = dict(state.get("research_cache", {}) or {})
-        research_cache[cache_key] = brief.model_dump()
+        cached = research_cache.get(cache_key)
+        if cached:
+            brief = IntelligenceBrief.model_validate(cached)
+        else:
+            # B. RAG
+            kb_results = await self._retrieve_from_kb(query)
+
+            # C. OSINT
+            osint_results = await self._retrieve_osint(query)
+
+            # D. generate Intelligence Brief
+            brief = await self._research_brief(query, kb_results, osint_results)
+
+            # E. Update State
+            research_cache = dict(state.get("research_cache", {}) or {})
+            research_cache[cache_key] = brief.model_dump()
+
 
         osint_findings = [{
             "source": "librarian",
