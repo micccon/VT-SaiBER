@@ -8,12 +8,14 @@ import json
 import logging
 from typing import Any, Dict, List, Tuple
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
 from src.graph.router import validate_all_targets_in_scope
 from src.state.cyber_state import CyberState
 from src.state.models import SupervisorDecision
-from src.utils.openrouter_client import OpenRouterClient, OpenRouterError
+from src.utils.llm import build_chat_openai, extract_text_content, to_langchain_messages
 from src.utils.parsers import extract_json_payload
 from src.utils.validators import (
     has_agent_run,
@@ -32,10 +34,9 @@ class SupervisorAgent(BaseAgent):
     def __init__(self):
         super().__init__("supervisor", "Mission Coordinator")
         self.config = get_runtime_config()
-        self._client = None
+        self._llm = None
         if self.config.openrouter_api_key:
-            self._client = OpenRouterClient(
-                api_key=self.config.openrouter_api_key,
+            self._llm = build_chat_openai(
                 model=self.config.supervisor_model,
                 base_url=self.config.openrouter_base_url,
                 timeout_seconds=self.config.supervisor_timeout_seconds,
@@ -45,19 +46,48 @@ class SupervisorAgent(BaseAgent):
 
     @property
     def system_prompt(self) -> str:
-        return """You are the VT-SaiBER Supervisor. You only coordinate worker agents.
+        return """You are the VT-SaiBER Supervisor. You route the mission to the best specialist worker agent.
 
-Rules:
-1) Return exactly one JSON object with keys:
-   - next_agent: scout|fuzzer|librarian|striker|resident|end
-   - rationale: concise technical reason
-   - specific_goal: one precise objective for the selected agent
-   - confidence_score: float between 0 and 1
-2) Prefer this chain when evidence exists:
-   scout -> fuzzer -> librarian -> striker -> resident
-3) If exploitation just failed, pick librarian or fuzzer.
-4) Do not call tools directly. You are routing-only.
-5) Stay within authorized scope and minimize unnecessary loops.
+Agent roles:
+- scout: Network reconnaissance — host discovery, port scanning, service fingerprinting.
+- fuzzer: Web attack-surface enumeration — directory brute-forcing, endpoint and API path discovery.
+- librarian: Vulnerability intelligence — CVE research, exploit-path analysis, OSINT gathering.
+- striker: Exploitation — launching exploits, gaining shells and remote sessions.
+- resident: Post-exploitation — session enumeration, privilege escalation, persistence.
+- end: Mission complete or awaiting human review.
+
+Output format — return ONLY a single JSON object:
+{
+  "next_agent": "scout|fuzzer|librarian|striker|resident|end",
+  "rationale": "<concise technical reason>",
+  "specific_goal": "<one precise objective for the selected agent>",
+  "confidence_score": <0.0–1.0>
+}
+
+Routing strategy:
+
+1. MATCH THE MISSION GOAL to the agent whose role best fits the requested task.
+   This is the strongest routing signal.
+   - Goal asks to discover, scan, or fingerprint hosts/services      → scout
+   - Goal asks to enumerate web directories, endpoints, or API paths → fuzzer
+   - Goal asks to research vulnerabilities, look up CVEs, or gather intelligence → librarian
+   - Goal asks to exploit a target, gain a shell, or launch an attack → striker
+   - Goal asks to enumerate sessions, escalate privileges, or perform post-exploitation → resident
+   Key distinction: "research exploit paths" or "find CVEs" = librarian;
+   "run the exploit" or "gain a shell" = striker.
+
+2. RESPECT PIPELINE PROGRESSION. Read the MISSION PHASE block in the context.
+   The standard pipeline is: scout → fuzzer → librarian → striker → resident → end.
+   Prefer advancing forward. Only go backward if the mission goal explicitly demands it.
+
+3. HARD CONSTRAINTS (never violate):
+   - NEVER pick striker unless librarian has already run (librarian_ran=True).
+   - NEVER pick resident unless active_sessions > 0.
+   - If the last exploit attempt failed, pick librarian or fuzzer — not striker again.
+
+4. When the goal is ambiguous, follow the MISSION PHASE recommendation.
+
+Do not call any tools. You are routing-only.
 """
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
@@ -98,29 +128,35 @@ Rules:
             }]
             return update
 
+        # Deterministic Phase-6 shortcut: resident has verified the session — no LLM needed.
+        agent_log = state.get("agent_log", []) or []
+        if (state.get("active_sessions") or {}) and has_agent_run(agent_log, "resident"):
+            return self._terminal_update(
+                state=state,
+                mission_status="success",
+                rationale="Active session confirmed and post-exploitation completed by resident.",
+                specific_goal="Mission objectives satisfied.",
+            )
+
         context_summary = self._build_context_summary(state)
         history = self._sanitize_history(state.get("supervisor_messages", []))
         prompt_messages = [
-            {"role": "system", "content": self.system_prompt},
-            *history,
-            {"role": "user", "content": context_summary},
+            SystemMessage(content=self.system_prompt),
+            *to_langchain_messages(history),
+            HumanMessage(content=context_summary),
         ]
 
         try:
-            if self._client is None:
-                raise OpenRouterError("OpenRouter client unavailable")
-            llm_message = await self._client.chat_completion(
-                prompt_messages,
-                temperature=0.0,
-                reasoning_enabled=self.config.supervisor_reasoning_enabled,
-            )
-            decision = self._parse_decision(llm_message.content)
+            if self._llm is None:
+                raise RuntimeError("ChatOpenAI client unavailable")
+            llm_message = await self._llm.ainvoke(prompt_messages)
+            llm_content = extract_text_content(llm_message)
+            decision = self._parse_decision(llm_content)
             assistant_payload = {
                 "role": "assistant",
-                "content": llm_message.content,
-                "reasoning_details": llm_message.reasoning_details,
+                "content": llm_content,
             }
-        except (OpenRouterError, ValueError) as exc:
+        except Exception as exc:
             logger.warning("Supervisor LLM fallback engaged: %s", exc)
             decision = self._fallback_decision(state, reason=str(exc))
             assistant_payload = {
@@ -142,6 +178,15 @@ Rules:
         reasoning = decision.rationale
         if guardrail_reason:
             reasoning = f"{reasoning} | Guardrail: {guardrail_reason}"
+
+        if next_agent == "end":
+            terminal_status, terminal_goal = self._derive_terminal_outcome(state, decision.specific_goal)
+            return self._terminal_update(
+                state=state,
+                mission_status=terminal_status,
+                rationale=reasoning,
+                specific_goal=terminal_goal,
+            )
 
         return {
             "current_agent": "supervisor",
@@ -190,10 +235,13 @@ Rules:
         }
 
     def _build_context_summary(self, state: CyberState) -> str:
+        from src.utils.validators import has_agent_run, has_service_version_intel
+
         discovered_targets = state.get("discovered_targets", {}) or {}
         web_findings = state.get("web_findings", []) or []
         active_sessions = state.get("active_sessions", {}) or {}
         critical_findings = state.get("critical_findings", []) or []
+        agent_log = state.get("agent_log", []) or []
 
         target_lines: List[str] = []
         for ip, details in discovered_targets.items():
@@ -214,7 +262,7 @@ Rules:
         targets_block = "\n".join(target_lines) if target_lines else "- none"
 
         recent_actions = []
-        for entry in (state.get("agent_log", []) or [])[-6:]:
+        for entry in agent_log[-6:]:
             if isinstance(entry, dict):
                 agent = entry.get("agent", "?")
                 action = entry.get("action", entry.get("decision", "?"))
@@ -226,9 +274,43 @@ Rules:
 
         critical_block = "\n".join(f"- {item}" for item in critical_findings[-6:]) if critical_findings else "- none"
 
+        # Derive the current mission phase so the LLM has an unambiguous signal.
+        scout_ran     = has_agent_run(agent_log, "scout")
+        fuzzer_ran    = has_agent_run(agent_log, "fuzzer")
+        librarian_ran = has_agent_run(agent_log, "librarian")
+        striker_ran   = has_agent_run(agent_log, "striker")
+        resident_ran  = has_agent_run(agent_log, "resident")
+        has_targets   = bool(discovered_targets)
+        has_versions  = has_service_version_intel(discovered_targets)
+        has_web       = bool(web_findings)
+        has_sessions  = bool(active_sessions)
+
+        # Sessions take highest priority — check them before anything else.
+        if has_sessions and resident_ran:
+            phase = "Phase 6 — COMPLETE: resident finished post-exploitation → route to end"
+        elif has_sessions and not resident_ran:
+            phase = "Phase 5 — POST-EXPLOITATION: active session open, resident has not run → route to resident"
+        elif librarian_ran and not has_sessions:
+            phase = "Phase 4 — EXPLOITATION: intelligence gathered, no active session → route to striker"
+        elif (has_web or has_targets) and not librarian_ran:
+            phase = "Phase 3 — INTELLIGENCE: targets/web found, librarian has not run → route to librarian"
+        elif has_targets and has_web and not fuzzer_ran:
+            phase = "Phase 2 — WEB ENUMERATION: web service present, fuzzer has not run → route to fuzzer"
+        elif not has_targets:
+            phase = "Phase 1 — RECONNAISSANCE: no targets discovered yet → route to scout"
+        else:
+            phase = "Phase unknown — use recent actions and state to decide"
+
+        phase_flags = (
+            f"  targets_found={has_targets}  versions_known={has_versions}"
+            f"  web_found={has_web}  active_sessions={len(active_sessions)}\n"
+            f"  scout_ran={scout_ran}  fuzzer_ran={fuzzer_ran}"
+            f"  librarian_ran={librarian_ran}  striker_ran={striker_ran}"
+            f"  resident_ran={resident_ran}"
+        )
+
         return (
             f"Mission goal: {state.get('mission_goal', '(unknown)')}\n"
-            f"Mission id: {state.get('mission_id', '(unknown)')}\n"
             f"Mission status: {state.get('mission_status', 'active')}\n"
             f"Iteration: {state.get('iteration_count', 0)}/{self.config.max_iterations}\n"
             f"Target scope: {state.get('target_scope', [])}\n\n"
@@ -236,7 +318,8 @@ Rules:
             f"Web findings count: {len(web_findings)}\n"
             f"Active sessions count: {len(active_sessions)}\n"
             f"Critical findings:\n{critical_block}\n\n"
-            f"Recent actions:\n{recent_block}\n"
+            f"Recent actions:\n{recent_block}\n\n"
+            f"MISSION PHASE:\n  {phase}\n{phase_flags}\n"
         )
 
     def _parse_decision(self, raw_content: str) -> SupervisorDecision:
@@ -252,12 +335,15 @@ Rules:
         active_sessions = state.get("active_sessions", {}) or {}
         web_findings = state.get("web_findings", []) or []
 
-        if not discovered_targets:
-            next_agent = "scout"
-            specific_goal = "Discover targets and fingerprint exposed services."
+        if active_sessions and has_agent_run(state.get("agent_log", []) or [], "resident"):
+            next_agent = "end"
+            specific_goal = "Mission objective satisfied after post-exploitation review."
         elif active_sessions:
             next_agent = "resident"
             specific_goal = "Enumerate and stabilize active sessions."
+        elif not discovered_targets:
+            next_agent = "scout"
+            specific_goal = "Discover targets and fingerprint exposed services."
         elif web_findings and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
             next_agent = "librarian"
             specific_goal = "Research exploit paths from discovered findings."
@@ -321,8 +407,6 @@ Rules:
                 "role": role,
                 "content": str(message.get("content", "")),
             }
-            if role == "assistant" and "reasoning_details" in message:
-                item["reasoning_details"] = message.get("reasoning_details")
             safe.append(item)
         return safe
 
@@ -341,6 +425,30 @@ Rules:
         if recent_agents and recent_agents[-1] == "striker" and not (state.get("active_sessions", {}) or {}):
             return True
         return False
+
+    def _derive_terminal_outcome(self, state: CyberState, specific_goal: str) -> Tuple[str, str]:
+        mission_status = str(state.get("mission_status", "active")).strip().lower()
+        if mission_status in {"success", "failed", "wait_for_human"}:
+            return mission_status, specific_goal or "N/A"
+
+        mission_goal = str(state.get("mission_goal", "")).lower()
+        active_sessions = state.get("active_sessions", {}) or {}
+        critical_findings = [str(item).lower() for item in (state.get("critical_findings", []) or [])]
+        resident_has_run = has_agent_run(state.get("agent_log", []) or [], "resident")
+
+        if active_sessions and resident_has_run:
+            return "success", specific_goal or "Resident validated post-exploitation success."
+
+        if active_sessions and any(
+            term in mission_goal
+            for term in ("exploit", "initial access", "session", "shell", "meterpreter", "foothold")
+        ):
+            return "success", specific_goal or "Initial access objective satisfied."
+
+        if any("session " in finding or "root privileges" in finding for finding in critical_findings):
+            return "success", specific_goal or "Critical mission objective reached."
+
+        return "wait_for_human", specific_goal or "Wait for operator confirmation before closing mission."
 
 
 async def supervisor_node(state: CyberState) -> Dict[str, Any]:
