@@ -1,27 +1,37 @@
 """
 Librarian Agent - research and intelligence worker.
+
+Responsibilities:
+- Turn CyberState telemetry + RAG + OSINT into a structured intelligence brief.
+- Do NOT execute tools directly; only provide cited intelligence for other agents.
 """
+
 
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
+from src.database.rag.rag_engine import RAGOrchestrator
 from src.state.cyber_state import CyberState
 from src.state.models import IntelligenceBrief
 from src.utils.openrouter_client import OpenRouterClient, OpenRouterError
 from src.utils.parsers import extract_json_payload
 
+from src.database.librarian.query_builder import TelemetryProcessor
+from src.database.librarian.prompts import LibrarianPrompts
+from src.database.librarian.osint_client import OSINTClient
+
 
 class LibrarianAgent(BaseAgent):
-    """Produces structured research briefs with citations and confidence."""
-
-    def __init__(self):
+    def __init__(self, rag_orchestrator: Optional[RAGOrchestrator] = None):
         super().__init__("librarian", "Research and Intelligence Specialist")
         cfg = get_runtime_config()
-        self._client = None
+
+        # 1. LLM Client
+        self._client: Optional[OpenRouterClient] = None
         if cfg.openrouter_api_key:
             self._client = OpenRouterClient(
                 api_key=cfg.openrouter_api_key,
@@ -30,25 +40,42 @@ class LibrarianAgent(BaseAgent):
                 timeout_seconds=cfg.supervisor_timeout_seconds,
             )
 
+        # 2. RAG Orchestrator
+        self._rag = RAGOrchestrator()
+        self._telemetry_processor = TelemetryProcessor()
+
+        # 3. OSINT
+        self._osint_client = OSINTClient()
+
     @property
     def system_prompt(self) -> str:
-        return """You are a cybersecurity research specialist.
-Return one JSON object with:
-- summary (string)
-- technical_params (object string:string)
-- is_osint_derived (boolean)
-- confidence (0..1 float)
-- citations (array of URLs or source identifiers)
-- conflicting_sources (array of strings or null)
-Do not execute tools, only provide cited intelligence."""
+        return LibrarianPrompts.SYSTEM_PROMPT
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
-        query = self._build_research_query(state)
-        brief = await self._research_brief(query)
 
+        # A. build query from telemetry
+        query = self._telemetry_processor.build_research_query(state)
         cache_key = self._cache_key(query)
+
+        # check cache first (simple in-memory cache keyed by query hash)
         research_cache = dict(state.get("research_cache", {}) or {})
-        research_cache[cache_key] = brief.model_dump()
+        cached = research_cache.get(cache_key)
+        if cached:
+            brief = IntelligenceBrief.model_validate(cached)
+        else:
+            # B. RAG
+            kb_results = await self._retrieve_from_kb(query)
+
+            # C. OSINT
+            osint_results = await self._retrieve_osint(query)
+
+            # D. generate Intelligence Brief
+            brief = await self._research_brief(query, kb_results, osint_results)
+
+            # E. Update State
+            research_cache = dict(state.get("research_cache", {}) or {})
+            research_cache[cache_key] = brief.model_dump()
+
 
         osint_findings = [{
             "source": "librarian",
@@ -78,81 +105,65 @@ Do not execute tools, only provide cited intelligence."""
             ),
         }
 
-    def _build_research_query(self, state: CyberState) -> str:
-        segments: List[str] = [f"mission={state.get('mission_goal', '')}"]
-        discovered_targets = state.get("discovered_targets", {}) or {}
-        web_findings = state.get("web_findings", []) or []
+    async def _retrieve_from_kb(self, query: str) -> List[Dict[str, Any]]:
+        try:
+            res = await self._rag.retrieve(query=query, source="kb", top_k=5)
+            return res.get("kb_results", [])
+        except Exception:
+            return []
 
-        for ip, target_data in list(discovered_targets.items())[:2]:
-            services = target_data.get("services", {}) if isinstance(target_data, dict) else {}
-            service_bits = []
-            for port, service in list(services.items())[:6]:
-                if isinstance(service, dict):
-                    service_name = service.get("service_name", "unknown")
-                    version = service.get("version", "")
-                    if version:
-                        service_bits.append(f"{port}/{service_name} {version}")
-                    else:
-                        service_bits.append(f"{port}/{service_name}")
-                else:
-                    service_bits.append(f"{port}/{service}")
-            if service_bits:
-                segments.append(f"target={ip} services={'; '.join(service_bits)}")
+    async def _retrieve_osint(self, query: str) -> List[Dict[str, Any]]:
+        if self._osint_client is None:
+            return []
+        return await self._osint_client.search(query)
 
-        interesting_paths = []
-        for finding in web_findings[:10]:
-            if not isinstance(finding, dict):
-                continue
-            path = finding.get("path") or finding.get("url")
-            status = finding.get("status_code", finding.get("status"))
-            if path:
-                interesting_paths.append(f"{path} ({status})")
-        if interesting_paths:
-            segments.append(f"web_findings={', '.join(interesting_paths)}")
-
-        # Prompt-injection hygiene: keep the query as plain compact telemetry.
-        return " | ".join(segments).replace("\n", " ").replace("`", "").strip()
-
-    async def _research_brief(self, query: str) -> IntelligenceBrief:
+    async def _research_brief(
+        self,
+        query: str,
+        kb_results: List[Dict[str, Any]],
+        osint_results: List[Dict[str, Any]],
+    ) -> IntelligenceBrief:
         if self._client is None:
             return IntelligenceBrief(
-                summary=f"Fallback intelligence brief for: {query}",
+                summary=f"LLM not configured; fallback for: {query}",
                 technical_params={},
                 is_osint_derived=False,
-                confidence=0.3,
+                confidence=0.0,
                 citations=[],
                 conflicting_sources=None,
             )
 
+        user_content = LibrarianPrompts.build_user_content(query, kb_results, osint_results)
+
         try:
-            response = await self._client.chat_completion(
+            resp = await self._client.chat_completion(
                 messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": query},
+                    {"role": "system", "content": LibrarianPrompts.SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
                 ],
                 temperature=0.0,
                 reasoning_enabled=True,
             )
-            payload = extract_json_payload(response.content)
+            payload = extract_json_payload(resp.content)
+
             if "confidence_score" in payload and "confidence" not in payload:
                 payload["confidence"] = payload["confidence_score"]
+
             return IntelligenceBrief.model_validate(payload)
         except (OpenRouterError, ValueError):
             return IntelligenceBrief(
-                summary=f"Research unavailable; captured fallback for query: {query}",
+                summary=f"Error in synthesis for: {query}",
                 technical_params={},
                 is_osint_derived=False,
-                confidence=0.2,
+                confidence=0.0,
                 citations=[],
                 conflicting_sources=None,
             )
 
     def _cache_key(self, query: str) -> str:
-        digest = hashlib.sha1(query.encode("utf-8")).hexdigest()[:10]
-        return f"research_{digest}"
+        return f"research_{hashlib.sha1(query.encode()).hexdigest()[:10]}"
 
 
 async def librarian_node(state: CyberState) -> Dict[str, Any]:
-    """LangGraph node wrapper."""
     agent = LibrarianAgent()
     return await agent.call_llm(state)

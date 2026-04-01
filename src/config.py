@@ -56,6 +56,8 @@ class RuntimeConfig:
     checkpoint_database_url: Optional[str]
     default_thread_prefix: str
 
+    tavily_api_key: str | None = None
+    tavily_max_results: int = 5
 
 @lru_cache(maxsize=1)
 def get_runtime_config() -> RuntimeConfig:
@@ -70,4 +72,7 @@ def get_runtime_config() -> RuntimeConfig:
         checkpoint_enabled=_env_bool("CHECKPOINT_ENABLED", True),
         checkpoint_database_url=_build_database_url(),
         default_thread_prefix=os.getenv("THREAD_ID_PREFIX", "mission").strip() or "mission",
+        tavily_api_key=(os.getenv("TAVILY_API_KEY") or "").strip() or None,
+        tavily_max_results=_env_int("TAVILY_MAX_RESULTS", 5),
     )
+
