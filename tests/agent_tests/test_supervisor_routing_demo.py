@@ -31,7 +31,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -58,10 +57,7 @@ TARGET_IP = "192.168.1.10"
 VALID_SCENARIOS = {"bare", "discovered", "web", "researched", "session", "failed_striker"}
 VALID_AGENTS = {"scout", "fuzzer", "librarian", "striker", "resident", "end"}
 
-_requires_api_key = pytest.mark.skipif(
-    not os.getenv("OPENROUTER_API_KEY", "").strip(),
-    reason="OPENROUTER_API_KEY is not set",
-)
+
 
 # ---------------------------------------------------------------------------
 # State builders
@@ -229,7 +225,6 @@ def test_supervisor_terminal_success_shortcut():
 # ---------------------------------------------------------------------------
 
 
-@_requires_api_key
 def test_supervisor_live_routes_bare_state_to_scout():
     """Real LLM: with no targets discovered, supervisor must route to scout."""
     get_runtime_config.cache_clear()
@@ -252,7 +247,6 @@ def test_supervisor_live_routes_bare_state_to_scout():
     print(f"[live] confidence: {out['supervisor_expectations'].get('confidence_score')}")
 
 
-@_requires_api_key
 def test_supervisor_live_never_routes_to_striker_before_librarian():
     """Real LLM: guardrail + LLM combined — striker must not be returned before librarian runs."""
     get_runtime_config.cache_clear()
@@ -274,7 +268,6 @@ def test_supervisor_live_never_routes_to_striker_before_librarian():
     print(f"[live] goal: {out.get('supervisor_expectations', {}).get('specific_goal')}")
 
 
-@_requires_api_key
 def test_supervisor_live_session_state_returns_valid_response():
     """
     Real LLM: with an active session, supervisor must return a complete, valid response.
@@ -306,7 +299,6 @@ def test_supervisor_live_session_state_returns_valid_response():
     print(f"[live] confidence: {out['supervisor_expectations'].get('confidence_score')}")
 
 
-@_requires_api_key
 def test_supervisor_live_full_routing_cycle():
     """Real LLM end-to-end: supervisor routes → real librarian runs → state is enriched."""
     get_runtime_config.cache_clear()

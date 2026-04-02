@@ -14,38 +14,46 @@ from typing import Any, Dict, List, Optional
 
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
-from src.database.rag.rag_engine import RAGOrchestrator
 from src.state.cyber_state import CyberState
 from src.state.models import IntelligenceBrief
-from src.utils.openrouter_client import OpenRouterClient, OpenRouterError
+from src.utils.llm import build_chat_openai, extract_text_content
 from src.utils.parsers import extract_json_payload
 
 from src.database.librarian.query_builder import TelemetryProcessor
 from src.database.librarian.prompts import LibrarianPrompts
-from src.database.librarian.osint_client import OSINTClient
 
 
 class LibrarianAgent(BaseAgent):
-    def __init__(self, rag_orchestrator: Optional[RAGOrchestrator] = None):
+    def __init__(self, rag_orchestrator: Optional[Any] = None):
         super().__init__("librarian", "Research and Intelligence Specialist")
         cfg = get_runtime_config()
 
         # 1. LLM Client
-        self._client: Optional[OpenRouterClient] = None
+        self._llm = None
         if cfg.openrouter_api_key:
-            self._client = OpenRouterClient(
-                api_key=cfg.openrouter_api_key,
+            self._llm = build_chat_openai(
                 model=cfg.supervisor_model,
                 base_url=cfg.openrouter_base_url,
                 timeout_seconds=cfg.supervisor_timeout_seconds,
             )
 
         # 2. RAG Orchestrator
-        self._rag = RAGOrchestrator()
+        if rag_orchestrator is not None:
+            self._rag = rag_orchestrator
+        else:
+            try:
+                from src.database.rag.rag_engine import RAGOrchestrator
+                self._rag = RAGOrchestrator()
+            except Exception:
+                self._rag = None
         self._telemetry_processor = TelemetryProcessor()
 
         # 3. OSINT
-        self._osint_client = OSINTClient()
+        try:
+            from src.database.librarian.osint_client import OSINTClient
+            self._osint_client = OSINTClient()
+        except Exception:
+            self._osint_client = None
 
     @property
     def system_prompt(self) -> str:
@@ -106,6 +114,8 @@ class LibrarianAgent(BaseAgent):
         }
 
     async def _retrieve_from_kb(self, query: str) -> List[Dict[str, Any]]:
+        if self._rag is None:
+            return []
         try:
             res = await self._rag.retrieve(query=query, source="kb", top_k=5)
             return res.get("kb_results", [])
@@ -123,7 +133,7 @@ class LibrarianAgent(BaseAgent):
         kb_results: List[Dict[str, Any]],
         osint_results: List[Dict[str, Any]],
     ) -> IntelligenceBrief:
-        if self._client is None:
+        if self._llm is None:
             return IntelligenceBrief(
                 summary=f"LLM not configured; fallback for: {query}",
                 technical_params={},
@@ -136,21 +146,19 @@ class LibrarianAgent(BaseAgent):
         user_content = LibrarianPrompts.build_user_content(query, kb_results, osint_results)
 
         try:
-            resp = await self._client.chat_completion(
-                messages=[
-                    {"role": "system", "content": LibrarianPrompts.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                temperature=0.0,
-                reasoning_enabled=True,
+            response = await self._llm.ainvoke(
+                [
+                    ("system", LibrarianPrompts.SYSTEM_PROMPT),
+                    ("human", user_content),
+                ]
             )
-            payload = extract_json_payload(resp.content)
+            payload = extract_json_payload(extract_text_content(response))
 
             if "confidence_score" in payload and "confidence" not in payload:
                 payload["confidence"] = payload["confidence_score"]
 
             return IntelligenceBrief.model_validate(payload)
-        except (OpenRouterError, ValueError):
+        except (RuntimeError, ValueError):
             return IntelligenceBrief(
                 summary=f"Error in synthesis for: {query}",
                 technical_params={},

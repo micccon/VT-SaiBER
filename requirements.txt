@@ -70,3 +70,5 @@ python-dotenv>=1.0.1                      # Load environment variables from .env
 # =============================================================================
 pytest>=7.4.0                             # Testing framework for unit and integration tests
 numpy>=1.24.0                             # Numerical computing library (for test utilities)
+
+sentence-transformers
