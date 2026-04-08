@@ -26,6 +26,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from src.mcp.mcp_tool_bridge import get_mcp_bridge
+from src.prompts.resident_prompt import RESIDENT_SYSTEM_PROMPT
 from src.state.cyber_state import CyberState
 from src.state.models import AgentError, AgentLogEntry
 
@@ -48,34 +49,6 @@ RESIDENT_ALLOWED_TOOLS = {
 
 # ToolMessage names to scan for post-exploitation results
 POST_TOOL_NAMES = {"msf_send_session_command", "msf_run_post_module"}
-
-# ---------------------------------------------------------------------------
-# System prompt
-# ---------------------------------------------------------------------------
-
-RESIDENT_SYSTEM_PROMPT = """You are a post-exploitation specialist for authorized penetration testing.
-
-Your job (work through all active sessions provided in context):
-1. Call list_active_sessions to confirm which sessions are still alive
-2. For each live session, enumerate the system:
-   - send_session_command: run "id", "whoami", "uname -a", "hostname", "ip addr"
-3. Analyze the results:
-   - If running as root/SYSTEM: skip privilege escalation
-   - If running as low-privilege user: search for a local privilege escalation module
-     using list_exploits (search_term="linux local privilege escalation" or similar)
-4. Run relevant post-exploitation modules with run_post_module:
-   - post/linux/gather/enum_system  (system enumeration)
-   - post/multi/gather/env          (environment variables)
-   - post/linux/gather/hashdump     (password hashes, if root)
-5. Summarize findings: current user, OS/kernel, privilege escalation result,
-   any sensitive data found
-
-Rules:
-- Only work on sessions listed in your context — do not target other hosts
-- Do not terminate sessions unless explicitly instructed
-- If a session appears dead (not in list_active_sessions), note it and move on
-- When running post modules, always set SESSION to the session ID from your context
-"""
 
 
 def _build_llm():

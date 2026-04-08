@@ -135,10 +135,10 @@ class TestScoutFindingsIntegration:
             seed: Seed for numpy random generator to ensure reproducibility
 
         Returns:
-            List of 1536 floats representing an embedding vector
+            List of 1024 floats representing an embedding vector
         """
         rng = np.random.RandomState(seed)
-        embedding = rng.randn(1536).astype(np.float32)
+        embedding = rng.randn(1024).astype(np.float32)
         # Normalize the vector
         embedding = embedding / np.linalg.norm(embedding)
         return embedding.tolist()
@@ -509,7 +509,7 @@ class TestScoutParallelFindings:
 
             # Create embedding
             rng = np.random.RandomState(42)
-            embedding_vec = (rng.randn(1536).astype(np.float32) / np.linalg.norm(rng.randn(1536))).tolist()
+            embedding_vec = (rng.randn(1024).astype(np.float32) / np.linalg.norm(rng.randn(1024))).tolist()
             create_finding_embedding(
                 finding_id=finding_id,
                 embedding_vector=embedding_vec,

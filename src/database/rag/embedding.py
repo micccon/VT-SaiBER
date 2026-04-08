@@ -1,40 +1,55 @@
 """
 Embedding Client Module
-Unified API to generate vector embeddings using text-embedding-3-small via OpenRouter.
-Supports single/batch embedding with built-in caching and retry logic.
+Use local SentenceTransformer with BAAI/bge-large-en-v1.5 for RAG embeddings.
 """
 
 # src/database/rag/embedding.py
 
 from typing import List
-import os
-from openai import OpenAI  # 或你最後選的 provider[web:372]
+import asyncio
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
+from sentence_transformers import SentenceTransformer
+
+
+EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
+EMBEDDING_DIM = 1024  # bge-large-en-v1.5 output dimension
+DEFAULT_BATCH_SIZE = 32
 
 
 class EmbeddingClient:
-    def __init__(self):
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is not set")
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
+    def __init__(self, batch_size: int = DEFAULT_BATCH_SIZE):
+        self.model = SentenceTransformer(EMBEDDING_MODEL)
+        self.batch_size = batch_size
 
     async def embed_text(self, text: str) -> List[float]:
         return (await self.embed_texts([text]))[0]
 
-    async def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        import asyncio
+    async def embed_texts(
+        self,
+        texts: List[str],
+        batch_size: int | None = None,
+    ) -> List[List[float]]:
+        """
+        Async wrapper around SentenceTransformer.encode.
+        Internally batches to bound peak memory on large inputs.
+        Normalized embeddings (cosine similarity).
+        """
+        if not texts:
+            return []
 
-        def _call():
-            resp = self.client.embeddings.create(
-                model=EMBEDDING_MODEL,
-                input=texts,
-            )
-            return [item.embedding for item in resp.data]
+        effective_batch = batch_size or self.batch_size
 
-        return await asyncio.to_thread(_call)
+        def _encode_all() -> List[List[float]]:
+            results: List[List[float]] = []
+            for start in range(0, len(texts), effective_batch):
+                batch = texts[start:start + effective_batch]
+                emb = self.model.encode(
+                    batch,
+                    normalize_embeddings=True,
+                    convert_to_numpy=True,
+                    show_progress_bar=False,
+                )
+                results.extend(emb.tolist())
+            return results
+
+        return await asyncio.to_thread(_encode_all)

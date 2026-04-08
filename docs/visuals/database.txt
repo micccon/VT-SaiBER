@@ -176,7 +176,7 @@ Example SESSION row:
 │ PK  id (SERIAL)                          │
 │     doc_name (VARCHAR)                   │
 │     chunk_text (TEXT)                    │
-│     embedding (VECTOR(1536))             │  # pgvector extension
+│     embedding (VECTOR(1024))             │  # pgvector extension
 │     metadata (JSONB)                     │
 │     created_at (TS)                      │
 └──────────────────────────────────────────┘
@@ -190,7 +190,7 @@ Example KNOWLEDGE_BASE row:
   "id": 42,
   "doc_name": "vsftpd_exploits.pdf",
   "chunk_text": "The vsftpd 2.3.4 backdoor can be triggered by sending a username containing a smiley face :) on port 21. The Metasploit module exploit/unix/ftp/vsftpd_234_backdoor automates this attack...",
-  "embedding": [0.023, -0.154, 0.089, ...],  # 1536-dim vector
+  "embedding": [0.023, -0.154, 0.089, ...],  # 1024-dim vector
   "metadata": {
     "page": 5,
     "section": "FTP Vulnerabilities",

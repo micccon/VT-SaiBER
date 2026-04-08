@@ -25,7 +25,6 @@ async def test_indexing_pipeline_ingests_test_file():
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # 直接用 metadata->>'source_path' 篩選出 test.txt 的 row
             cur.execute(
                 """
                 SELECT doc_name, chunk_text, metadata, embedding
@@ -39,7 +38,6 @@ async def test_indexing_pipeline_ingests_test_file():
     finally:
         conn.close()
 
-    # 至少要有一筆是從這個檔案來的
     assert rows, "No rows for test.txt found in knowledge_base"
 
     found = False

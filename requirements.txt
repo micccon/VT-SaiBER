@@ -37,6 +37,7 @@ mcp>=1.0.0                                # Model Context Protocol (MCP) for too
 psycopg2-binary>=2.9.9                    # PostgreSQL adapter for Python
 sqlalchemy>=2.0.25                        # SQL toolkit and ORM for database abstraction
 pgvector>=0.2.4                           # PostgreSQL vector extension for semantic search/RAG
+tavily-python>=0.5.2                      # Tavily client for OSINT data retrieval
 
 # =============================================================================
 # SECURITY & EXPLOITATION FRAMEWORKS
@@ -69,3 +70,5 @@ python-dotenv>=1.0.1                      # Load environment variables from .env
 # =============================================================================
 pytest>=7.4.0                             # Testing framework for unit and integration tests
 numpy>=1.24.0                             # Numerical computing library (for test utilities)
+
+sentence-transformers
