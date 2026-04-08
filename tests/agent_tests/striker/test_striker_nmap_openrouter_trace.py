@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Striker Live Test: Kali nmap -> Striker (with full tool-call trace)
-====================================================================
+Striker Live Integration Test: Kali nmap -> Striker
+===================================================
 Flow:
 1. Call Kali MCP nmap_scan against automotive-testbed (or TARGET_HOST)
 2. Parse nmap output into discovered_targets CyberState structure
-3. Run real striker_node with OpenRouter
-4. Print full tool-call trace (tool name, args, elapsed, result preview)
+3. Run the real striker_node with OpenRouter + traced MCP tools
+4. Require striker to make at least one Metasploit MCP call after the scan
 
 Run inside agents container:
   docker exec -it \
     -e OPENROUTER_API_KEY=... \
     -e LLM_CLIENT=openrouter \
-    -e LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free \
+    -e LLM_MODEL=nvidia/nemotron-3-super-120b-a12b:free \
     -e STRIKER_REQUIRE_CONFIRMATION=true \
     -e TARGET_HOST=automotive-testbed \
     vt-saiber-agents \
@@ -231,7 +231,7 @@ async def main() -> None:
 
     # Enforce expected runtime for this live test.
     os.environ["LLM_CLIENT"] = os.getenv("LLM_CLIENT", "openrouter")
-    os.environ["LLM_MODEL"] = os.getenv("LLM_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+    os.environ["LLM_MODEL"] = os.getenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
     os.environ["STRIKER_REQUIRE_CONFIRMATION"] = os.getenv("STRIKER_REQUIRE_CONFIRMATION", "true")
 
     target_host = os.getenv("TARGET_HOST", "automotive-testbed").strip() or "automotive-testbed"
@@ -240,7 +240,7 @@ async def main() -> None:
     nmap_args = os.getenv("NMAP_ADDITIONAL_ARGS", "-Pn -T4")
 
     print("=" * 76)
-    print("Striker Live Test: Kali nmap -> Striker (full tool-call trace)")
+    print("Striker Live Integration Test: Kali nmap -> Striker")
     print("=" * 76)
     print(f"TARGET_HOST={target_host}")
     print(f"NMAP_SCAN_TYPE={scan_type}")
@@ -281,6 +281,9 @@ async def main() -> None:
     target_data = state["discovered_targets"][target_host]
     print("\n--- Derived discovered_targets ---")
     print(json.dumps(target_data, indent=2))
+    if not target_data.get("ports"):
+        print("[FAIL] nmap output did not produce any open ports for striker to act on.")
+        raise SystemExit(1)
 
     print("\n--- Step 2: Run Striker with traced MCP tools ---")
     original_get_tools = bridge.get_tools_for_agent
@@ -303,6 +306,15 @@ async def main() -> None:
     if out.get("errors"):
         print("errors:")
         print(json.dumps(out.get("errors"), indent=2, default=str))
+        print("[FAIL] Striker returned errors during the live integration test.")
+        raise SystemExit(1)
+
+    striker_events = TRACE_EVENTS[1:]
+    msf_events = [
+        event
+        for event in striker_events
+        if str(event.get("tool", "")).startswith("msf_")
+    ]
 
     print("\n--- Full tool-call sequence ---")
     for event in TRACE_EVENTS:
@@ -311,11 +323,12 @@ async def main() -> None:
             f"status={event.get('status')} elapsed={event.get('elapsed_s', '?')}s"
         )
 
-    if len(TRACE_EVENTS) <= 1:
-        # One event means only the initial nmap call ran and striker made no tool calls.
-        print("[WARN] No striker MCP tool calls were observed after nmap.")
+    if not msf_events:
+        print("[FAIL] Striker made no Metasploit MCP calls after the Nmap scan.")
+        raise SystemExit(1)
 
-    print("\n[PASS] Striker nmap->react trace test completed.")
+    print(f"\nObserved {len(msf_events)} Metasploit MCP calls after the Nmap scan.")
+    print("[PASS] Striker live integration test completed.")
 
 
 if __name__ == "__main__":
