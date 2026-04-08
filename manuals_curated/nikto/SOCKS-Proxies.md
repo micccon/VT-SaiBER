@@ -1,0 +1,1 @@
+Nikto does not directly support SOCKS proxies, however using an application such as [proxychains](https://github.com/haad/proxychains) can allow Nikto to run through a proxy. Additionally, setting an HTTP proxy (such as [Burpsuite](https://portswigger.net/)) which points to a SOCKS listener also works. 
