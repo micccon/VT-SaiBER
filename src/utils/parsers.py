@@ -60,3 +60,47 @@ def to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: to_jsonable(item) for key, item in value.items()}
     return value
+
+
+def normalize_tool_result(raw: Any) -> Dict[str, Any]:
+    """
+    Normalize tool results into a plain dictionary when possible.
+    Accepts direct dicts, JSON strings, and common {"result": ...} envelopes.
+    """
+    payload = raw
+
+    if isinstance(payload, str):
+        candidate = payload.strip()
+        if not candidate:
+            return {}
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            try:
+                payload = _extract_first_object(candidate)
+            except ValueError:
+                return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    nested = payload.get("result")
+    if len(payload) == 1 and isinstance(nested, dict):
+        return nested
+
+    return payload
+
+
+def metasploit_module_key(module_type: Any, module_name: Any) -> str:
+    """
+    Build a stable lowercase key for Metasploit module bookkeeping.
+    """
+    normalized_name = str(module_name or "").strip().lower()
+    if not normalized_name:
+        return ""
+
+    normalized_type = str(module_type or "").strip().lower()
+    if not normalized_type:
+        return normalized_name
+
+    return f"{normalized_type}:{normalized_name}"

@@ -63,7 +63,7 @@ def _build_llm():
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY is required when LLM_CLIENT=openrouter")
-    model = os.getenv("LLM_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+    model = os.getenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
     return ChatOpenAI(
         model=model,
         api_key=api_key,
