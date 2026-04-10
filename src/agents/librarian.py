@@ -48,7 +48,7 @@ class LibrarianAgent(BaseAgent):
                 self._rag = None
         self._telemetry_processor = TelemetryProcessor()
 
-        # 3. OSINT
+        # 3. OSINTS
         try:
             from src.database.librarian.osint_client import OSINTClient
             self._osint_client = OSINTClient()

@@ -9,11 +9,14 @@ Routes files to a chunker by extension:
 # src/database/rag/indexing.py
 
 import os
+from pathlib import Path
 from typing import List, Dict, Any, Callable
 
 import pypdf
 
-from .models import Chunk
+from .embedding import EmbeddingClient
+from .models import Chunk, IngestionResult
+from .rag_manager import clear_kb_by_source_dir, insert_kb_chunk
 from .chunking import simple_chunking, markdown_chunking
 
 ChunkingStrategy = Callable[..., List[Chunk]]
@@ -60,6 +63,68 @@ class IndexingPipeline:
             elif os.path.isfile(path) and self._is_supported_file(path):
                 chunks.extend(await self._process_single_file(path, path, metadata_base))
         return chunks
+
+    async def ingest_into_knowledge_base(
+        self,
+        source_paths: List[str],
+        *,
+        embedding_client: EmbeddingClient,
+        reset: bool = False,
+        batch_size: int | None = None,
+        metadata_base: Dict[str, Any] | None = None,
+    ) -> IngestionResult:
+        """
+        End-to-end offline ingestion for supported source paths.
+
+        This belongs in the indexing layer because it owns document walking,
+        chunk production, and the chunk-to-KB indexing workflow.
+        """
+        resolved_sources = [str(Path(path)) for path in source_paths]
+        base_metadata = dict(metadata_base or {})
+
+        deleted_rows = 0
+        if reset:
+            for source_dir in resolved_sources:
+                deleted_rows += clear_kb_by_source_dir(source_dir)
+
+        chunks = await self.process_documents(
+            source_paths=resolved_sources,
+            metadata_base=base_metadata,
+        )
+        if not chunks:
+            return IngestionResult(
+                sources=resolved_sources,
+                deleted_rows=deleted_rows,
+                chunk_count=0,
+                inserted_count=0,
+                per_tool={},
+                metadata_base=base_metadata,
+            )
+
+        texts = [chunk.chunk_text for chunk in chunks]
+        embeddings = await embedding_client.embed_texts(
+            texts,
+            batch_size=batch_size,
+        )
+
+        inserted_count = 0
+        per_tool: Dict[str, int] = {}
+        for chunk, embedding in zip(chunks, embeddings):
+            chunk.embedding = embedding
+            insert_kb_chunk(chunk)
+            inserted_count += 1
+
+            tool = str(chunk.metadata.get("tool", "unknown"))
+            per_tool[tool] = per_tool.get(tool, 0) + 1
+
+        return IngestionResult(
+            sources=resolved_sources,
+            deleted_rows=deleted_rows,
+            chunk_count=len(chunks),
+            inserted_count=inserted_count,
+            per_tool=per_tool,
+            metadata_base=base_metadata,
+        )
 
     def _is_supported_file(self, file_path: str) -> bool:
         return file_path.lower().endswith(SUPPORTED_EXTENSIONS)

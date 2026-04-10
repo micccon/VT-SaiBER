@@ -5,9 +5,12 @@ Handle all knowledge_base table operations: insert, search, delete, update.
 Uses existing manager.py connection but provides RAG-specific interface.
 """
 
+from __future__ import annotations
+
 import json
-from psycopg2.extras import RealDictCursor
 from typing import Any, Dict, List
+
+from psycopg2.extras import RealDictCursor
 
 from src.database.manager import get_connection
 from .models import Chunk
@@ -36,6 +39,7 @@ def insert_kb_chunk(chunk: Chunk):
     finally:
         conn.close()
 
+
 def search_by_embedding(
     query_embedding: List[float],
     top_k: int = 5,
@@ -44,7 +48,7 @@ def search_by_embedding(
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # 目前先不做 filters，之後再加 metadata 條件
+            # Filters can be added later once metadata query patterns stabilize.
             cur.execute(
                 """
                 SELECT id, doc_name, chunk_text, metadata, embedding,
@@ -61,23 +65,29 @@ def search_by_embedding(
     finally:
         conn.close()
 
-def clear_kb_by_source_dir(source_dir: str) -> int:
-    """
-    delete metadata->>'source_path' 包含 source_dir 的所有 rows。
-    回傳刪除筆數。
-    """
+
+def clear_kb_by_source_dir(source_dir: str | None) -> int:
+    """Delete KB rows by source path, or clear the table when source_dir is None."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                DELETE FROM knowledge_base
-                WHERE metadata->>'source_path' LIKE %s;
-                """,
-                (f"%{source_dir}%",),
-            )
+            if source_dir is None:
+                cur.execute("DELETE FROM knowledge_base;")
+            else:
+                cur.execute(
+                    """
+                    DELETE FROM knowledge_base
+                    WHERE metadata->>'source_path' LIKE %s;
+                    """,
+                    (f"%{source_dir}%",),
+                )
             deleted = cur.rowcount
         conn.commit()
         return deleted
     finally:
         conn.close()
+
+
+def clear_knowledge_base() -> int:
+    """Delete every row from the knowledge_base table."""
+    return clear_kb_by_source_dir(None)
