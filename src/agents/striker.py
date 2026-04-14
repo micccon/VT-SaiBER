@@ -40,7 +40,20 @@ STRIKER_ALLOWED_TOOLS = {
 
 STRIKER_REQUIRE_CONFIRMATION = os.getenv("STRIKER_REQUIRE_CONFIRMATION", "true").lower() == "true"
 MAX_EXPLOIT_ATTEMPTS = int(os.getenv("STRIKER_MAX_EXPLOIT_ATTEMPTS", "3"))
+MAX_SEARCH_CALLS = int(os.getenv("STRIKER_MAX_SEARCH_CALLS", "6"))
 EXECUTION_TOOL_NAMES = {"msf_run_exploit", "msf_run_auxiliary_module"}
+SEARCH_TOOL_NAMES = {"msf_list_exploits"}
+
+CREDENTIAL_MODULES = {
+    "scanner/ssh/ssh_login",
+    "scanner/ftp/ftp_login",
+    "scanner/smb/smb_login",
+    "scanner/mysql/mysql_login",
+    "scanner/postgres/postgres_login",
+    "scanner/vnc/vnc_login",
+    "scanner/telnet/telnet_login",
+}
+CREDENTIAL_OPTIONS = {"USERNAME", "USER_FILE", "USERPASS_FILE", "PASSWORD", "PASS_FILE"}
 METASPLOIT_DEFAULT_SERVICES = {
     "http",
     "https",
@@ -299,29 +312,46 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         )
 
     def _validate_execution_request(self, tool_name: str, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if tool_name != "msf_run_exploit":
-            return None
+        # Validate reverse payload LHOST for exploits
+        if tool_name == "msf_run_exploit":
+            payload_name = str(kwargs.get("payload_name", "") or "").strip().lower()
+            if "reverse" in payload_name:
+                payload_options = _normalize_option_map(kwargs.get("payload_options"))
+                lhost = str(payload_options.get("LHOST", "") or "").strip()
+                if _is_invalid_callback_host(lhost):
+                    return {
+                        "status": "blocked",
+                        "message": "Reverse payload requires a reachable non-loopback LHOST.",
+                        "payload_name": kwargs.get("payload_name", ""),
+                        "payload_options": payload_options,
+                    }
 
-        payload_name = str(kwargs.get("payload_name", "") or "").strip().lower()
-        if "reverse" not in payload_name:
-            return None
+        # Validate credentials for login scanner modules
+        if tool_name == "msf_run_auxiliary_module":
+            module_name = str(kwargs.get("module_name", "") or "").strip().lower()
+            if any(cred_module in module_name for cred_module in CREDENTIAL_MODULES):
+                options = kwargs.get("options", {}) if isinstance(kwargs.get("options"), dict) else {}
+                has_credentials = any(
+                    options.get(opt) for opt in CREDENTIAL_OPTIONS
+                    if options.get(opt) and str(options.get(opt)).strip()
+                )
+                if not has_credentials:
+                    return {
+                        "status": "blocked",
+                        "message": f"Login scanner '{module_name}' requires credentials. Set at least one of: USERNAME, PASSWORD, USER_FILE, PASS_FILE, or USERPASS_FILE.",
+                        "module_name": module_name,
+                    }
 
-        payload_options = _normalize_option_map(kwargs.get("payload_options"))
-        lhost = str(payload_options.get("LHOST", "") or "").strip()
-        if not _is_invalid_callback_host(lhost):
-            return None
-
-        return {
-            "status": "blocked",
-            "message": "Reverse payload requires a reachable non-loopback LHOST.",
-            "payload_name": kwargs.get("payload_name", ""),
-            "payload_options": payload_options,
-        }
+        return None
 
     def _wrap_tools(self, tools: List[StructuredTool]) -> List[StructuredTool]:
         seen_options: set[str] = set()
         failed_execution_signatures: set[tuple[str, str, str, str]] = set()
         failed_execution_retry_keys: set[tuple[str, str, str]] = set()
+        failed_service_ports: set[tuple[str, int]] = set()
+        module_valid_options: dict[str, set[str]] = {}
+        seen_searches: set[str] = set()
+        search_count = 0
         execution_attempts = 0
         wrapped_tools: List[StructuredTool] = []
 
@@ -329,8 +359,27 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             original_tool = tool
 
             async def guarded_coroutine(_tool=original_tool, **kwargs):
-                nonlocal execution_attempts
+                nonlocal execution_attempts, search_count
                 call_kwargs = dict(kwargs or {})
+
+                # Fix #1: Search loop detection
+                if _tool.name in SEARCH_TOOL_NAMES:
+                    search_term = str(call_kwargs.get("search_term", "")).strip().lower()
+
+                    if search_term in seen_searches:
+                        return json.dumps({
+                            "status": "blocked",
+                            "message": f"Already searched '{search_term}'. Use existing results or pivot to a different service/port.",
+                        })
+
+                    if search_count >= MAX_SEARCH_CALLS:
+                        return json.dumps({
+                            "status": "blocked",
+                            "message": f"Search budget exceeded ({MAX_SEARCH_CALLS}). Act on available intel or conclude.",
+                        })
+
+                    seen_searches.add(search_term)
+                    search_count += 1
 
                 if _tool.name == "msf_get_module_options":
                     response = await _invoke_tool(_tool, call_kwargs)
@@ -341,6 +390,14 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                     )
                     if module_key and result.get("status") == "success":
                         seen_options.add(module_key)
+                        # Fix #4: Cache valid option names for later validation
+                        options_list = result.get("options", [])
+                        valid_names = {
+                            opt["name"] for opt in options_list
+                            if isinstance(opt, dict) and "name" in opt
+                        }
+                        if valid_names:
+                            module_valid_options[module_key] = valid_names
                     return response
 
                 if _tool.name in EXECUTION_TOOL_NAMES:
@@ -359,13 +416,36 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                     if validation_error is not None:
                         return json.dumps(validation_error)
 
+                    # Fix #2: Service-level pivot enforcement
+                    options = call_kwargs.get("options", {}) if isinstance(call_kwargs.get("options"), dict) else {}
+                    exec_target = str(options.get("RHOSTS") or options.get("RHOST") or "").strip().lower()
+                    exec_port = int(options.get("RPORT", 0) or 0)
+                    if exec_target and exec_port and (exec_target, exec_port) in failed_service_ports:
+                        return json.dumps({
+                            "status": "blocked",
+                            "message": f"An exploit already failed on {exec_target}:{exec_port}. Pivot to a different service/port.",
+                        })
+
+                    # Fix #4: Option validation against cached valid options
+                    valid_options = module_valid_options.get(module_key, set())
+                    if valid_options and options:
+                        provided_options = set(options.keys())
+                        invalid_options = provided_options - valid_options
+                        if invalid_options:
+                            return json.dumps({
+                                "status": "blocked",
+                                "message": f"Unknown options: {sorted(invalid_options)}. Check msf_get_module_options output for valid options.",
+                                "valid_options_sample": sorted(list(valid_options))[:10],
+                            })
+
                     execution_signature = _execution_signature(_tool.name, call_kwargs)
                     execution_retry_key = _execution_retry_key(_tool.name, call_kwargs)
-                    if _tool.name == "msf_run_exploit" and execution_retry_key in failed_execution_retry_keys:
+                    if execution_retry_key in failed_execution_retry_keys:
+                        module_type = "exploit" if _tool.name == "msf_run_exploit" else "auxiliary module"
                         return json.dumps(
                             {
                                 "status": "blocked",
-                                "message": "This exploit module already failed against this target in the current run. Pivot to a different path or gather new evidence first.",
+                                "message": f"This {module_type} already failed against this target in the current run. Pivot to a different path or gather new evidence first.",
                                 "signature": list(execution_signature),
                             }
                         )
@@ -397,15 +477,38 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                     execution_attempts += 1
 
                 response = await _invoke_tool(_tool, call_kwargs)
-                if _tool.name == "msf_run_exploit":
+
+                # Track failures for both exploit and auxiliary modules
+                if _tool.name in EXECUTION_TOOL_NAMES:
                     result = normalize_tool_result(response)
-                    if (
-                        result.get("status") == "error"
-                        and not result.get("session_id")
-                        and not result.get("session_id_detected")
-                    ):
+                    is_failure = False
+
+                    if _tool.name == "msf_run_exploit":
+                        is_failure = (
+                            result.get("status") == "error"
+                            and not result.get("session_id")
+                            and not result.get("session_id_detected")
+                        )
+                    elif _tool.name == "msf_run_auxiliary_module":
+                        # Auxiliary modules fail if error status or no session created
+                        module_output = str(result.get("module_output", "") or "")
+                        is_failure = (
+                            result.get("status") == "error"
+                            or not result.get("session_id")
+                            and not result.get("session_id_detected")
+                            and "Error:" in module_output
+                        )
+
+                    if is_failure:
                         failed_execution_signatures.add(_execution_signature(_tool.name, call_kwargs))
                         failed_execution_retry_keys.add(_execution_retry_key(_tool.name, call_kwargs))
+
+                        # Track failed service/port for pivot enforcement
+                        fail_options = call_kwargs.get("options", {}) if isinstance(call_kwargs.get("options"), dict) else {}
+                        fail_target = str(fail_options.get("RHOSTS") or fail_options.get("RHOST") or "").strip().lower()
+                        fail_port = int(fail_options.get("RPORT", 0) or 0)
+                        if fail_target and fail_port:
+                            failed_service_ports.add((fail_target, fail_port))
 
                 return response
 
