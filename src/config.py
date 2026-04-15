@@ -64,7 +64,7 @@ def get_runtime_config() -> RuntimeConfig:
     return RuntimeConfig(
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
-        supervisor_model=os.getenv("SUPERVISOR_MODEL", "minimax/minimax-m2.5").strip(),
+        supervisor_model=os.getenv("SUPERVISOR_MODEL", "minimax/minimax-m2.5:free").strip(),
         supervisor_timeout_seconds=_env_int("SUPERVISOR_TIMEOUT_SECONDS", 90),
         supervisor_reasoning_enabled=_env_bool("SUPERVISOR_REASONING_ENABLED", True),
         supervisor_max_reasoning_messages=_env_int("SUPERVISOR_MAX_REASONING_MESSAGES", 12),
