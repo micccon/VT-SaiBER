@@ -61,6 +61,36 @@ services:
     # Restart policy
     restart: unless-stopped
 
+  knowledge_base:
+    image: vt-saiber-agents
+    container_name: vt-saiber-knowledge-base
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      RAG_SYNC_MODE: "sync"                   # or "rebuild"
+      RAG_SYNC_SOURCE_DIR: "src/database/testbed_docs"
+    volumes:
+      - ./src:/app/src:ro      # Read-only access for source code
+    networks:
+      - vt-saiber-network
+    command: >
+      sh -lc "
+        echo '[kb-sync] Waiting for Postgres...';
+        until pg_isready -h $DB_HOST -U $DB_USER -d $DB_NAME; do
+          sleep 2;
+        done;
+        echo '[kb-sync] Postgres is ready, running RAG '$RAG_SYNC_MODE'...';
+        python -m src.database.rag.rag_engine $RAG_SYNC_MODE \
+          --source-dir $RAG_SYNC_SOURCE_DIR;
+        echo '[kb-sync] KB sync done, exiting.';
+      "
+
   # ---------------------------------------------------------------------------
   # Kali MCP Server
   # ---------------------------------------------------------------------------
@@ -177,6 +207,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      knowledge_base:
+        condition: service_completed_successfully
       kali-mcp:
         condition: service_healthy
       msf-mcp:

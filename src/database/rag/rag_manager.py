@@ -91,3 +91,76 @@ def clear_kb_by_source_dir(source_dir: str | None) -> int:
 def clear_knowledge_base() -> int:
     """Delete every row from the knowledge_base table."""
     return clear_kb_by_source_dir(None)
+
+
+def delete_kb_by_source_path(source_path: str) -> int:
+    """Delete KB rows for one exact source file path."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM knowledge_base
+                WHERE metadata->>'source_path' = %s;
+                """,
+                (source_path,),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
+
+
+def get_indexed_source_files(source_paths: List[str] | None = None) -> Dict[str, Dict[str, Any]]:
+    """
+    Return one row per indexed source file keyed by metadata.source_path.
+
+    file_hash is read from chunk metadata so incremental sync can detect which
+    files changed since the last ingestion run.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    metadata->>'source_path' AS source_path,
+                    metadata->>'file_hash' AS file_hash,
+                    MIN(doc_name) AS doc_name,
+                    COUNT(*) AS chunk_count
+                FROM knowledge_base
+                WHERE metadata ? 'source_path'
+                GROUP BY metadata->>'source_path', metadata->>'file_hash';
+                """
+            )
+            rows = cur.fetchall()
+        conn.commit()
+    finally:
+        conn.close()
+
+    indexed: Dict[str, Dict[str, Any]] = {}
+    requested = list(source_paths or [])
+    for row in rows:
+        source_path = str(row.get("source_path") or "")
+        if not source_path:
+            continue
+
+        if requested and not any(_source_path_matches(source_path, candidate) for candidate in requested):
+            continue
+
+        indexed[source_path] = {
+            "file_hash": row.get("file_hash"),
+            "doc_name": row.get("doc_name"),
+            "chunk_count": int(row.get("chunk_count") or 0),
+        }
+
+    return indexed
+
+
+def _source_path_matches(source_path: str, candidate: str) -> bool:
+    if source_path == candidate:
+        return True
+    normalized = source_path.replace("\\", "/")
+    normalized_candidate = candidate.replace("\\", "/").rstrip("/")
+    return normalized.startswith(f"{normalized_candidate}/")

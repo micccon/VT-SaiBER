@@ -36,3 +36,16 @@ class IngestionResult:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class SourceFileRecord:
+    """A supported source file plus the metadata needed for incremental sync."""
+
+    file_path: str
+    source_root: str
+    file_hash: str
+    text: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
