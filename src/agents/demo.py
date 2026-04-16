@@ -381,7 +381,7 @@ async def demo_run(max_iterations: int = 5):
         "active_sessions": {},
         "exploited_services": [],
         "research_cache": {},
-        "osint_findings": [],
+        "intelligence_findings": [],
         "agent_log": [],
         "critical_findings": [],
         "errors": [],

@@ -69,7 +69,7 @@ TURN 6
 - Librarian adds intelligence
 - New state added:
   - research_cache
-  - osint_findings (CVE/module hints)
+  - intelligence_findings (CVE/module hints)
 - Control returns to Supervisor
 
 TURN 7

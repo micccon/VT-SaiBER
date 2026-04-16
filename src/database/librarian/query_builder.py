@@ -3,16 +3,23 @@ from src.state.cyber_state import CyberState
 
 
 class TelemetryProcessor:
-    """負責將複雜的 CyberState 轉換為簡潔的檢索查詢與上下文"""
+    """
+    responsible for converting raw telemetry data 
+    into a compact string format suitable for LLM input
+    """
 
     @staticmethod
     def build_research_query(state: CyberState) -> str:
-        """將目標 IP、端口、服務版本及 Web 發現轉化為緊湊的 Telemetry 字串"""
+        """
+        Convert target IP, ports, service versions, 
+        and web findings into a compact Telemetry string
+        """
+
         segments: List[str] = [f"mission={state.get('mission_goal', '')}"]
         discovered_targets = state.get("discovered_targets", {}) or {}
         web_findings = state.get("web_findings", []) or []
 
-        # 處理前兩個目標的服務資訊 (避免 Prompt 過長)
+        # process up to 2 targets and 6 services per target for brevity
         for ip, target_data in list(discovered_targets.items())[:2]:
             services = target_data.get("services", {}) if isinstance(target_data, dict) else {}
             service_bits = []

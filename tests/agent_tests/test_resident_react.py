@@ -81,7 +81,7 @@ MOCK_STATE = {
     "research_cache": {
         "ssh privesc": "Check sudo -l and SUID binaries for escalation paths",
     },
-    "osint_findings": [
+    "intelligence_findings": [
         {
             "cve": "CVE-2021-4034",
             "description": "Polkit pkexec local privilege escalation",
@@ -170,7 +170,7 @@ def test_build_context_empty_sessions():
 
 
 def test_build_context_empty_research():
-    state = {**MOCK_STATE, "research_cache": {}, "osint_findings": []}
+    state = {**MOCK_STATE, "research_cache": {}, "intelligence_findings": []}
     ctx = resident_mod._build_resident_context(state)
     research_section = ctx.split("RESEARCH & OSINT INTELLIGENCE:")[1]
     if "(none)" not in research_section.split("\n\n")[0]:

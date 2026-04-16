@@ -214,7 +214,7 @@ def _build_state_from_nmap(target_host: str, nmap_stdout: str) -> Dict[str, Any]
         },
         "web_findings": [],
         "research_cache": {},
-        "osint_findings": [],
+        "intelligence_findings": [],
         "active_sessions": {},
         "exploited_services": [],
         "agent_log": [],

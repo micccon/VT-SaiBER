@@ -34,7 +34,7 @@ async def test_librarian_vsftpd_exploit():
         "exploited_services": [],
 
         "research_cache": {},
-        "osint_findings": [],
+        "intelligence_findings": [],
 
         "supervisor_messages": [],
         "supervisor_expectations": {},
@@ -46,9 +46,9 @@ async def test_librarian_vsftpd_exploit():
 
     new_state = await librarian_node(state)
 
-    osint_findings = new_state.get("osint_findings", [])
-    assert osint_findings, "Librarian should produce at least one finding"
+    intelligence_findings = new_state.get("intelligence_findings", [])
+    assert intelligence_findings, "Librarian should produce at least one finding"
 
-    first = osint_findings[0]
+    first = intelligence_findings[0]
     desc = first.get("description", "").lower()
     assert "vsftpd" in desc  

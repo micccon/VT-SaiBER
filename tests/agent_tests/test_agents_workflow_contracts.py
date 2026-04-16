@@ -60,7 +60,7 @@ def _base_state() -> Dict[str, Any]:
         "active_sessions": {},
         "exploited_services": [],
         "research_cache": {},
-        "osint_findings": [],
+        "intelligence_findings": [],
         "supervisor_messages": [],
         "supervisor_expectations": {},
         "agent_log": [],
@@ -305,7 +305,7 @@ def test_supervisor_live_routes_to_scout_with_no_targets():
 
 @_requires_api_key
 def test_librarian_live_produces_structured_brief():
-    """Real LLM: librarian must return a populated research_cache and osint_findings."""
+    """Real LLM: librarian must return a populated research_cache and intelligence_findings."""
     get_runtime_config.cache_clear()
     state = _base_state()
     state["discovered_targets"] = {
@@ -323,9 +323,9 @@ def test_librarian_live_produces_structured_brief():
     assert "summary" in cache_entry, "cache entry must have a summary"
     assert isinstance(cache_entry.get("confidence"), float), "confidence must be a float"
 
-    assert "osint_findings" in out
-    assert len(out["osint_findings"]) > 0
-    finding = out["osint_findings"][0]
+    assert "intelligence_findings" in out
+    assert len(out["intelligence_findings"]) > 0
+    finding = out["intelligence_findings"][0]
     assert "description" in finding
 
     print(f"\n[live] librarian summary  : {cache_entry.get('summary', '')[:120]}")
