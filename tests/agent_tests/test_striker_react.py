@@ -80,7 +80,7 @@ MOCK_STATE: Dict[str, Any] = {
     "research_cache": {
         "OpenSSH 8.2p1": "Brute-force likely; no straightforward RCE.",
     },
-    "osint_findings": [
+    "intelligence_findings": [
         {
             "cve": "CVE-2016-10516",
             "description": "Werkzeug debugger issue in debug mode.",

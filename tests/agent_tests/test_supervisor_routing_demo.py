@@ -141,7 +141,7 @@ def build_scenario_state(query: str, scope: str, scenario: str) -> CyberState:
 
 def merge_state(state: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
     merged = {**state, **update}
-    for key in ("agent_log", "errors", "critical_findings", "web_findings", "osint_findings"):
+    for key in ("agent_log", "errors", "critical_findings", "web_findings", "intelligence_findings"):
         if isinstance(state.get(key), list) and isinstance(update.get(key), list):
             merged[key] = list(state[key]) + list(update[key])
     for key in ("discovered_targets", "active_sessions", "research_cache", "supervisor_expectations"):

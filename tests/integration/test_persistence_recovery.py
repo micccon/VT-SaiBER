@@ -159,7 +159,7 @@ def test_state_reconstruction_from_checkpoint_data():
         },
         "exploited_services": [{"target": "10.0.0.1", "module": "ssh_login", "status": "success"}],
         "research_cache": {},
-        "osint_findings": [],
+        "intelligence_findings": [],
         "supervisor_messages": [],
         "supervisor_expectations": {},
         "agent_log": [],

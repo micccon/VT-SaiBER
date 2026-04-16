@@ -191,7 +191,7 @@ async def test_fallback_brief_no_client():
 # ═══════════════════════════════════════════════════════════════
 
 async def test_librarian_node_output_structure():
-    """Librarian node should produce research_cache and osint_findings."""
+    """Librarian node should produce research_cache and intelligence_findings."""
     state = _base_state(
         discovered_targets={
             "10.0.0.1": {"services": {"22": {"service_name": "ssh", "version": "OpenSSH 8.2"}}}
@@ -208,9 +208,9 @@ async def test_librarian_node_output_structure():
         results.add_fail("test_node_output", "Expected non-empty research_cache")
         return
 
-    osint = out.get("osint_findings", [])
+    osint = out.get("intelligence_findings", [])
     if not osint:
-        results.add_fail("test_node_output", "Expected non-empty osint_findings")
+        results.add_fail("test_node_output", "Expected non-empty intelligence_findings")
         return
 
     first_osint = osint[0]
@@ -242,10 +242,10 @@ async def test_librarian_cache_key_in_output():
 
 
 async def test_librarian_osint_finding_structure():
-    """OSINT findings should have required fields."""
+    """Intelligence findings should have required fields."""
     state = _base_state()
     out = await librarian_node(state)
-    osint = out.get("osint_findings", [])
+    osint = out.get("intelligence_findings", [])
     if not osint:
         results.add_fail("test_osint_structure", "No osint findings")
         return

@@ -21,3 +21,31 @@ class Chunk:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)  # transform dataclass to dict for easier insertion into DB
+
+
+@dataclass
+class IngestionResult:
+    """Summary produced by knowledge-base ingestion/indexing runs."""
+
+    sources: List[str]
+    deleted_rows: int
+    chunk_count: int
+    inserted_count: int
+    per_tool: Dict[str, int]
+    metadata_base: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class SourceFileRecord:
+    """A supported source file plus the metadata needed for incremental sync."""
+
+    file_path: str
+    source_root: str
+    file_hash: str
+    text: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)

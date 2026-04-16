@@ -12,7 +12,7 @@ PDF_PATH = "src/database/testbed_docs/metasploit_vsftpd_guide.pdf"
 @pytest.mark.asyncio
 async def test_pdf_indexing_and_retrieval():
     rag = RAGOrchestrator()
-    await rag.index_knowledge_base_full(["src/database/testbed_docs"])
+    await rag.rebuild_knowledge_base(["src/database/testbed_docs"])
 
     conn = get_connection()
     try:

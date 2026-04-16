@@ -38,7 +38,7 @@ class CyberState(TypedDict):
 
     # Knowledge
     research_cache: Annotated[Dict[str, Any], _merge_dicts]
-    osint_findings: Annotated[List[Dict[str, Any]], _merge_lists]
+    intelligence_findings: Annotated[List[Dict[str, Any]], _merge_lists]
 
     # Supervisor memory / expectations
     supervisor_messages: List[Dict[str, Any]]

@@ -8,7 +8,7 @@ Intelligence sources consumed:
   - active_sessions     (Striker: open MSF sessions keyed by target IP)
   - discovered_targets  (Scout: services and OS context)
   - research_cache      (Librarian: keyed intel — RAG hook-in point)
-  - osint_findings      (Librarian: CVE / technique records)
+  - intelligence_findings      (Librarian: CVE / technique records)
   - mission_goal        (Supervisor: overall objective)
 
 Tool access (docs/visuals/access_control_matrix.txt):
@@ -99,7 +99,7 @@ def _build_resident_context(state: CyberState) -> str:
     active_sessions = state.get("active_sessions", {}) or {}
     discovered_targets = state.get("discovered_targets", {}) or {}
     research_cache = state.get("research_cache", {}) or {}
-    osint_findings = state.get("osint_findings", []) or []
+    intelligence_findings = state.get("intelligence_findings", []) or []
 
     # Sessions block
     sessions_lines = []
@@ -130,7 +130,7 @@ def _build_resident_context(state: CyberState) -> str:
     research_lines = []
     for key, value in list(research_cache.items())[:4]:
         research_lines.append(f"  {key}: {str(value)[:120]}")
-    for finding in osint_findings[:3]:
+    for finding in intelligence_findings[:3]:
         if isinstance(finding, dict):
             desc = finding.get("description", "")
             cve = finding.get("cve", "")

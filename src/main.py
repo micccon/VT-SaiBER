@@ -48,7 +48,7 @@ def build_initial_state(mission_goal: str, target_scope: List[str], mission_id: 
         "active_sessions": {},
         "exploited_services": [],
         "research_cache": {},
-        "osint_findings": [],
+        "intelligence_findings": [],
         "supervisor_messages": [],
         "supervisor_expectations": {},
         "agent_log": [],

@@ -28,6 +28,7 @@ RUN apt-get update && \
     git \
     gcc \
     python3-dev \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # What gets installed:

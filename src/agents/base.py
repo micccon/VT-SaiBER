@@ -1,9 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
 
 from src.state.cyber_state import CyberState
 from src.state.models import AgentLogEntry, AgentError
+
+
+class AgentSkill(Protocol):
+    name: str
+    def is_applicable(self, state: CyberState) -> bool: ...
+    def as_text(self, state: CyberState) -> str: ...
 
 
 class BaseAgent(ABC):
@@ -16,6 +22,7 @@ class BaseAgent(ABC):
     def __init__(self, name: str, role: str):
         self.name = name
         self.role = role
+        self.skills: list[AgentSkill] = []  # Registered skills for the agent
         self._db = None  # Lazy initialization
         self._mcp = None  # Lazy initialization
 
@@ -36,6 +43,20 @@ class BaseAgent(ABC):
             Dict with state updates to be merged into the shared state.
         """
         pass
+
+    def register_skill(self, skill: AgentSkill) -> None:
+        """Attach a reusable skill module to this agent."""
+        self.skills.append(skill)
+
+    def _render_skills_for_state(self, state: CyberState) -> str:
+        """Return concatenated skill texts that are applicable to current state."""
+        chunks: list[str] = []
+        for skill in self.skills:
+            if skill.is_applicable(state):
+                chunks.append(skill.as_text(state))
+        if not chunks:
+            return ""
+        return "\n\n".join(chunks)
 
     @property
     def db(self):

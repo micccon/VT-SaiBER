@@ -589,7 +589,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         for key, value in list(research_cache.items())[:6]:
             hints.append(f"- Research ({key}): {value}")
 
-        for finding in (state.get("osint_findings", []) or [])[:6]:
+        for finding in (state.get("intelligence_findings", []) or [])[:6]:
             if not isinstance(finding, dict):
                 continue
             description = str(finding.get("description", "") or "")
@@ -619,7 +619,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
     def _rank_candidates(self, state: CyberState) -> List[Dict[str, Any]]:
         discovered_targets = state.get("discovered_targets", {}) or {}
         research_cache = state.get("research_cache", {}) or {}
-        osint_findings = state.get("osint_findings", []) or []
+        intelligence_findings = state.get("intelligence_findings", []) or []
         web_findings = state.get("web_findings", []) or []
         prior_attempts = state.get("exploited_services", []) or []
 
@@ -631,7 +631,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 version = service["version"].lower()
                 service_intel = self._collect_service_intel(
                     research_cache=research_cache,
-                    osint_findings=osint_findings,
+                    intelligence_findings=intelligence_findings,
                     service_name=service_name,
                     version=version,
                 )
@@ -731,7 +731,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
     def _collect_service_intel(
         self,
         research_cache: Dict[str, Any],
-        osint_findings: List[Dict[str, Any]],
+        intelligence_findings: List[Dict[str, Any]],
         service_name: str,
         version: str,
     ) -> Dict[str, Any]:
@@ -755,7 +755,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             ) and any(indicator in text for indicator in indicators):
                 suggests_metasploit = True
 
-        for item in osint_findings:
+        for item in intelligence_findings:
             if not isinstance(item, dict):
                 continue
             text = json.dumps(item, default=str).lower()
@@ -786,12 +786,12 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
 
     def _extract_matching_cves(
         self,
-        osint_findings: List[Dict[str, Any]],
+        intelligence_findings: List[Dict[str, Any]],
         service_name: str,
         version: str,
     ) -> List[str]:
         cves: List[str] = []
-        for item in osint_findings:
+        for item in intelligence_findings:
             if not isinstance(item, dict):
                 continue
             text = json.dumps(item, default=str).lower()

@@ -14,12 +14,12 @@ load_dotenv()
 async def test_indexing_pipeline_ingests_test_file():
     """
     End-to-end test:
-    - Run RAGOrchestrator.index_knowledge_base_full on database/testbed_docs
+    - Run RAGOrchestrator.rebuild_knowledge_base on database/testbed_docs
     - Verify that at least one row from test.txt is stored in knowledge_base
     """
     # 1. Run indexing on the testbed_docs directory
     rag = RAGOrchestrator()
-    await rag.index_knowledge_base_full(["src/database/testbed_docs"])
+    await rag.rebuild_knowledge_base(["src/database/testbed_docs"])
 
     # 2. Query the DB to check inserted rows
     conn = get_connection()
