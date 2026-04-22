@@ -191,6 +191,7 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - KALI_MCP_URL=${KALI_MCP_URL}
       - MSF_MCP_URL=${MSF_MCP_URL}
+      - REPORT_EXPORT_DIR=/app/exports
       #- ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       #- OPENAI_API_KEY=${OPENAI_API_KEY}
     
@@ -199,6 +200,7 @@ services:
       - ./src:/app/src:rw      # Read-write access
       - ./data:/app/data:rw
       - ./tests:/app/tests:rw
+      - ./exports:/app/exports:rw
     
     networks:
       - vt-saiber-network

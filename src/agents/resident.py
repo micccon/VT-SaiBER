@@ -1,23 +1,14 @@
 """
-Resident Agent - Post-Exploitation Specialist
-=============================================
+Resident Agent - Post-Exploitation Specialist.
+
 Maintains access and performs post-exploitation activities on open sessions.
 Uses LangGraph's create_react_agent for autonomous enumeration and escalation.
-
-Intelligence sources consumed:
-  - active_sessions     (Striker: open MSF sessions keyed by target IP)
-  - discovered_targets  (Scout: services and OS context)
-  - research_cache      (Librarian: keyed intel — RAG hook-in point)
-  - intelligence_findings      (Librarian: CVE / technique records)
-  - mission_goal        (Supervisor: overall objective)
-
-Tool access (docs/visuals/access_control_matrix.txt):
-  MSF: list_active_sessions, send_session_command, run_post_module,
-       list_exploits, terminate_session
 """
 
-import json
+from __future__ import annotations
+
 import inspect
+import json
 import os
 from datetime import datetime
 from typing import Any, Dict, List
@@ -25,6 +16,7 @@ from typing import Any, Dict, List
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import create_react_agent
 
+from src.database.persistence import persist_state_update
 from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.prompts.resident_prompt import RESIDENT_SYSTEM_PROMPT
 from src.state.cyber_state import CyberState
@@ -35,19 +27,15 @@ try:
 except Exception:  # pragma: no cover - optional dependency path
     ChatOpenAI = None
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 RESIDENT_ALLOWED_TOOLS = {
-    "list_active_sessions",   # MSF: verify sessions are still alive
-    "send_session_command",   # MSF: run commands inside a session (enum, privesc)
-    "run_post_module",        # MSF: run post-exploitation modules
-    "list_exploits",          # MSF: search for privilege escalation modules
-    "terminate_session",      # MSF: close a session when done
+    "list_active_sessions",
+    "send_session_command",
+    "run_post_module",
+    "list_exploits",
+    "terminate_session",
 }
 
-# ToolMessage names to scan for post-exploitation results
 POST_TOOL_NAMES = {"msf_send_session_command", "msf_run_post_module"}
 
 
@@ -73,14 +61,8 @@ def _build_llm():
 
 
 def _create_react_agent_with_prompt(model, tools, system_prompt: str):
-    """
-    Handle LangGraph API drift:
-    - newer versions: create_react_agent(..., prompt=...)
-    - older versions: create_react_agent(..., state_modifier=...)
-    """
     try:
-        sig = inspect.signature(create_react_agent)
-        params = sig.parameters
+        params = inspect.signature(create_react_agent).parameters
     except Exception:
         params = {}
 
@@ -90,18 +72,13 @@ def _create_react_agent_with_prompt(model, tools, system_prompt: str):
         return create_react_agent(model=model, tools=tools, state_modifier=system_prompt)
     return create_react_agent(model=model, tools=tools)
 
-# ---------------------------------------------------------------------------
-# Context builder
-# ---------------------------------------------------------------------------
 
 def _build_resident_context(state: CyberState) -> str:
-    """Format CyberState post-exploitation context for the ReAct agent."""
     active_sessions = state.get("active_sessions", {}) or {}
     discovered_targets = state.get("discovered_targets", {}) or {}
     research_cache = state.get("research_cache", {}) or {}
     intelligence_findings = state.get("intelligence_findings", []) or []
 
-    # Sessions block
     sessions_lines = []
     for target, info in active_sessions.items():
         sid = info.get("session_id", "?")
@@ -112,31 +89,28 @@ def _build_resident_context(state: CyberState) -> str:
         )
     sessions_block = "\n".join(sessions_lines) if sessions_lines else "  (none)"
 
-    # Target context block
     target_lines = []
     for ip, data in discovered_targets.items():
         os_guess = data.get("os_guess", "unknown")
         services = data.get("services", {})
         svc_names = [
-            v.get("service_name", str(v)) if isinstance(v, dict) else str(v)
-            for v in list(services.values())[:5]
+            value.get("service_name", str(value)) if isinstance(value, dict) else str(value)
+            for value in list(services.values())[:5]
         ]
         target_lines.append(f"  {ip}  OS: {os_guess}  services: {', '.join(svc_names)}")
     targets_block = "\n".join(target_lines) if target_lines else "  (none)"
 
-    # Research / RAG context
-    # RAG hook-in point: when rag_engine.py is ready, replace the lines below with
-    #   research_lines = await rag_engine.retrieve(query=mission_goal, top_k=5)
     research_lines = []
     for key, value in list(research_cache.items())[:4]:
         research_lines.append(f"  {key}: {str(value)[:120]}")
     for finding in intelligence_findings[:3]:
-        if isinstance(finding, dict):
-            desc = finding.get("description", "")
-            cve = finding.get("cve", "")
-            if desc:
-                prefix = f"[{cve}] " if cve else ""
-                research_lines.append(f"  OSINT: {prefix}{desc[:120]}")
+        if not isinstance(finding, dict):
+            continue
+        desc = finding.get("description", "")
+        cve = finding.get("cve", "")
+        if desc:
+            prefix = f"[{cve}] " if cve else ""
+            research_lines.append(f"  OSINT: {prefix}{desc[:120]}")
     research_block = "\n".join(research_lines) if research_lines else "  (none)"
 
     return (
@@ -149,24 +123,13 @@ def _build_resident_context(state: CyberState) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# State update extractor
-# ---------------------------------------------------------------------------
-
-def _extract_resident_updates(messages: List, state: CyberState) -> Dict[str, Any]:
-    """
-    Parse the ReAct agent's message history to build CyberState updates.
-    Looks for send_session_command and run_post_module results to extract
-    privilege level, OS info, and any critical findings.
-    """
+def _extract_resident_updates(messages: List[Any], state: CyberState) -> Dict[str, Any]:
     active_sessions = state.get("active_sessions", {}) or {}
     critical_findings: List[str] = []
     findings_summary: Dict[str, Any] = {}
 
     for msg in messages:
-        if not isinstance(msg, ToolMessage):
-            continue
-        if msg.name not in POST_TOOL_NAMES:
+        if not isinstance(msg, ToolMessage) or msg.name not in POST_TOOL_NAMES:
             continue
 
         try:
@@ -180,21 +143,17 @@ def _extract_resident_updates(messages: List, state: CyberState) -> Dict[str, An
         output = data.get("output", "") or data.get("module_output", "") or ""
         status = data.get("status", "")
 
-        # Detect privilege level from command output
         if "uid=0" in output or output.strip().startswith("root"):
             findings_summary["privilege"] = "root"
             critical_findings.append("Post-exploitation: root privileges confirmed")
         elif "uid=" in output and "privilege" not in findings_summary:
             findings_summary["privilege"] = "user"
 
-        # Capture OS info from uname output
         if "linux" in output.lower() and findings_summary.get("os_info") is None:
             findings_summary["os_info"] = output.strip()[:120]
 
-        # Note successful post module runs
         if msg.name == "msf_run_post_module" and status == "success":
-            module = data.get("module", "unknown")
-            critical_findings.append(f"Post module succeeded: {module}")
+            critical_findings.append(f"Post module succeeded: {data.get('module', 'unknown')}")
 
     updates: Dict[str, Any] = {
         "iteration_count": state.get("iteration_count", 0) + 1,
@@ -209,7 +168,6 @@ def _extract_resident_updates(messages: List, state: CyberState) -> Dict[str, An
     if critical_findings:
         updates["critical_findings"] = critical_findings
 
-    # Enrich active_sessions with discovered privilege/OS info
     if findings_summary and active_sessions:
         enriched = {}
         for target, info in active_sessions.items():
@@ -223,44 +181,41 @@ def _extract_resident_updates(messages: List, state: CyberState) -> Dict[str, An
     return updates
 
 
-# ---------------------------------------------------------------------------
-# LangGraph node
-# ---------------------------------------------------------------------------
-
 async def resident_node(state: CyberState) -> Dict[str, Any]:
-    """Resident node for LangGraph — autonomous ReAct post-exploitation agent."""
+    """LangGraph node wrapper for the Resident agent."""
 
-    # Validate prerequisites
     active_sessions = state.get("active_sessions", {})
     if not active_sessions:
-        return {
+        updates = {
             "errors": [AgentError(
                 agent="resident",
                 error_type="ValidationError",
-                error="No active sessions — run Striker first",
+                error="No active sessions - run Striker first",
                 recoverable=True,
             )],
             "iteration_count": state.get("iteration_count", 0) + 1,
         }
+        persist_state_update(state, updates)
+        return updates
 
-    # Acquire MCP tools from bridge
     bridge = await get_mcp_bridge()
     tools = bridge.get_tools_for_agent(RESIDENT_ALLOWED_TOOLS)
-
     if not tools:
-        return {
+        updates = {
             "errors": [AgentError(
                 agent="resident",
                 error_type="ToolError",
-                error="No MSF tools available — is msf-mcp running?",
+                error="No MSF tools available - is msf-mcp running?",
                 recoverable=False,
             )],
             "iteration_count": state.get("iteration_count", 0) + 1,
         }
+        persist_state_update(state, updates)
+        return updates
 
-    tool_names = {t.name for t in tools}
+    tool_names = {tool.name for tool in tools}
     if "msf_send_session_command" not in tool_names:
-        return {
+        updates = {
             "errors": [AgentError(
                 agent="resident",
                 error_type="ToolError",
@@ -269,8 +224,9 @@ async def resident_node(state: CyberState) -> Dict[str, Any]:
             )],
             "iteration_count": state.get("iteration_count", 0) + 1,
         }
+        persist_state_update(state, updates)
+        return updates
 
-    # Build and run the ReAct agent
     llm = _build_llm()
     agent = _create_react_agent_with_prompt(
         model=llm,
@@ -278,9 +234,9 @@ async def resident_node(state: CyberState) -> Dict[str, Any]:
         system_prompt=RESIDENT_SYSTEM_PROMPT,
     )
 
-    print(f"[Resident] Starting ReAct agent — {len(active_sessions)} active session(s)")
+    print(f"[Resident] Starting ReAct agent - {len(active_sessions)} active session(s)")
 
-    user_msg = _build_resident_context(state)
-    result = await agent.ainvoke({"messages": [("human", user_msg)]})
-
-    return _extract_resident_updates(result["messages"], state)
+    result = await agent.ainvoke({"messages": [("human", _build_resident_context(state))]})
+    updates = _extract_resident_updates(result["messages"], state)
+    persist_state_update(state, updates)
+    return updates

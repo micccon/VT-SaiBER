@@ -1,120 +1,180 @@
-# 🛡️ VT-SaiBER: Autonomous Multi-Agent Cyber-Physical Security Squad
+# VT-SaiBER
 
-**VT-SaiBER** (Cyber-Physical Autonomous Intelligence for Bus & Endpoint Reconnaissance) is a modular, multi-agent orchestration framework designed to conduct autonomous penetration testing across IT networks and Automotive/IoT testbeds. 
+VT-SaiBER is a Dockerized multi-agent cyber security application for running modular reconnaissance, vulnerability research, exploitation, and post-exploitation workflows on a VM or a local machine.
 
-By leveraging **LangGraph** for orchestration and the **Model Context Protocol (MCP)** for tool connectivity, VT-SaiBER coordinates a squad of specialized AI agents to map networks, identify vulnerabilities, and interact with vehicle systems in a simulated environment.
+The system is built around:
+- `LangGraph` for orchestration
+- `PostgreSQL + pgvector` for persistence and RAG
+- `MCP servers` for Kali and Metasploit tool access
+- a shared mission state passed between specialized agents
 
----
+## What Starts Automatically
 
-## 🏗️ System Architecture
+When you start the stack with Docker Compose, these pieces work together:
+- `postgres`: mission data, findings, sessions, attack chain, and knowledge base storage
+- `knowledge_base`: ingests and syncs `src/database/testbed_docs` into `knowledge_base`
+- `kali-mcp`: exposes scanning and enumeration tools
+- `msf-mcp`: exposes Metasploit RPC-backed tools
+- `agents`: runs the VT-SaiBER application environment
 
-VT-SaiBER uses a **Supervisor-Worker** pattern. A central "Brain" manages the global mission state, delegating granular tasks to specialists who execute actions via Dockerized tools.
+Important behavior:
+- Testbed documentation is automatically synced into the KB from `src/database/testbed_docs`
+- Mission reports default to `exports/<mission_id>/`
+- Report export can be triggered from the main orchestrator or from the exporter CLI
 
-### The Squad
-* **Supervisor:** The Brain. Manages state transitions, validates goals, and handles mission routing.
-* **Network Scout:** Recon specialist. Maps active hosts, open ports, and service versions.
-* **Web Fuzzer:** Discovery specialist. Identifies unlinked directories and API endpoints.
-* **Striker:** Precision Exploitation specialist. Executes surgical strikes via Metasploit.
-* **Automotive Specialist:** OT specialist. Interacts with `vcan0`, UDS, and CAN-bus IDs.
-* **Embedded/IoT Agent:** Protocol specialist. Targets MQTT brokers and Modbus/CoAP interfaces.
-* **Librarian:** Intelligence specialist. Conducts RAG-driven research and OSINT.
-* **Resident:** Post-Exploitation specialist. Handles lateral movement, pivoting, and persistence.
-
----
-
-## 🚀 Tech Stack
-
-* **Orchestration:** [LangGraph](https://github.com/langchain-ai/langgraph)
-* **Intelligence:** Claude 3.5 Sonnet / GPT-4o
-* **Persistence & RAG:** PostgreSQL 16+ with `pgvector`
-* **Tool Interface:** Model Context Protocol (MCP)
-* **Infrastructure:** Docker Compose (Multi-container orchestration)
-* **Security Tools:** Kali Linux (Nmap, ffuf), Metasploit Framework (MSF-RPC)
-
----
-
-## 📂 Project Structure
+## Project Layout
 
 ```text
 VT-SaiBER/
-├── docker-compose.yml         # Orchestrates Agents, DB, and MCP servers
-├── .env.example               # Template for API keys and secrets
-├── requirements.txt           # Python dependencies
-│
-├── src/
-│   ├── main.py                # Entry point: Initializes LangGraph loop
-│   ├── state.py               # Shared State (TypedDict) definitions
-│   │
-│   ├── agents/                # Agent logic & System Prompts
-│   │   ├── base.py            # Abstract Base Agent Class
-│   │   ├── supervisor.py
-│   │   └── ... (worker agents)
-│   │
-│   ├── mcp/                   # Tool Interfaces
-│   │   ├── client.py          # Unified MCP Client
-│   │   └── servers/           # Custom MCP server definitions
-│   │
-│   ├── database/              # Memory & Persistence Layer
-│   │   ├── manager.py         # Postgres/pgvector logic
-│   │   └── schema.sql         # Database table definitions
-│   │
-│   └── graph/                 # Workflow Orchestration
-│       ├── builder.py         # Node/Edge assembly
-│       └── router.py          # Conditional handoff logic
-│
-├── data/                      # Persistent storage (Logs & PDF Knowledge Base)
-├── docker/                    # Custom Dockerfiles for Kali/Auto-MCP
-└── tests/                     # Unit tests for individual agent tools
+|- docker-compose.yml
+|- .env.example
+|- README.md
+|- exports/                  # Generated mission reports
+|- src/
+|  |- main.py               # Orchestrator entry point
+|  |- agents/               # Supervisor, Scout, Fuzzer, Librarian, Striker, Resident
+|  |- database/
+|  |  |- manager.py         # DB APIs and persistence helpers
+|  |  |- persistence.py     # Runtime state -> DB sync hooks
+|  |  |- reporting/         # Report export and attack-path graph generation
+|  |  |- rag/               # Embedding, indexing, retrieval, orchestration
+|  |  |- schema.sql
+|  |  `- testbed_docs/      # Documentation corpus indexed into the KB
+|  |- graph/                # LangGraph workflow assembly and routing
+|  `- mcp/                  # Kali / Metasploit bridges and servers
+`- tests/
 ```
 
----
+## Quick Start
 
-## 🛠️ Setup & Deployment
+### 1. Configure environment
 
-### Clone the Repository:
-
-```bash
-git clone https://github.com/micccon/VT-SaiBER.git
-cd VT-SaiBER
-```
-
-### Configure Environment:
+Create your local `.env` from the template:
 
 ```bash
 cp .env.example .env
-# Edit .env to add your ANTHROPIC_API_KEY and DATABASE_URL
 ```
 
-### Launch the Environment:
+At minimum, set:
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+- `OPENROUTER_API_KEY`
+- `KALI_MCP_URL`
+- `MSF_MCP_URL`
+
+Optional but useful:
+- `REPORT_EXPORT_DIR=exports`
+- `RAG_KB_TOP_K`, `RAG_KB_FETCH_K`
+- `RAG_MIN_DOCS`, `RAG_MIN_SCORE`
+
+### 2. Start the stack
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
----
+On startup:
+- PostgreSQL initializes schema and indexes
+- the `knowledge_base` service waits for Postgres
+- `src/database/testbed_docs` is indexed into the KB
+- the agents environment becomes ready for mission execution
 
-## 🔒 Safety & Guardrails
+## Running a Mission
 
-* **Scope Lock:** All agents are restricted to CIDR-validated target whitelists.
-* **Throttling:** Mandatory 200ms delay between network requests to ensure system stability.
-* **Human-in-the-Loop (HITL):** High-risk actions (exploit execution/CAN injection) require manual approval.
+You can run the orchestrator from the repo environment:
 
----
+```bash
+python -m src.main \
+  --mission-goal "Research and exploit the target" \
+  --target-scope "192.168.56.101"
+```
 
-## 👥 Team Roles
+If you also want a report bundle after the mission:
 
-* **Chief Architect:** [Your Name] — LangGraph & Supervisor Logic
-* **Infra Lead:** [Sudip's Name] — Docker, MCP, & Post-Ex Tunneling
-* **Specialist Lead:** [Member 3] — Recon & Exploitation Logic
-* **Data & Lib Lead:** [Member 4] — PostgreSQL/pgvector & RAG Pipeline
-* **Research Lead:** [Member 5] — Prompt Engineering & OSINT Tools
+```bash
+python -m src.main \
+  --mission-goal "Research and exploit the target" \
+  --target-scope "192.168.56.101" \
+  --export-dir exports
+```
 
----
+If `--export-dir` is omitted, VT-SaiBER uses `REPORT_EXPORT_DIR`, which defaults to `exports`.
 
-## 📄 License
+## Reports and Exported Artifacts
 
-[Add your license here]
+To export a report bundle for an existing mission:
 
-## 🤝 Contributing
+```bash
+python -m src.database.reporting.exporter --mission-id <mission_id>
+```
 
-[Add contribution guidelines here]
+By default, artifacts are written to:
+
+```text
+exports/<mission_id>/
+```
+
+The export bundle includes:
+- `summary.json`
+- `snapshot.json`
+- `report.md`
+- `report.html`
+- `targets.csv`
+- `services.csv`
+- `findings.csv`
+- `sessions.csv`
+- `agent_logs.csv`
+- `attack_chain.csv`
+- `attack_path.json`
+- `attack_path.mmd`
+- `attack_path.dot`
+- `attack_path.svg` if Graphviz is available
+
+## Knowledge Base Behavior
+
+The RAG layer indexes files from:
+
+```text
+src/database/testbed_docs/
+```
+
+This includes text, markdown, and PDF files. The KB sync service is intended to make local/VM usage simple:
+- users do not need to run a separate ingest script
+- the documentation corpus is refreshed automatically through Docker Compose
+
+Manual maintenance is still available when needed:
+
+```bash
+python -m src.database.rag.rag_engine sync
+python -m src.database.rag.rag_engine rebuild
+```
+
+## Retrieval Tuning
+
+RAG retrieval behavior is configurable from environment variables:
+- `RAG_KB_TOP_K`
+- `RAG_KB_FETCH_K`
+- `RAG_FINDINGS_TOP_K`
+- `RAG_FINDINGS_FETCH_K`
+- `RAG_KB_SIMILARITY_THRESHOLD`
+- `RAG_FINDINGS_SIMILARITY_THRESHOLD`
+- `RAG_MIN_DOCS`
+- `RAG_MIN_SCORE`
+- `RAG_MAX_CHUNKS_PER_DOC`
+
+These values affect Librarian confidence checks and KB/findings retrieval quality.
+
+## Safety Notes
+
+- All agent activity is expected to stay within the declared mission scope
+- Exploit execution is guarded through the supervisor/striker flow
+- Session state, findings, attack chain, and agent logs are persisted to PostgreSQL
+
+## Current Practical Defaults
+
+For local and VM usage, the current intended workflow is:
+1. `docker compose up --build`
+2. let the KB sync complete automatically
+3. run missions through `src.main`
+4. collect reports from `exports/<mission_id>/`
+
+This keeps the user workflow simple without requiring manual ingest or manual report path selection.

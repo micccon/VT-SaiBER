@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, List
 
 from src.agents.base import BaseAgent
+from src.database.persistence import persist_state_update
 from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.state.cyber_state import CyberState
 from src.state.models import DiscoveredTarget, ServiceInfo
@@ -261,4 +262,6 @@ class ScoutAgent(BaseAgent):
 async def scout_node(state: CyberState) -> Dict[str, Any]:
     """LangGraph node wrapper."""
     agent = ScoutAgent()
-    return await agent.call_llm(state)
+    updates = await agent.call_llm(state)
+    persist_state_update(state, updates)
+    return updates

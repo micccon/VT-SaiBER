@@ -21,7 +21,7 @@ from .rag_manager import (
     clear_kb_by_source_dir,
     delete_kb_by_source_path,
     get_indexed_source_files,
-    insert_kb_chunk,
+    insert_kb_chunks,
 )
 from .chunking import simple_chunking, markdown_chunking
 
@@ -354,10 +354,9 @@ class IndexingPipeline:
         per_tool: Dict[str, int] = {}
         for chunk, embedding in zip(chunks, embeddings):
             chunk.embedding = embedding
-            insert_kb_chunk(chunk)
-            inserted_count += 1
 
             tool = str(chunk.metadata.get("tool", "unknown"))
             per_tool[tool] = per_tool.get(tool, 0) + 1
 
+        inserted_count = insert_kb_chunks(chunks)
         return inserted_count, per_tool

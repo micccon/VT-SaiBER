@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
+from src.database.persistence import persist_state_update
 from src.graph.router import validate_all_targets_in_scope
 from src.state.cyber_state import CyberState
 from src.state.models import SupervisorDecision
@@ -454,4 +455,6 @@ Do not call any tools. You are routing-only.
 async def supervisor_node(state: CyberState) -> Dict[str, Any]:
     """LangGraph node wrapper for the Supervisor agent."""
     agent = SupervisorAgent()
-    return await agent.call_llm(state)
+    updates = await agent.call_llm(state)
+    persist_state_update(state, updates)
+    return updates

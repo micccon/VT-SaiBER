@@ -8,9 +8,9 @@ Uses existing manager.py connection but provides RAG-specific interface.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 
 from src.database.manager import get_connection
 from .models import Chunk
@@ -40,27 +40,78 @@ def insert_kb_chunk(chunk: Chunk):
         conn.close()
 
 
+def insert_kb_chunks(chunks: Sequence[Chunk]) -> int:
+    if not chunks:
+        return 0
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                """
+                INSERT INTO knowledge_base (doc_name, chunk_text, embedding, metadata)
+                VALUES %s;
+                """,
+                [
+                    (
+                        chunk.doc_name,
+                        chunk.chunk_text,
+                        chunk.embedding,
+                        json.dumps(chunk.metadata),
+                    )
+                    for chunk in chunks
+                ],
+            )
+        conn.commit()
+        return len(chunks)
+    finally:
+        conn.close()
+
+
 def search_by_embedding(
     query_embedding: List[float],
     top_k: int = 5,
     filters: Dict[str, Any] | None = None,
+    min_similarity: float = 0.0,
 ) -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Filters can be added later once metadata query patterns stabilize.
+            where_clauses = ["1 - (embedding <=> %s::vector) >= %s"]
+            params: List[Any] = [query_embedding, float(min_similarity)]
+
+            metadata_filters = dict(filters or {})
+            source_path_prefix = metadata_filters.pop("source_path_prefix", None)
+            if source_path_prefix:
+                where_clauses.append("metadata->>'source_path' LIKE %s")
+                params.append(f"{str(source_path_prefix)}%")
+
+            for key, value in metadata_filters.items():
+                if value is None:
+                    continue
+                if isinstance(value, (list, tuple, set)):
+                    normalized = [str(item) for item in value if item is not None]
+                    if not normalized:
+                        continue
+                    where_clauses.append("metadata->>%s = ANY(%s)")
+                    params.extend([str(key), normalized])
+                else:
+                    where_clauses.append("metadata->>%s = %s")
+                    params.extend([str(key), str(value)])
+
             cur.execute(
                 """
                 SELECT id, doc_name, chunk_text, metadata, embedding,
                        1 - (embedding <=> %s::vector) AS similarity
                 FROM knowledge_base
-                ORDER BY embedding <-> %s::vector
+                WHERE """ + " AND ".join(where_clauses) + """
+                ORDER BY embedding <=> %s::vector
                 LIMIT %s;
                 """,
-                (query_embedding, query_embedding, top_k),
+                [query_embedding, *params, query_embedding, top_k],
             )
             rows = cur.fetchall()
-        conn.commit()
         return rows
     finally:
         conn.close()

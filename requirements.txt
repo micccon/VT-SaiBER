@@ -52,6 +52,7 @@ pymetasploit3>=0.2.17                     # Metasploit Framework RPC client
 pydantic>=2.6.0                           # Data validation using Python type hints
 pydantic-settings>=2.1.0                  # Environment variable management with Pydantic
 pypdf>=4.0.0                              # PDF processing and text extraction for RAG indexing
+sentence-transformers>=2.7.0,<3.0.0       # Embedding models for RAG
 
 # =============================================================================
 # HTTP & NETWORK UTILITIES
@@ -70,8 +71,3 @@ python-dotenv>=1.0.1                      # Load environment variables from .env
 # =============================================================================
 pytest>=7.4.0                             # Testing framework for unit and integration tests
 numpy>=1.24.0                             # Numerical computing library (for test utilities)
-
-sentence-transformers
-pypdf
-psycopg2-binary
-python-dotenv
