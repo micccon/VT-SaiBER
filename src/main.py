@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
 from src.config import get_runtime_config
+from src.database.manager import ensure_runtime_indexes
 from src.graph.builder import build_graph
 from src.state.cyber_state import CyberState
 from src.utils.logging_config import setup_logging
@@ -120,6 +121,7 @@ async def maybe_checkpointer():
 
 async def run_orchestrator(args: argparse.Namespace) -> Dict[str, Any]:
     cfg = get_runtime_config()
+    ensure_runtime_indexes()
     mission_id = args.mission_id or _default_mission_id(cfg.default_thread_prefix)
     thread_id = args.thread_id or mission_id
     target_scope = _parse_scope(args.target_scope)
@@ -173,6 +175,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--thread-id", type=str, default="", help="Checkpoint thread identifier")
     parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
     parser.add_argument("--checkpoint-id", type=str, default="", help="Resume from specific checkpoint id")
+    parser.add_argument("--export-dir", type=str, default="", help="Write mission report bundle after run")
     parser.add_argument("--json", action="store_true", help="Print full final state JSON")
     return parser
 
@@ -190,6 +193,12 @@ async def _amain() -> int:
         return 1
 
     _print_summary(final_state)
+    export_dir = args.export_dir or (get_runtime_config().report_export_dir or "")
+    if export_dir and final_state.get("mission_id"):
+        from src.database.reporting.exporter import export_mission_bundle
+
+        written = export_mission_bundle(str(final_state["mission_id"]), export_dir)
+        print(json.dumps({"report_export": written}, indent=2, default=str))
     if args.json:
         print(json.dumps(final_state, indent=2, default=str))
     return 0

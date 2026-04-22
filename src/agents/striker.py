@@ -17,6 +17,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import create_react_agent
 
 from src.agents.base import BaseAgent
+from src.database.persistence import persist_state_update
 from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.state.cyber_state import CyberState
 from src.state.models import AgentError, AgentLogEntry
@@ -926,4 +927,6 @@ def _build_striker_context(state: CyberState) -> str:
 
 async def striker_node(state: CyberState) -> Dict[str, Any]:
     """LangGraph node wrapper for the Striker agent."""
-    return await StrikerAgent().call_llm(state)
+    updates = await StrikerAgent().call_llm(state)
+    persist_state_update(state, updates)
+    return updates

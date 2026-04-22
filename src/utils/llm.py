@@ -73,6 +73,10 @@ def to_langchain_messages(messages: Iterable[Dict[str, Any]]) -> List[BaseMessag
 def extract_text_content(message: Any) -> str:
     """Normalize LangChain message content into plain text."""
     content = getattr(message, "content", message)
+    if isinstance(content, dict):
+        text = content.get("content") or content.get("text")
+        if isinstance(text, str):
+            return text
     if isinstance(content, str):
         return content
     if isinstance(content, list):

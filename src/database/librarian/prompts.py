@@ -34,13 +34,15 @@ class LibrarianPrompts:
         - If osint_results is empty, you MUST set is_osint_derived to false.
         - If you use any facts that come only from osint_results, you SHOULD set is_osint_derived to true.
 
-        - citations (array of objects):
-        Each element MUST be an object with:
-            - "source": "kb" or "osint"
-            - "reference": an identifier or URL
+        - citations (array of strings):
+        Each element MUST be a compact textual reference.
+        Good examples:
+            - "kb:sqlmap/Usage.md"
+            - "kb:vsftpd 2.3.4 Backdoor Command Execution"
+            - "osint:https://nvd.nist.gov/vuln/detail/CVE-2011-2523"
         Rules:
-        - For KB-derived facts, set "source": "kb" and "reference" to a document id, title, or other KB identifier.
-        - For OSINT-derived facts, set "source": "osint" and "reference" to a URL or other OSINT identifier.
+        - For KB-derived facts, prefix with "kb:".
+        - For OSINT-derived facts, prefix with "osint:".
         - Include at least one citation for each major claim in summary or technical_params.
 
         - conflicting_sources (array of strings or null):
@@ -79,7 +81,7 @@ class LibrarianPrompts:
             for i, o in enumerate(osint_results[:5], 1):
                 title = o.get("title", "unknown")
                 url = o.get("url", "unknown")
-                snippet = (o.get("content", "") or "")[:200].replace("\n", " ")
+                snippet = (o.get("snippet", "") or "")[:200].replace("\n", " ")
                 lines.append(f"{i}. [OSINT:{title}] {url} {snippet}...")
 
         lines.append("")

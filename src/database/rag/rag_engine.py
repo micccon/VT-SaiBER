@@ -14,6 +14,8 @@ from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
 
+from src.database.manager import ensure_runtime_indexes
+
 from .embedding import EmbeddingClient
 from .indexing import IndexingPipeline
 from .retriever import RAGRetriever
@@ -26,6 +28,10 @@ class RAGOrchestrator:
 
     def __init__(self):
         """Initialize all RAG components."""
+        try:
+            ensure_runtime_indexes()
+        except Exception:
+            pass
         self.embedding_client = EmbeddingClient()
         self.retriever = RAGRetriever(
             embedding_client=self.embedding_client

@@ -14,12 +14,15 @@ import json
 import sys
 import traceback
 
+import pytest
+
 sys.path.insert(0, "/app")
 
 from src.agents.librarian import LibrarianAgent, librarian_node
 from src.main import build_initial_state
 from src.state.models import IntelligenceBrief
 
+pytestmark = pytest.mark.asyncio
 
 class Results:
     def __init__(self):

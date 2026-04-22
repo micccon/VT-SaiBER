@@ -16,6 +16,9 @@ Run inside agents container or from project root:
 import asyncio
 import sys
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.asyncio
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -76,6 +79,7 @@ def _base_state(**overrides) -> dict:
 # TEST 1: Librarian can receive and process basic query
 # ═══════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.asyncio
 async def test_librarian_receives_query():
     """Verify librarian can handle a basic state with discovered services."""
     print("\n[TEST 1] Librarian receives query with service intel...")
@@ -192,6 +196,7 @@ async def test_librarian_output_structure():
 # TEST 3: RAG confidence check logic
 # ═══════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.asyncio
 async def test_rag_confidence_logic():
     """Verify that _is_rag_confident method correctly evaluates RAG results."""
     print("\n[TEST 3] RAG confidence check logic...")
@@ -249,6 +254,7 @@ async def test_rag_confidence_logic():
 # TEST 4: Librarian cache functionality
 # ═══════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.asyncio
 async def test_librarian_cache():
     """Verify that librarian cache prevents redundant processing."""
     print("\n[TEST 4] Librarian caching prevents redundant queries...")
@@ -307,6 +313,7 @@ async def test_librarian_cache():
 # TEST 5: Supervisor can route to Librarian
 # ═══════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.asyncio
 async def test_supervisor_routes_to_librarian():
     """Verify supervisor correctly routes to librarian in appropriate scenarios."""
     print("\n[TEST 5] Supervisor routes to librarian appropriately...")
@@ -351,6 +358,7 @@ async def test_supervisor_routes_to_librarian():
 # TEST 6: Full Supervisor → Librarian pipeline
 # ═══════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.asyncio
 async def test_full_supervisor_librarian_pipeline():
     """
     Full end-to-end: supervisor decides to route to librarian, 

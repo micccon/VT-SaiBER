@@ -55,6 +55,16 @@ class RuntimeConfig:
     checkpoint_enabled: bool
     checkpoint_database_url: Optional[str]
     default_thread_prefix: str
+    rag_kb_top_k: int
+    rag_kb_fetch_k: int
+    rag_findings_top_k: int
+    rag_findings_fetch_k: int
+    rag_kb_similarity_threshold: float
+    rag_findings_similarity_threshold: float
+    rag_min_docs: int
+    rag_min_score: float
+    rag_max_chunks_per_doc: int
+    report_export_dir: str | None
 
     tavily_api_key: str | None = None
     tavily_max_results: int = 5
@@ -72,6 +82,16 @@ def get_runtime_config() -> RuntimeConfig:
         checkpoint_enabled=_env_bool("CHECKPOINT_ENABLED", True),
         checkpoint_database_url=_build_database_url(),
         default_thread_prefix=os.getenv("THREAD_ID_PREFIX", "mission").strip() or "mission",
+        rag_kb_top_k=_env_int("RAG_KB_TOP_K", 8),
+        rag_kb_fetch_k=_env_int("RAG_KB_FETCH_K", 24),
+        rag_findings_top_k=_env_int("RAG_FINDINGS_TOP_K", 5),
+        rag_findings_fetch_k=_env_int("RAG_FINDINGS_FETCH_K", 15),
+        rag_kb_similarity_threshold=float(os.getenv("RAG_KB_SIMILARITY_THRESHOLD", "0.58")),
+        rag_findings_similarity_threshold=float(os.getenv("RAG_FINDINGS_SIMILARITY_THRESHOLD", "0.45")),
+        rag_min_docs=_env_int("RAG_MIN_DOCS", 3),
+        rag_min_score=float(os.getenv("RAG_MIN_SCORE", "0.75")),
+        rag_max_chunks_per_doc=_env_int("RAG_MAX_CHUNKS_PER_DOC", 2),
+        report_export_dir=(os.getenv("REPORT_EXPORT_DIR") or "").strip() or "exports",
         tavily_api_key=(os.getenv("TAVILY_API_KEY") or "").strip() or None,
         tavily_max_results=_env_int("TAVILY_MAX_RESULTS", 5),
     )
