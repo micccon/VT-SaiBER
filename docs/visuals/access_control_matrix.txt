@@ -1,0 +1,153 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   VT-SaiBER Tool Access Control Matrix (Current)           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+This file documents tool naming and access policy for the MCP ToolBridge model.
+
+Status note:
+- This is the intended access policy/target model.
+- Architecture direction is all-agent ReAct (non-hybrid target).
+- Embedded/IoT agent has been removed from active project scope.
+
+Naming conventions:
+- MCP server native tool names: `run_exploit`, `nmap_scan`, etc.
+- Bridge-exposed names to LangGraph agents:
+  - `kali_<tool_name>`
+  - `msf_<tool_name>`
+
+Example:
+- Native: `list_active_sessions`
+- In agent toolset: `msf_list_active_sessions`
+
+
+1) TOOL INVENTORY (NATIVE MCP NAMES)
+═════════════════════════════════════
+
+KALI MCP (`src/mcp/kali_mcp_server.py`):
+- nmap_scan
+- gobuster_scan
+- dirb_scan
+- nikto_scan
+- sqlmap_scan
+- metasploit_run
+- hydra_attack
+- john_crack
+- wpscan_analyze
+- enum4linux_scan
+- server_health
+- execute_command
+
+METASPLOIT MCP (`src/mcp/msf_mcp_server.py`):
+- list_exploits
+- list_payloads
+- generate_payload
+- run_exploit
+- run_post_module
+- run_auxiliary_module
+- list_active_sessions
+- send_session_command
+- list_listeners
+- start_listener
+- stop_job
+- terminate_session
+
+
+2) ACCESS POLICY MATRIX (ROLE-BASED TARGET)
+════════════════════════════════════════════
+
+Legend:
+- ✅ allowed
+- ⚠ conditional / approval-gated
+- ❌ denied
+
+KALI TOOLS
+
+| Tool             | Supervisor | Scout | Fuzzer | Librarian | Striker | Resident |
+|------------------|------------|-------|--------|-----------|---------|----------|
+| nmap_scan        | ❌         | ✅    | ❌     | ❌        | ❌      | ❌       |
+| gobuster_scan    | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| dirb_scan        | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| nikto_scan       | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| sqlmap_scan      | ❌         | ❌    | ⚠      | ❌        | ⚠       | ⚠        |
+| execute_command  | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| hydra_attack     | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| john_crack       | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| wpscan_analyze   | ❌         | ❌    | ✅     | ❌        | ❌      | ❌       |
+| enum4linux_scan  | ❌         | ✅    | ❌     | ❌        | ❌      | ❌       |
+| server_health    | ❌         | ✅    | ✅     | ✅        | ✅      | ✅       |
+| metasploit_run   | ❌         | ❌    | ❌     | ❌        | ❌      | ❌       |
+
+METASPLOIT TOOLS
+
+| Tool                  | Supervisor | Scout | Fuzzer | Librarian | Striker | Resident |
+|-----------------------|------------|-------|--------|-----------|---------|----------|
+| list_exploits         | ❌         | ❌    | ❌     | ✅        | ✅      | ✅       |
+| list_payloads         | ❌         | ❌    | ❌     | ✅        | ⚠       | ⚠        |
+| get_module_info       | ❌         | ❌    | ❌     | ✅        | ✅      | ⚠        |
+| get_module_options    | ❌         | ❌    | ❌     | ✅        | ✅      | ⚠        |
+| generate_payload      | ❌         | ❌    | ❌     | ❌        | ⚠       | ⚠        |
+| run_exploit           | ❌         | ❌    | ❌     | ❌        | ✅      | ❌       |
+| run_auxiliary_module  | ❌         | ❌    | ❌     | ❌        | ✅      | ❌       |
+| run_post_module       | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
+| list_active_sessions  | ❌         | ❌    | ❌     | ❌        | ✅      | ✅       |
+| send_session_command  | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
+| list_listeners        | ❌         | ❌    | ❌     | ❌        | ⚠       | ✅       |
+| start_listener        | ❌         | ❌    | ❌     | ❌        | ⚠       | ✅       |
+| stop_job              | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
+| terminate_session     | ❌         | ❌    | ❌     | ❌        | ❌      | ✅       |
+
+
+3) REACT ALLOWLIST PATTERN
+══════════════════════════
+
+Bridge filtering implementation:
+- `src/mcp/mcp_tool_bridge.py`
+
+Example ReAct tool allowlists:
+- `src/agents/striker.py`
+  - `list_exploits`
+  - `run_exploit`
+  - `run_auxiliary_module`
+  - `list_active_sessions`
+- `src/agents/resident.py`
+  - `list_active_sessions`
+  - `send_session_command`
+  - `run_post_module`
+  - `list_exploits`
+  - `terminate_session`
+
+All agents should follow this same allowlist pattern through MCP ToolBridge.
+
+
+4) HOW TO READ TOOL NAMES IN AGENT CODE
+═══════════════════════════════════════
+
+Allowlist can be written using native names:
+- `run_exploit`
+
+At runtime, actual registered tool names are prefixed:
+- `msf_run_exploit`
+
+Both forms are accepted by bridge filtering.
+
+
+5) RUNTIME GUARDRAILS (CURRENT IMPLEMENTATION)
+══════════════════════════════════════════════
+
+Guardrail stack:
+1. Graph router checks: iteration cap, scope, valid routing (`src/graph/router.py`)
+2. Bridge filtering: per-agent tool allowlists (`src/mcp/mcp_tool_bridge.py`)
+3. Tool call rules: pre/post rule chains (`src/utils/tool_guard.py`, `src/utils/tool_guard_profiles.py`)
+4. MCP server-side validations (`src/mcp/msf_mcp_server.py`, `src/mcp/kali_mcp_server.py`)
+
+Current Striker rule highlights:
+- block empty `msf_list_exploits.search_term`
+- optional `get_module_info` sequencing checks before option/exploit calls
+- optional payload compatibility checks
+- manual confirmation gate for exploit-class tools
+- post-call module-info cache for follow-up checks
+
+Note on maturity:
+- Access matrix is the target policy.
+- `striker` and `resident` are the most implementation-complete workers today.
+- `scout`, `fuzzer`, and `librarian` are still under active build-out.

@@ -1,0 +1,137 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 VT-SaiBER Execution Example (Supervisor Framework)         │
+│         Updated for LangGraph + MCP ToolBridge + ReAct worker pattern      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+STATUS NOTE:
+- This timeline represents intended end-to-end orchestration behavior.
+- The target architecture is all-agent ReAct (non-hybrid).
+- Embedded/IoT agent has been removed from active project scope.
+
+MISSION:
+- "Gain initial access to target 192.168.1.50"
+
+PARTICIPANTS:
+- Supervisor (routing brain)
+- Scout (recon)
+- Fuzzer (web enumeration)
+- Librarian (intel)
+- Striker (ReAct exploitation)
+- Resident (post-exploitation)
+- MCP ToolBridge (dynamic SSE discovery)
+- Kali MCP / Metasploit MCP
+
+
+PRE-RUN (Tool Discovery)
+═════════════════════════
+
+[agents container startup]
+  -> MCPToolBridge connects:
+     - kali URL: http://kali-mcp:5001  (SSE /sse)
+     - msf  URL: http://msf-mcp:8085   (SSE /sse)
+
+  -> Bridge lists tools from both servers
+  -> Tools registered with prefixes:
+     - kali_nmap_scan, kali_gobuster_scan, ...
+     - msf_list_exploits, msf_run_exploit, msf_list_active_sessions, ...
+
+
+TURN-BY-TURN (Supervisor-Controlled)
+════════════════════════════════════
+
+TURN 1
+- Supervisor reads CyberState (no targets yet)
+- Decision: `next_agent = "scout"`
+- State update: route decision logged
+
+TURN 2
+- Scout runs reconnaissance workflow
+- New state added:
+  - discovered_targets["192.168.1.50"]
+  - ports/services discovered (example: 21, 22, 80)
+- Control returns to Supervisor
+
+TURN 3
+- Supervisor sees HTTP service and recon complete
+- Decision: `next_agent = "fuzzer"`
+
+TURN 4
+- Fuzzer enumerates web surface
+- New state added:
+  - web_findings (example: `/admin`, `/api`, status codes)
+- Control returns to Supervisor
+
+TURN 5
+- Supervisor decides exploitation should be research-informed first
+- Decision: `next_agent = "librarian"`
+
+TURN 6
+- Librarian adds intelligence
+- New state added:
+  - research_cache
+  - osint_findings (CVE/module hints)
+- Control returns to Supervisor
+
+TURN 7
+- Supervisor sees prerequisites met for exploitation
+- Decision: `next_agent = "striker"`
+
+TURN 8 (ReAct Tool Loop in Striker)
+- Striker gets filtered MSF tools from bridge allowlist:
+  - list_exploits
+  - get_module_info
+  - get_module_options
+  - run_exploit
+  - run_auxiliary_module
+  - list_active_sessions
+
+- Runtime guard rules applied before execution:
+  - empty exploit search term blocked
+  - module-info sequencing enforced when configured
+  - manual approval required for exploit-class calls
+  - payload compatibility checks when configured
+
+- ReAct sequence (example):
+  1. `msf_list_exploits(search_term="vsftpd")`
+  2. `msf_get_module_info(...)`
+  3. `msf_get_module_options(...)`
+  4. `msf_run_exploit(...)` or `msf_run_auxiliary_module(...)`
+  5. `msf_list_active_sessions()` for verification
+
+- Striker parses tool messages and updates state:
+  - exploited_services
+  - active_sessions (if opened)
+  - critical_findings
+  - typed exploit projection (`ExploitResult`) in update extraction path
+
+TURN 9
+- Supervisor re-evaluates:
+  - if session exists: route to `resident` or end on mission criteria
+  - if no session: route back to librarian/striker/fuzzer based on context
+
+
+SAFETY AND STOP CONDITIONS
+══════════════════════════
+
+Router checks (`src/graph/router.py`) enforce:
+- max iterations
+- scope validation
+- valid agent name
+- mission end conditions
+
+These checks are guardrails only.
+Business routing decisions remain with Supervisor reasoning.
+
+
+CORE PRINCIPLE PRESERVED
+════════════════════════
+
+The architecture still follows the same command model:
+- Supervisor decides
+- Specialist executes
+- State is updated
+- Supervisor decides again
+
+What changed is tool connectivity:
+- Old model: static client routing assumptions
+- Current model: dynamic MCP discovery + filtered tool exposure per agent

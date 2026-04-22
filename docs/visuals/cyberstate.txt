@@ -1,0 +1,278 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CyberState Flow & Updates                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+INITIAL STATE (Mission Start):
+═══════════════════════════════
+{
+  "mission_goal": "Exploit 192.168.1.50",
+  "target_scope": ["192.168.1.0/24"],
+  "iteration_count": 0,
+  "mission_status": "active",
+  "current_agent": "supervisor",
+  
+  "discovered_targets": {},
+  "web_findings": [],
+  "active_sessions": {},
+  "agent_log": [],
+  "critical_findings": [],
+  "errors": []
+}
+        │
+        │ (Passed to first agent)
+        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    AGENT 1: SCOUT                             │
+│                                                               │
+│  Reads:  target_scope, discovered_targets                     │
+│  Writes: discovered_targets, agent_log                        │
+└───────────────────────────┬───────────────────────────────────┘
+                            │
+                            ▼
+STATE AFTER SCOUT (Merge with operator.add):
+═══════════════════════════════════════════
+{
+  ...previous state...,
+  
+  "discovered_targets": {                    ← UPDATED (merged)
+    "192.168.1.50": {
+      "ports": [21, 22, 80],
+      "services": {
+        21: {"name": "ftp", "version": "vsftpd 2.3.4"},
+        22: {"name": "ssh", "version": "OpenSSH 7.2"},
+        80: {"name": "http", "version": "Apache 2.4.18"}
+      },
+      "os_guess": "Linux 2.6.X"
+    }
+  },
+  
+  "agent_log": [                             ← APPENDED
+    {
+      "agent": "scout",
+      "action": "nmap_scan",
+      "target": "192.168.1.50",
+      "result": "Found 3 open ports",
+      "details": {
+        "scan_type": "service_version",
+        "duration": 5.42
+      },
+      "timestamp": "2026-02-02T14:30:00Z"
+    }
+  ],
+  
+  "critical_findings": [                     ← APPENDED
+    "vsftpd 2.3.4 detected (known backdoor vulnerability)"
+  ],
+  
+  "iteration_count": 1                       ← INCREMENTED
+}
+        │
+        │ (State saved to PostgreSQL checkpoint)
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                 SUPERVISOR (Re-evaluation)                    │
+│                                                               │
+│  Reads:  ENTIRE STATE                                         │
+│  Writes: next_agent, iteration_count                          │
+└───────────────────────────┬───────────────────────────────────┘
+                            │
+                            ▼
+STATE AFTER SUPERVISOR:
+══════════════════════
+{
+  ...all previous data...,
+  
+  "next_agent": "fuzzer",                    ← SUPERVISOR DECISION (AI-driven)
+  "iteration_count": 2,
+  
+  "agent_log": [
+    ...previous...,
+    {
+      "agent": "supervisor",
+      "decision": "fuzzer",
+      "reasoning": "Detected HTTP server on port 80. Should enumerate web directories and API endpoints to find potential attack surface before attempting exploitation.",
+      "confidence": 0.85,
+      "timestamp": "2026-02-02T14:30:30Z"
+    }
+  ]
+}
+        │
+        │ (Router reads next_agent)
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    AGENT 2: FUZZER                            │
+│                                                               │
+│  Reads:  discovered_targets[<ip>].services                    │
+│  Writes: web_findings, critical_findings                      │
+└───────────────────────────┬───────────────────────────────────┘
+                            │
+                            ▼
+STATE AFTER FUZZER:
+══════════════════
+{
+  ...all previous data...,
+  
+  "web_findings": [                          ← APPENDED
+    {
+      "url": "http://192.168.1.50/admin",
+      "status": 200,
+      "size": 1024,
+      "content_type": "text/html"
+    },
+    {
+      "url": "http://192.168.1.50/api",
+      "status": 403,
+      "size": 512,
+      "content_type": "application/json"
+    },
+    {
+      "url": "http://192.168.1.50/login.php",
+      "status": 200,
+      "size": 2048,
+      "content_type": "text/html"
+    }
+  ],
+  
+  "critical_findings": [                     ← APPENDED
+    ...previous...,
+    "Admin panel accessible at /admin",
+    "API endpoint found at /api (forbidden but exists)"
+  ],
+  
+  "agent_log": [
+    ...previous...,
+    {
+      "agent": "fuzzer",
+      "action": "gobuster_directory_enum",
+      "target": "http://192.168.1.50",
+      "result": "Found 3 interesting paths",
+      "timestamp": "2026-02-02T14:31:00Z"
+    }
+  ],
+  
+  "iteration_count": 3
+}
+        │
+        │ (Checkpointed again)
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                 SUPERVISOR → LIBRARIAN                        │
+│  Decision: "Need exploit details before attacking"            │
+└───────────────────────────┬───────────────────────────────────┘
+                            │
+                            ▼
+STATE AFTER LIBRARIAN:
+═════════════════════
+{
+  ...all previous data...,
+  
+  "research_results": {                      ← NEW SECTION
+    "vsftpd 2.3.4": {
+      "cve": "CVE-2011-2523",
+      "description": "Backdoor in vsftpd 2.3.4",
+      "exploit_module": "exploit/unix/ftp/vsftpd_234_backdoor",
+      "requirements": {
+        "target_port": 21,
+        "payload": "cmd/unix/interact"
+      },
+      "source": "Metasploit Framework"
+    }
+  },
+  
+  "agent_log": [
+    ...previous...,
+    {
+      "agent": "librarian",
+      "action": "research_exploit",
+      "query": "vsftpd 2.3.4 exploit",
+      "result": "Found CVE-2011-2523 with available Metasploit module",
+      "timestamp": "2026-02-02T14:31:30Z"
+    }
+  ],
+  
+  "iteration_count": 4
+}
+        │
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                 SUPERVISOR → STRIKER                          │
+│  Decision: "Have exploit info, ready to attack"               │
+└───────────────────────────┬───────────────────────────────────┘
+                            │
+                            ▼
+STATE AFTER STRIKER (Exploitation Success):
+═══════════════════════════════════════════
+{
+  ...all previous data...,
+  
+  "active_sessions": {                       ← NEW DATA
+    1: {
+      "target": "192.168.1.50",
+      "port": 21,
+      "user": "root",
+      "exploit": "exploit/unix/ftp/vsftpd_234_backdoor",
+      "established": "2026-02-02T14:35:00Z",
+      "session_type": "shell"
+    }
+  },
+  
+  "exploited_services": [                    ← NEW LIST
+    "vsftpd 2.3.4 on 192.168.1.50:21"
+  ],
+  
+  "mission_status": "success",               ← MISSION COMPLETE!
+  
+  "critical_findings": [
+    ...previous...,
+    "ROOT shell obtained on 192.168.1.50 via vsftpd backdoor"
+  ],
+  
+  "agent_log": [
+    ...previous...,
+    {
+      "agent": "striker",
+      "action": "run_exploit",
+      "exploit_module": "exploit/unix/ftp/vsftpd_234_backdoor",
+      "target": "192.168.1.50:21",
+      "result": "SUCCESS - Got root shell (session_id: 1)",
+      "timestamp": "2026-02-02T14:35:00Z"
+    }
+  ],
+  
+  "iteration_count": 5
+}
+
+
+STATE MERGING RULES (operator.add):
+════════════════════════════════════
+
+For Dict fields (discovered_targets, research_results):
+  OLD: {"192.168.1.50": {...}}
+  NEW: {"192.168.1.51": {...}}
+  MERGED: {"192.168.1.50": {...}, "192.168.1.51": {...}}
+
+For List fields (agent_log, web_findings, critical_findings):
+  OLD: [entry1, entry2]
+  NEW: [entry3]
+  MERGED: [entry1, entry2, entry3]  ← APPENDS, never overwrites
+
+For scalar fields (iteration_count, mission_status):
+  NEW value OVERWRITES old value
+
+
+CHECKPOINTING:
+══════════════
+After EVERY agent node:
+  1. LangGraph serializes state to JSON
+  2. Saves to PostgreSQL checkpoints table
+  3. Includes: thread_id, checkpoint_id, state_snapshot
+
+To resume after crash:
+  config = {"configurable": {"thread_id": "mission-001"}}
+  graph.ainvoke(None, config)
+  → Loads last checkpoint
+  → Continues from that exact state

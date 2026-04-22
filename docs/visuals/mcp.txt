@@ -1,0 +1,72 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 MCP Execution Path (Current ToolBridge Model)              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+AGENT NODE (LangGraph)
+══════════════════════
+
+All agents (target-state ReAct model) request tool access through the bridge.
+  -> bridge.get_tools_for_agent(allowed_tools)
+
+Bridge returns filtered tools (example):
+  - msf_list_exploits
+  - msf_get_module_info
+  - msf_get_module_options
+  - msf_run_exploit
+  - msf_list_active_sessions
+
+Before actual MCP execution, runtime guard rules may run:
+- pre-rules: arg hygiene, sequencing checks, manual confirmation gate
+- post-rules: cache/normalize metadata for follow-up calls
+(`src/utils/tool_guard.py`, `src/utils/tool_guard_profiles.py`)
+
+
+MCP TOOLBRIDGE LAYER (`src/mcp/mcp_tool_bridge.py`)
+═══════════════════════════════════════════════════
+
+Startup sequence:
+1. connect_server("kali", KALI_MCP_URL)
+2. connect_server("msf",  MSF_MCP_URL)
+3. for each server: open SSE transport at `{url}/sse`
+4. list_tools()
+5. wrap each tool as LangChain StructuredTool
+6. prefix names: `kali_*`, `msf_*`
+
+Runtime call path:
+- Agent invokes `msf_run_exploit(...)`
+- Bridge calls `session.call_tool("run_exploit", args)` on msf MCP session
+
+
+NETWORK BOUNDARY (Docker Compose)
+══════════════════════════════════
+
+agents container
+  -> kali-mcp:5001 (MCP SSE)
+  -> msf-mcp:8085  (MCP SSE/HTTP)
+
+kali-mcp internals:
+  MCP server (5001) -> Kali REST API (5000) -> Kali binaries
+
+msf-mcp internals:
+  MCP server (8085) -> msfrpcd (55553) -> Metasploit framework
+
+
+RESPONSE FLOW
+═════════════
+
+MCP server returns tool output
+  -> bridge normalizes content
+  -> ReAct agent receives ToolMessage
+  -> agent parses result into CyberState updates
+
+Examples:
+- Striker extracts `session_id` from exploit result
+- Resident extracts privilege/host data from session command output
+
+
+ACCESS CONTROL
+══════════════
+
+- Bridge never blindly exposes all tools to each agent.
+- Every agent receives only its allowlisted subset.
+- Allowlists may use base names (`run_exploit`) or prefixed names (`msf_run_exploit`).

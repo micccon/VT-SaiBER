@@ -1,0 +1,74 @@
+# =============================================================================
+# VT-SaiBER Python Dependencies
+# =============================================================================
+
+# =============================================================================
+# CORE ORCHESTRATION & LLM FRAMEWORKS
+# =============================================================================
+# LangChain/LangGraph ecosystem for multi-agent orchestration and ReAct patterns
+langchain>=0.2.0                          # LangChain core framework
+langchain-core>=0.1.0                     # LangChain core primitives (messages, tools)
+langgraph>=0.2.0                          # Orchestration framework for agent workflows
+langsmith>=0.1.0                          # LangChain monitoring and tracing
+langgraph-checkpoint-postgres>=2.0.0      # State persistence for LangGraph (PostgreSQL backend)
+langchain-openai>=0.3.0                   # OpenAI integration for LangChain
+
+# =============================================================================
+# LLM PROVIDER INTEGRATIONS
+# =============================================================================
+# Direct API clients for various LLM providers
+openai>=1.0.0                             # OpenAI API client (for embeddings via OpenRouter)
+google-generativeai>=0.3.0                # Google Gemini API client
+langchain-anthropic>=0.1.0                # Anthropic Claude integration (optional)
+
+# =============================================================================
+# WEB FRAMEWORK & MCP SUPPORT
+# =============================================================================
+# FastAPI + Starlette for MCP server endpoints and Metasploit integration
+fastapi>=0.110.0                          # Modern Python web framework for MCP servers
+uvicorn>=0.27.0                           # ASGI server for running FastAPI applications
+starlette>=0.36.0                         # ASGI toolkit for HTTP routing and middleware
+mcp>=1.2.0                                # Model Context Protocol (MCP) for tool integration
+
+# =============================================================================
+# DATABASE & VECTOR STORAGE
+# =============================================================================
+# PostgreSQL client and vector embeddings support
+psycopg2-binary>=2.9.9                    # PostgreSQL adapter for Python
+sqlalchemy>=2.0.25                        # SQL toolkit and ORM for database abstraction
+pgvector>=0.2.4                           # PostgreSQL vector extension for semantic search/RAG
+tavily-python>=0.5.2                      # Tavily client for OSINT data retrieval
+
+# =============================================================================
+# SECURITY & EXPLOITATION FRAMEWORKS
+# =============================================================================
+# Metasploit and security tool integrations
+pymetasploit3>=0.2.17                     # Metasploit Framework RPC client
+
+# =============================================================================
+# DATA PROCESSING & VALIDATION
+# =============================================================================
+# Data validation, serialization, and document processing
+pydantic>=2.6.0                           # Data validation using Python type hints
+pydantic-settings>=2.1.0                  # Environment variable management with Pydantic
+pypdf>=4.0.0                              # PDF processing and text extraction for RAG indexing
+
+# =============================================================================
+# HTTP & NETWORK UTILITIES
+# =============================================================================
+httpx>=0.27.0                             # Async HTTP client for tool communications
+requests>=2.31.0                          # Synchronous HTTP client for API calls
+rich>=13.3.4                              # Rich text and beautiful console output
+
+# =============================================================================
+# ENVIRONMENT & CONFIGURATION
+# =============================================================================
+python-dotenv>=1.0.1                      # Load environment variables from .env files
+
+# =============================================================================
+# TESTING & DEVELOPMENT (Optional - install with: pip install -e ".[dev]")
+# =============================================================================
+pytest>=7.4.0                             # Testing framework for unit and integration tests
+numpy>=1.24.0                             # Numerical computing library (for test utilities)
+
+sentence-transformers

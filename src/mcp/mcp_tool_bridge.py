@@ -1,0 +1,319 @@
+"""
+MCP to LangGraph Bridge
+=======================
+Connects to MCP servers via SSE and exposes tools to LangGraph agents.
+"""
+
+import json
+import logging
+import os
+from typing import Any, Dict, List, Optional, Set
+from contextlib import AsyncExitStack
+
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from langchain_core.tools import StructuredTool
+from pydantic import Field, create_model
+
+logger = logging.getLogger(__name__)
+
+
+class MCPToolBridge:
+    """
+    Bridge between MCP servers and LangGraph agents.
+    Connects via SSE and discovers tools dynamically.
+    """
+    
+    def __init__(self):
+        self.sessions: Dict[str, ClientSession] = {}
+        self.exit_stack = AsyncExitStack()
+        self.all_tools: List[StructuredTool] = []
+        self.tools_by_server: Dict[str, List[StructuredTool]] = {}
+    
+    async def connect_server(self, name: str, url: str):
+        """
+        Connect to an MCP server via SSE and discover its tools.
+        
+        Args:
+            name: Server name (e.g., "kali", "msf")
+            url: Server URL (e.g., "http://kali-mcp:5001")
+        """
+        if not url:
+            raise ValueError(f"{name} MCP URL is empty")
+
+        candidates = self._build_sse_candidates(name, url)
+        errors: List[str] = []
+
+        for candidate in candidates:
+            try:
+                logger.info(f"Connecting to {name} MCP at {candidate}...")
+
+                # Connect via SSE
+                transport = await self.exit_stack.enter_async_context(
+                    sse_client(candidate)
+                )
+                read, write = transport
+
+                # Create session
+                session = await self.exit_stack.enter_async_context(
+                    ClientSession(read, write)
+                )
+                await session.initialize()
+
+                # Store session
+                self.sessions[name] = session
+
+                # Discover tools
+                tools_result = await session.list_tools()
+
+                logger.info(f"✅ {name}: Discovered {len(tools_result.tools)} tools")
+
+                # Convert MCP tools to LangChain tools
+                for mcp_tool in tools_result.tools:
+                    lc_tool = self._mcp_to_langchain(mcp_tool, name, session)
+                    self.all_tools.append(lc_tool)
+
+                    if name not in self.tools_by_server:
+                        self.tools_by_server[name] = []
+                    self.tools_by_server[name].append(lc_tool)
+
+                for tool in tools_result.tools:
+                    logger.debug(f"  - {tool.name}: {tool.description}")
+
+                logger.info(f"✅ {name}: Connected successfully")
+                return
+            except Exception as e:
+                msg = f"{candidate} -> {type(e).__name__}: {e}"
+                errors.append(msg)
+                logger.warning(f"{name} MCP connect attempt failed: {msg}")
+
+        hint = ""
+        if name == "kali":
+            hint = "Hint: Kali MCP SSE is usually http://kali-mcp:5001/sse (not port 5000)."
+        elif name == "msf":
+            hint = "Hint: MSF MCP SSE is usually http://msf-mcp:8085/sse."
+
+        joined = "; ".join(errors)
+        raise RuntimeError(
+            f"Failed to connect to {name} MCP after trying {len(candidates)} endpoint(s). "
+            f"Attempts: {joined}. {hint}"
+        )
+
+    def _build_sse_candidates(self, name: str, raw_url: str) -> List[str]:
+        """
+        Build ordered SSE endpoint candidates for robust startup/misconfig recovery.
+        """
+        cleaned = (raw_url or "").strip().rstrip("/")
+        if not cleaned:
+            return []
+
+        bases: List[str] = []
+
+        # If already an SSE endpoint, try it first and also its base URL.
+        if cleaned.endswith("/sse"):
+            bases.append(cleaned[: -len("/sse")])
+            direct_sse = cleaned
+        else:
+            bases.append(cleaned)
+            direct_sse = f"{cleaned}/sse"
+
+        # Common auto-correction: kali URL accidentally points to REST port 5000.
+        if name == "kali":
+            for base in list(bases):
+                if ":5000" in base:
+                    bases.append(base.replace(":5000", ":5001"))
+            bases.append("http://kali-mcp:5001")
+
+        if name == "msf":
+            bases.append("http://msf-mcp:8085")
+
+        # De-duplicate while preserving order.
+        ordered: List[str] = []
+        seen = set()
+        for candidate in [direct_sse, *[f"{base}/sse" for base in bases]]:
+            if candidate not in seen:
+                seen.add(candidate)
+                ordered.append(candidate)
+        return ordered
+    
+    def _mcp_to_langchain(
+        self, 
+        mcp_tool, 
+        server_name: str,
+        session: ClientSession
+    ) -> StructuredTool:
+        """Convert MCP tool to LangChain StructuredTool."""
+        
+        input_schema = mcp_tool.inputSchema
+        
+        # Build fields for Pydantic model
+        fields = {}
+        required = input_schema.get("required", [])
+        defaults: Dict[str, Any] = {}
+        
+        for prop_name, prop_schema in input_schema.get("properties", {}).items():
+            field_type = self._json_type_to_python(prop_schema.get("type", "string"))
+            has_default = "default" in prop_schema
+            default_value = prop_schema.get("default")
+            # If schema provides a default, treat field as optional even if listed in "required".
+            # Some MCP servers emit required+default, and LLMs may send null for those fields.
+            field_required = (prop_name in required) and (not has_default)
+            field_description = prop_schema.get("description", "")
+            
+            if field_required:
+                fields[prop_name] = (field_type, Field(description=field_description))
+            else:
+                effective_default = default_value if has_default else None
+                fields[prop_name] = (
+                    Optional[field_type],
+                    Field(default=effective_default, description=field_description),
+                )
+                if has_default:
+                    defaults[prop_name] = default_value
+        
+        # Create dynamic Pydantic model
+        from pydantic import BaseModel
+        if fields:
+            ArgsSchema = create_model(f"{mcp_tool.name}_args", **fields)
+        else:
+            ArgsSchema = create_model(f"{mcp_tool.name}_args", __base__=BaseModel)
+        
+        # Create execution function
+        async def execute_tool(**kwargs) -> str:
+            """Execute the MCP tool via SSE and return results."""
+            try:
+                # Normalize null-ish values for optional/defaulted fields.
+                # LLMs often emit null for optional strings; use schema default where available.
+                cleaned_kwargs: Dict[str, Any] = {}
+                for key, value in kwargs.items():
+                    if value is None:
+                        if key in defaults:
+                            cleaned_kwargs[key] = defaults[key]
+                        # If no default for a null optional, omit the key.
+                        continue
+                    cleaned_kwargs[key] = value
+
+                logger.info(f"[{server_name}] Executing {mcp_tool.name} with args: {cleaned_kwargs}")
+                
+                # Call MCP tool
+                result = await session.call_tool(mcp_tool.name, cleaned_kwargs)
+
+                def _normalize_mcp_payload(payload: Any) -> Any:
+                    """
+                    Normalize common MCP envelopes for stable downstream parsing.
+                    Some servers/sdk versions return {"result": <tool_payload>}.
+                    """
+                    if isinstance(payload, dict) and "result" in payload and len(payload) == 1:
+                        return payload.get("result")
+                    return payload
+                
+                # Prefer structured content when present (including empty lists/dicts).
+                structured = getattr(result, "structuredContent", None)
+                if structured is not None:
+                    try:
+                        return json.dumps(_normalize_mcp_payload(structured), indent=2)
+                    except Exception:
+                        return str(_normalize_mcp_payload(structured))
+
+                # Fallback to textual content.
+                content_blocks = getattr(result, "content", None)
+                if content_blocks:
+                    text_parts: List[str] = []
+                    for block in content_blocks:
+                        text = getattr(block, "text", None)
+                        if text is not None:
+                            text_parts.append(text)
+                    combined = "\n".join(text_parts).strip()
+                    if combined:
+                        # Try to parse as JSON for cleaner output
+                        try:
+                            parsed = json.loads(combined)
+                            return json.dumps(_normalize_mcp_payload(parsed), indent=2)
+                        except Exception:
+                            return combined
+                    return "[]"
+
+                return "{}"
+                
+            except Exception as e:
+                logger.error(f"[{server_name}] Tool execution failed: {e}")
+                return json.dumps({
+                    "error": str(e),
+                    "server": server_name,
+                    "tool": mcp_tool.name
+                })
+        
+        # Create LangChain tool with server prefix
+        tool_name = f"{server_name}_{mcp_tool.name}"
+        
+        return StructuredTool(
+            name=tool_name,
+            description=f"[{server_name.upper()}] {mcp_tool.description}",
+            func=execute_tool,
+            coroutine=execute_tool,
+            args_schema=ArgsSchema
+        )
+    
+    def _json_type_to_python(self, json_type: str) -> type:
+        """Convert JSON Schema type to Python type."""
+        type_map = {
+            "string": str,
+            "integer": int,
+            "number": float,
+            "boolean": bool,
+            "object": dict,
+            "array": list
+        }
+        return type_map.get(json_type, str)
+    
+    def get_tools_for_agent(self, allowed_tools: Optional[Set[str]] = None) -> List[StructuredTool]:
+        """
+        Get tools filtered for a specific agent.
+
+        Args:
+            allowed_tools: Set of tool names agent is allowed to use.
+                          If None, returns an empty list (deny by default).
+
+        Returns:
+            List of tools agent can use
+        """
+        if allowed_tools is None:
+            logger.warning("get_tools_for_agent called with no allowlist — returning no tools")
+            return []
+        
+        # Filter tools
+        filtered = []
+        for tool in self.all_tools:
+            # Extract base tool name (remove server prefix)
+            base_name = tool.name.split("_", 1)[1] if "_" in tool.name else tool.name
+            
+            if base_name in allowed_tools or tool.name in allowed_tools:
+                filtered.append(tool)
+        
+        logger.info(f"Filtered {len(filtered)}/{len(self.all_tools)} tools for agent")
+        return filtered
+    
+    async def disconnect(self):
+        """Disconnect from all MCP servers."""
+        await self.exit_stack.aclose()
+        logger.info("Disconnected from all MCP servers")
+
+
+# Global bridge instance
+_bridge = None
+
+async def get_mcp_bridge() -> MCPToolBridge:
+    """Get or create the global MCP bridge."""
+    global _bridge
+    if _bridge is None:
+        _bridge = MCPToolBridge()
+        
+        # Get URLs from environment
+        kali_url = os.getenv("KALI_MCP_URL", "http://kali-mcp:5001")
+        msf_url = os.getenv("MSF_MCP_URL", "http://msf-mcp:8085")
+        
+        # Connect to both servers via SSE
+        await _bridge.connect_server("kali", kali_url)
+        await _bridge.connect_server("msf", msf_url)
+    
+    return _bridge
