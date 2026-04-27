@@ -682,8 +682,8 @@ class StrikerAgent(BaseAgent):
             self.register_skill(skill)
         self._init_runtime(
             config=config,
-            model=config.striker_model or config.supervisor_model,
-            api_key=config.striker_api_key or config.openrouter_api_key,
+            model=config.supervisor_model,
+            api_key=config.openrouter_api_key,
             base_url=config.openrouter_base_url,
             timeout_seconds=config.supervisor_timeout_seconds,
         )

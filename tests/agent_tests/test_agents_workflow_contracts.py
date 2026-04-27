@@ -287,43 +287,40 @@ def test_resident_returns_error_when_no_sessions():
     assert out["errors"][0].error_type == "ValidationError"
 
 
-def test_striker_prefers_striker_specific_model_and_key(monkeypatch):
+def test_striker_uses_shared_model_and_key(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "shared-key")
-    monkeypatch.setenv("STRIKER_API_KEY", "striker-key")
     monkeypatch.setenv("SUPERVISOR_MODEL", "shared-model")
-    monkeypatch.setenv("STRIKER_MODEL", "striker-model")
     get_runtime_config.cache_clear()
 
     captured: Dict[str, Any] = {}
 
-    def fake_resolve_openrouter_runtime(**kwargs):
+    def fake_try_resolve_openrouter_runtime(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(client=object(), model=kwargs["model"])
+        return SimpleNamespace(client=object(), model=kwargs["model"]), None
 
-    monkeypatch.setattr(striker_mod, "resolve_openrouter_runtime", fake_resolve_openrouter_runtime)
+    monkeypatch.setattr("src.agents.base.try_resolve_openrouter_runtime", fake_try_resolve_openrouter_runtime)
     agent = striker_mod.StrikerAgent()
 
     assert agent._client is not None
-    assert captured["api_key"] == "striker-key"
-    assert captured["model"] == "striker-model"
+    assert captured["api_key"] == "shared-key"
+    assert captured["model"] == "shared-model"
     assert captured["base_url"] == get_runtime_config().openrouter_base_url
     get_runtime_config.cache_clear()
 
 
-def test_striker_falls_back_to_shared_model_and_key(monkeypatch):
+def test_striker_supports_llm_model_fallback(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "shared-key")
-    monkeypatch.delenv("STRIKER_API_KEY", raising=False)
-    monkeypatch.setenv("SUPERVISOR_MODEL", "shared-model")
-    monkeypatch.delenv("STRIKER_MODEL", raising=False)
+    monkeypatch.delenv("SUPERVISOR_MODEL", raising=False)
+    monkeypatch.setenv("LLM_MODEL", "shared-model")
     get_runtime_config.cache_clear()
 
     captured: Dict[str, Any] = {}
 
-    def fake_resolve_openrouter_runtime(**kwargs):
+    def fake_try_resolve_openrouter_runtime(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(client=object(), model=kwargs["model"])
+        return SimpleNamespace(client=object(), model=kwargs["model"]), None
 
-    monkeypatch.setattr(striker_mod, "resolve_openrouter_runtime", fake_resolve_openrouter_runtime)
+    monkeypatch.setattr("src.agents.base.try_resolve_openrouter_runtime", fake_try_resolve_openrouter_runtime)
     agent = striker_mod.StrikerAgent()
 
     assert agent._client is not None

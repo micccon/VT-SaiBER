@@ -8,8 +8,6 @@
 #   2. attackbox - Unified Kali + Metasploit MCP server
 #   3. agents    - Python application (your agents)
 
-version: '3.8'
-
 # =============================================================================
 # SERVICES (Containers)
 # =============================================================================
@@ -62,6 +60,10 @@ services:
 
   knowledge_base:
     image: vt-saiber-agents
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: docker/agents.Dockerfile
     container_name: vt-saiber-knowledge-base
     depends_on:
       - postgres
@@ -81,12 +83,12 @@ services:
     command: >
       sh -lc "
         echo '[kb-sync] Waiting for Postgres...';
-        until pg_isready -h $DB_HOST -U $DB_USER -d $DB_NAME; do
+        until pg_isready -h $$DB_HOST -U $$DB_USER -d $$DB_NAME; do
           sleep 2;
         done;
-        echo '[kb-sync] Postgres is ready, running RAG '$RAG_SYNC_MODE'...';
-        python -m src.database.rag.rag_engine $RAG_SYNC_MODE \
-          --source-dir $RAG_SYNC_SOURCE_DIR;
+        echo '[kb-sync] Postgres is ready, running RAG '$$RAG_SYNC_MODE'...';
+        python -m src.database.rag.rag_engine $$RAG_SYNC_MODE \
+          --source-dir $$RAG_SYNC_SOURCE_DIR;
         echo '[kb-sync] KB sync done, exiting.';
       "
 
@@ -136,6 +138,8 @@ services:
   # Your main application - runs Scout, Fuzzer, Striker, etc.
   # Sudip is responsible for src/main.py
   agents:
+    image: vt-saiber-agents
+    pull_policy: never
     build:
       context: .
       dockerfile: docker/agents.Dockerfile
@@ -150,8 +154,6 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - ATTACKBOX_MCP_URL=${ATTACKBOX_MCP_URL}
-      - STRIKER_API_KEY=${STRIKER_API_KEY}
-      - STRIKER_MODEL=${STRIKER_MODEL}
       - REPORT_EXPORT_DIR=/app/exports
       #- ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       #- OPENAI_API_KEY=${OPENAI_API_KEY}

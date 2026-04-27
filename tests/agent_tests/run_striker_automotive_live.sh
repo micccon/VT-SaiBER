@@ -103,8 +103,6 @@ echo ""
 docker exec -t \
     -e OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
     -e OPENROUTER_BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" \
-    -e STRIKER_API_KEY="${STRIKER_API_KEY:-}" \
-    -e STRIKER_MODEL="${STRIKER_MODEL:-}" \
     -e LLM_CLIENT="${LLM_CLIENT:-openrouter}" \
     -e LLM_MODEL="${LLM_MODEL:-nvidia/nemotron-3-super-120b-a12b:free}" \
     -e SUPERVISOR_MODEL="${SUPERVISOR_MODEL:-minimax/minimax-m2.5:free}" \
