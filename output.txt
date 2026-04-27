@@ -1,0 +1,682 @@
+======================================
+STRIKER AUTOMOTIVE LIVE TEST
+======================================
+Target: automotive-testbed
+Execute live exploit: true
+
+Resolved target: automotive-testbed
+
+[STEP] Starting direct live striker script run for mission striker-automotive-live-20260427-155013
+[STEP] Checking live MCP prerequisites
+[STEP] Calling get_mcp_bridge() for prereq check
+[STEP] MCP bridge acquired for prereq check
+[STEP] Filtering striker tools for prereq check
+[STEP] Striker tool count: 11
+[STEP] Filtering scout tools for prereq check
+[STEP] Scout tool count: 1
+[STEP] Filtering fuzzer tools for prereq check
+[STEP] Fuzzer tool count: 2
+[STEP] Enabling traced MCP tool wrappers
+[STEP] Bootstrapping live striker mission: striker-automotive-live-20260427-155013
+[STEP] Starting Kali nmap scan for automotive-testbed
+[STEP] Connecting to MCP bridge for tools: ['nmap_scan']
+[STEP] Resolved MCP tools: ['nmap_scan']
+[TRACE] TOOL_START: {"id": 1, "tool": "kali_nmap_scan", "args": {"target": "automotive-testbed", "scan_type": "-sV", "ports": "22,80,443,8000,8080,9555,9556,9999", "additional_args": "-T4"}}
+[TRACE] TOOL_END: {"id": 1, "tool": "kali_nmap_scan", "status": "ok", "elapsed_s": 27.755}
+[TRACE] TOOL_RESULT[1]:
+{
+  "partial_results": false,
+  "return_code": 0,
+  "stderr": "",
+  "stdout": "Starting Nmap 7.99 ( https://nmap.org ) at 2026-04-27 15:50 +0000\nNmap scan report for automotive-testbed (172.20.0.6)\nHost is up (0.00043s latency).\nrDNS record for 172.20.0.6: automotive-testbed.vt-saiber_vt-saiber-network\n\nPORT     STATE  SERVICE      VERSION\n22/tcp   open   ssh          OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 (Ubuntu Linux; protocol 2.0)\n80/tcp   closed http\n443/tcp  closed https\n8000/tcp open   http         Werkzeug httpd 3.1.8 (Python 3.10.12)\n8080/tcp open   http         Werkzeug httpd 3.1.8 (Python 3.10.12)\n9555/tcp open   trispen-sra?\n9556/tcp open   unknown\n9999/tcp open   http         Werkzeug httpd 3.1.8 (Python 3.10.12)\n2 services unrecognized despite returning data. If you know the service/version, please submit the following fingerprints at https://nmap.org/cgi-bin/submit.cgi?new-service :\n==============NEXT SERVICE FINGERPRINT (SUBMIT INDIVIDUALLY)==============\nSF-Port9555-TCP:V=7.99%I=2%D=4/27%Time=69EF85C2%P=x86_64-pc-linux-gnu%r(Ge\nSF:nericLines,3,\"\\x7f\\r\\x11\")%r(GetRequest,3,\"\\x7fG\\x11\")%r(SSLSessionReq,\nSF:3,\"\\x7f\\x16\\x11\")%r(TLSSessionReq,3,\"\\x7f\\x16\\x11\");\n==============NEXT SERVICE FINGERPRINT (SUBMIT INDIVIDUALLY)==============\nSF-Port9556-TCP:V=7.99%I=2%D=4/27%Time=69EF85C2%P=x86_64-pc-linux-gnu%r(Ge\nSF:nericLines,3,\"\\x7f\\r\\x11\")%r(GetRequest,3,\"\\x7fG\\x11\")%r(SSLSessionReq,\nSF:3,\"\\x7f\\x16\\x11\")%r(TLSSessionReq,3,\"\\x7f\\x16\\x11\");\nMAC Address: 56:E4:05:B6:6D:05 (Unknown)\nService Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel\n\nService detection performed. Please report any incorrect results at https://nmap.org/submit/ .\nNmap done: 1 IP address (1 host up) scanned in 27.47 seconds\n",
+  "success": true,
+  "timed_out": false
+}
+[STEP] Finished Kali nmap scan; parsing discovered services
+[STEP] Built discovered_targets with ports: [22, 8000, 8080, 9555, 9556, 9999]
+[TRACE] NMAP_RAW:
+Starting Nmap 7.99 ( https://nmap.org ) at 2026-04-27 15:50 +0000
+Nmap scan report for automotive-testbed (172.20.0.6)
+Host is up (0.00043s latency).
+rDNS record for 172.20.0.6: automotive-testbed.vt-saiber_vt-saiber-network
+
+PORT     STATE  SERVICE      VERSION
+22/tcp   open   ssh          OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 (Ubuntu Linux; protocol 2.0)
+80/tcp   closed http
+443/tcp  closed https
+8000/tcp open   http         Werkzeug httpd 3.1.8 (Python 3.10.12)
+8080/tcp open   http         Werkzeug httpd 3.1.8 (Python 3.10.12)
+9555/tcp open   trispen-sra?
+9556/tcp open   unknown
+9999/tcp open   http         Werkzeug httpd 3.1.8 (Python 3.10.12)
+2 services unrecognized despite returning data. If you know the service/version, please submit the following fingerprints at https://nmap.org/cgi-bin/submit.cgi?new-service :
+==============NEXT SERVICE FINGERPRINT (SUBMIT INDIVIDUALLY)==============
+SF-Port9555-TCP:V=7.99%I=2%D=4/27%Time=69EF85C2%P=x86_64-pc-linux-gnu%r(Ge
+SF:nericLines,3,"\x7f\r\x11")%r(GetRequest,3,"\x7fG\x11")%r(SSLSessionReq,
+SF:3,"\x7f\x16\x11")%r(TLSSessionReq,3,"\x7f\x16\x11");
+==============NEXT SERVICE FINGERPRINT (SUBMIT INDIVIDUALLY)==============
+SF-Port9556-TCP:V=7.99%I=2%D=4/27%Time=69EF85C2%P=x86_64-pc-linux-gnu%r(Ge
+SF:nericLines,3,"\x7f\r\x11")%r(GetRequest,3,"\x7fG\x11")%r(SSLSessionReq,
+SF:3,"\x7f\x16\x11")%r(TLSSessionReq,3,"\x7f\x16\x11");
+MAC Address: 56:E4:05:B6:6D:05 (Unknown)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 27.47 seconds
+
+[STEP] Persisting discovered targets into the operational database
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+[STEP] Starting web fuzzing against http://automotive-testbed:8000
+[STEP] Connecting to MCP bridge for tools: ['gobuster_scan', 'nikto_scan']
+[STEP] Resolved MCP tools: ['gobuster_scan', 'nikto_scan']
+[STEP] Calling Kali gobuster_scan
+[TRACE] TOOL_START: {"id": 2, "tool": "kali_gobuster_scan", "args": {"url": "http://automotive-testbed:8000", "mode": "dir", "wordlist": "/usr/share/wordlists/dirb/common.txt", "additional_args": "--delay 200ms"}}
+[TRACE] TOOL_END: {"id": 2, "tool": "kali_gobuster_scan", "status": "ok", "elapsed_s": 98.148}
+[TRACE] TOOL_RESULT[2]:
+{
+  "partial_results": false,
+  "return_code": 0,
+  "stderr": "",
+  "stdout": "===============================================================\nGobuster v3.8.2\nby OJ Reeves (@TheColonial) & Christian Mehlmauer (@firefart)\n===============================================================\n[+] Url:                     http://automotive-testbed:8000\n[+] Method:                  GET\n[+] Threads:                 10\n[+] Delay:                   200ms\n[+] Wordlist:                /usr/share/wordlists/dirb/common.txt\n[+] Negative Status codes:   404\n[+] User Agent:              gobuster/3.8.2\n[+] Timeout:                 10s\n===============================================================\nStarting gobuster in directory enumeration mode\n===============================================================\ndashboard            (Status: 302) [Size: 199] [--> /login]\nlogin                (Status: 200) [Size: 1206]\nlogout               (Status: 302) [Size: 199] [--> /login]\nsearch               (Status: 405) [Size: 153]\nsettings             (Status: 302) [Size: 199] [--> /login]\nupload               (Status: 405) [Size: 153]\n===============================================================\nFinished\n===============================================================\n",
+  "success": true,
+  "timed_out": false
+}
+[STEP] Calling Kali nikto_scan
+[TRACE] TOOL_START: {"id": 3, "tool": "kali_nikto_scan", "args": {"target": "http://automotive-testbed:8000", "additional_args": ""}}
+[TRACE] TOOL_END: {"id": 3, "tool": "kali_nikto_scan", "status": "ok", "elapsed_s": 66.463}
+[TRACE] TOOL_RESULT[3]:
+{
+  "partial_results": false,
+  "return_code": 0,
+  "stderr": "",
+  "stdout": "- Nikto v2.6.0\n---------------------------------------------------------------------------\n+ Your Nikto installation is out of date.\n+ Target IP:          172.20.0.6\n+ Target Hostname:    automotive-testbed\n+ Target Port:        8000\n+ Platform:           Unknown\n+ Start Time:         2026-04-27 15:52:22 (GMT0)\n---------------------------------------------------------------------------\n+ Server: Werkzeug/3.1.8 Python/3.10.12\n+ No CGI Directories found (use '-C all' to force check all possible dirs). CGI tests skipped.\n+ [013587] /: Suggested security header missing: permissions-policy. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Permissions-Policy\n+ [013587] /: Suggested security header missing: content-security-policy. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP\n+ [013587] /: Suggested security header missing: strict-transport-security. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security\n+ [013587] /: Suggested security header missing: referrer-policy. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Referrer-Policy\n+ [013587] /: Suggested security header missing: x-content-type-options. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options\n+ [600652] Python/3.10.12 appears to be outdated (current is at least 3.13.1).\n+ [999990] OPTIONS: Allowed HTTP Methods: HEAD, OPTIONS, GET .\n+ [007342] /: X-Frame-Options header is deprecated and was replaced with the Content-Security-Policy HTTP header with the frame-ancestors directive. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/X-Frame-Options\n+ [007352] /: The X-Content-Type-Options header is not set. This could allow the user agent to render the content of the site in a different fashion to the MIME type. See: https://www.netsparker.com/web-vulnerability-scanner/vulnerabilities/missing-content-type-header/\n+ 7998 requests: 0 errors and 9 items reported on the remote host\n+ End Time:           2026-04-27 15:53:26 (GMT0) (64 seconds)\n---------------------------------------------------------------------------\n+ 1 host(s) tested\n\n\n      *********************************************************************\n      Portions of the server's headers (Werkzeug/3.1.8) are not in\n      the Nikto 2.6.0 database or are newer than the known string. Would you like\n      to submit this information (*no server specific data*) to CIRT.net\n      for a Nikto update (or you may email to sullo@cirt.net) (y/n)? \n",
+  "success": true,
+  "timed_out": false
+}
+[TRACE] GOBUSTER_RAW:
+===============================================================
+Gobuster v3.8.2
+by OJ Reeves (@TheColonial) & Christian Mehlmauer (@firefart)
+===============================================================
+[+] Url:                     http://automotive-testbed:8000
+[+] Method:                  GET
+[+] Threads:                 10
+[+] Delay:                   200ms
+[+] Wordlist:                /usr/share/wordlists/dirb/common.txt
+[+] Negative Status codes:   404
+[+] User Agent:              gobuster/3.8.2
+[+] Timeout:                 10s
+===============================================================
+Starting gobuster in directory enumeration mode
+===============================================================
+dashboard            (Status: 302) [Size: 199] [--> /login]
+login                (Status: 200) [Size: 1206]
+logout               (Status: 302) [Size: 199] [--> /login]
+search               (Status: 405) [Size: 153]
+settings             (Status: 302) [Size: 199] [--> /login]
+upload               (Status: 405) [Size: 153]
+===============================================================
+Finished
+===============================================================
+
+[TRACE] NIKTO_RAW:
+- Nikto v2.6.0
+---------------------------------------------------------------------------
++ Your Nikto installation is out of date.
++ Target IP:          172.20.0.6
++ Target Hostname:    automotive-testbed
++ Target Port:        8000
++ Platform:           Unknown
++ Start Time:         2026-04-27 15:52:22 (GMT0)
+---------------------------------------------------------------------------
++ Server: Werkzeug/3.1.8 Python/3.10.12
++ No CGI Directories found (use '-C all' to force check all possible dirs). CGI tests skipped.
++ [013587] /: Suggested security header missing: permissions-policy. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Permissions-Policy
++ [013587] /: Suggested security header missing: content-security-policy. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
++ [013587] /: Suggested security header missing: strict-transport-security. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
++ [013587] /: Suggested security header missing: referrer-policy. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Referrer-Policy
++ [013587] /: Suggested security header missing: x-content-type-options. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
++ [600652] Python/3.10.12 appears to be outdated (current is at least 3.13.1).
++ [999990] OPTIONS: Allowed HTTP Methods: HEAD, OPTIONS, GET .
++ [007342] /: X-Frame-Options header is deprecated and was replaced with the Content-Security-Policy HTTP header with the frame-ancestors directive. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/X-Frame-Options
++ [007352] /: The X-Content-Type-Options header is not set. This could allow the user agent to render the content of the site in a different fashion to the MIME type. See: https://www.netsparker.com/web-vulnerability-scanner/vulnerabilities/missing-content-type-header/
++ 7998 requests: 0 errors and 9 items reported on the remote host
++ End Time:           2026-04-27 15:53:26 (GMT0) (64 seconds)
+---------------------------------------------------------------------------
++ 1 host(s) tested
+
+
+      *********************************************************************
+      Portions of the server's headers (Werkzeug/3.1.8) are not in
+      the Nikto 2.6.0 database or are newer than the known string. Would you like
+      to submit this information (*no server specific data*) to CIRT.net
+      for a Nikto update (or you may email to sullo@cirt.net) (y/n)? 
+
+[STEP] Querying operational database for current target state
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+[TRACE] DB_TARGET_INFO: {"target_present": true, "services_count": 6, "findings_count": 0, "sessions_count": 0}
+[STEP] Running RAG lookup for query: ssh OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 Linux protocol 2.0 http Werkzeug httpd 3.1.8 Python 3.10.12 trispen-sra? unknown
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+[TRACE] RAG_RESULT_COUNTS: {"kb_results": 0, "findings_results": 0}
+[STEP] Attaching research and database summaries to research_cache
+[STEP] Rendering striker context before invocation
+[TRACE] STRIKER_CONTEXT:
+MISSION: Exploit the discovered services on automotive-testbed with striker
+
+TARGET INTELLIGENCE:
+- TARGET automotive-testbed
+  OS hint: unknown
+  Services:
+    - 22/tcp ssh (OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 (Ubuntu Linux; protocol 2.0))
+    - 8000/tcp http (Werkzeug httpd 3.1.8 (Python 3.10.12))
+    - 8080/tcp http (Werkzeug httpd 3.1.8 (Python 3.10.12))
+    - 9555/tcp trispen-sra?
+    - 9556/tcp unknown
+    - 9999/tcp http (Werkzeug httpd 3.1.8 (Python 3.10.12))
+
+RELEVANT WEB FINDINGS:
+- none
+
+RESEARCH / OSINT HINTS:
+- Research (query): ssh OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 Linux protocol 2.0 http Werkzeug httpd 3.1.8 Python 3.10.12 trispen-sra? unknown
+- Research (kb_top_hits): none
+- Research (similar_findings): none
+- Research (database_target_info): {"target": {"id": 6, "mission_id": "striker-automotive-live-20260427-155013", "ip_address": "automotive-testbed", "mac_address": null, "os_guess": null, "hostname": null, "discovered_at": "2026-04-27T15:50:41.701661", "updated_at": "2026-04-27T15:50:41.701661"}, "services": [{"id": 30, "target_id": 6, "port": 22, "protocol": "tcp", "service_name": "ssh", "service_version": "OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 (Ubuntu Linux; protocol 2.0)", "banner": null, "discovered_at": null}, {"id": 31, "target_id": 6, "port": 8000, "protocol": "tcp", "service_name": "http", "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)", "banner": null, "discovered_at": null}, {"id": 32, "target_id": 6, "port": 8080, "protocol": "tcp", "service_name": "http", "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)", "banner": null, "discovered_at": null}, {"id": 33, "target_id": 6, "port": 9555, "protocol": "tcp", "service_name": "trispen-sra?", "service_version": null, "banner": null, "discovered_at": null}, {"id": 34, "target_id": 6, "port": 9556, "protocol": "tcp", "service_name": "unknown", "service_version": null, "banner": null, "discovered_at": null}, {"id": 35, "target_id": 6, "port": 9999, "protocol": "tcp", "service_name": "http", "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)", "banner": null, "discovered_at": null}], "findings": [], "sessions": []}
+
+PRIOR EXPLOIT ATTEMPTS:
+- none
+
+CANDIDATE PATHS:
+- automotive-testbed ssh/22 [auxiliary] score=7 | reasons: service version identified; matching research hint found; version-specific research hint found | search_terms: ssh, openssh 8.9p1 ubuntu 3ubuntu0.14 (ubuntu linux; protocol 2.0), ssh_login
+- automotive-testbed http/8000 [exploit] score=7 | reasons: service version identified; matching research hint found; version-specific research hint found | search_terms: http, werkzeug httpd 3.1.8 (python 3.10.12)
+- automotive-testbed http/8080 [exploit] score=7 | reasons: service version identified; matching research hint found; version-specific research hint found | search_terms: http, werkzeug httpd 3.1.8 (python 3.10.12)
+
+SKILL GUIDANCE:
+METASPLOIT DOCTRINE:
+Use Metasploit when the current evidence suggests a module-driven exploit path, a CVE-backed module, or a service that maps cleanly to a known Metasploit family.
+
+When Metasploit is the right family:
+- A CVE, product, version, or service clearly suggests a real module path
+- The goal is to gain access, open a session, or validate a known module-driven weakness
+- The target maps cleanly to exploit or auxiliary modules
+
+How to work inside Metasploit:
+- Search with narrow service, product, version, banner, or CVE terms
+- Prefer exact evidence-backed modules over broad exploratory searches
+- Inspect module info and module options before execution
+- Fill only the minimum required options from observed evidence
+- Use auxiliary modules for validation, login checks, or service interrogation when they advance the path
+- Verify success with `list_active_sessions`; module output alone is not enough
+
+When to pivot away from Metasploit:
+- No module family matches the target cleanly
+- The remaining path depends mostly on guessed options
+- The target looks more like a web-tool, credential-tool, or protocol-validation problem than a module problem
+
+Guardrails:
+- Do not guess callback hosts, credentials, or target paths.
+- Do not repeat the same failed module path without new evidence.
+- Prefer one strong module path over several weak ones.
+- If you cannot justify the module from current evidence, do not force Metasploit to fit.
+
+KALI DOCTRINE:
+Use Kali when the evidence favors a tool-driven path such as web exploitation, credential validation, SMB enumeration, WordPress analysis, or precise command-based validation.
+
+When Kali is the right family:
+- The path is better served by a focused tool than by a Metasploit module
+- The target is a web surface, credential workflow, SMB path, WordPress surface, or protocol-validation task
+- The next step is validation or exploitation through one bounded tool action
+
+How to work inside Kali:
+- Choose one primary tool for the current hypothesis
+- Keep commands and tool arguments tightly scoped to observed hosts, paths, forms, services, or interfaces
+- Use `sqlmap` for strong SQL injection hypotheses
+- Use `hydra` only when a credential-facing service is exposed and the attempt is evidence-backed
+- Use `enum4linux` for SMB enumeration paths
+- Use `wpscan` for WordPress-specific paths
+- Use raw command execution only for precise validation that does not fit a dedicated tool
+
+When to pivot away from Kali:
+- The path now clearly maps to a real Metasploit module family
+- The current Kali idea failed cleanly and no new evidence supports another try
+- The remaining action would require broad shell exploration rather than a bounded validation step
+
+Guardrails:
+- Do not mix several weak Kali paths in one attempt.
+- Do not broaden from validation into noisy exploration.
+- Do not repeat a failed tool path without new evidence.
+- Prefer a bounded validation step over a speculative attack chain.
+- If a dedicated tool fits, prefer it over generic command execution.
+
+MSF SEARCH:
+Use this skill to keep `list_exploits` focused on observed target evidence.
+
+What this skill is for:
+Use this skill when you need to search Metasploit for modules that match the current target, service, product, version, banner, web path, or CVE.
+
+When to use it:
+- After identifying a candidate service or product worth exploiting
+- When OSINT, research, or web findings suggest a likely module family
+- Before choosing a Metasploit module to inspect or run
+
+How to choose search terms:
+- Start with the strongest observed signal first: CVE, exact product, exact version, or specific service banner
+- Prefer narrow terms that are likely to map to a real module family
+- Reuse the best evidence already present in state before widening the search
+- Widen only one step at a time if the first search is too specific
+
+Core rules:
+- Prefer service, product, version, banner, and CVE terms over broad category searches
+- Search with exact strings like `openssh 8.2`, `apache 2.4.49`, or `cve-2021-41773` before trying general terms
+- Use web path clues only when they are distinctive enough to help narrow the module family
+- Treat search as a precision step, not brainstorming
+
+Good patterns:
+- `cve-2021-41773`
+- `openssh 8.2`
+- `apache 2.4.49`
+- `tomcat manager`
+
+Bad patterns:
+- `linux`
+- `http`
+- `web exploit`
+- several unrelated terms in one search
+
+Decision rule:
+If the term does not come from the current evidence, do not search it first.
+
+MSF MODULE SELECTION:
+Use this skill to rank candidate Metasploit paths without drifting away from the discovered surface.
+
+What this skill is for:
+Use this skill after search results are available and you need to choose which module is the best next path.
+
+When to use it:
+- After `list_exploits` returns candidate modules
+- When several modules seem related to the same target
+- Before spending time inspecting options or executing a module
+
+How to choose a module:
+- Prefer the module that most directly matches the observed service, product, version, platform, or CVE
+- Favor specificity over popularity
+- Lower confidence when the fit depends on guesses rather than evidence
+- Prefer one strong candidate over several weak ones
+
+Core rules:
+- Prefer exploit modules when the target fit is direct and the objective is access
+- Use auxiliary modules for login checks, service validation, or evidence gathering when they still advance the path
+- Lower confidence in generic modules whose names only loosely resemble the target
+- If a prior attempt on the same path failed cleanly with no session, pivot unless new evidence has appeared
+- Treat CVE-aligned modules as strong candidates only when the CVE actually matches the discovered target
+
+Good patterns:
+- Exact product and version match
+- Service plus CVE match
+- HTTP findings that clearly align to a specific web module family
+
+Bad patterns:
+- Picking a module because it has many options
+- Choosing a generic module with weak target fit
+- Repeating nearly the same failed path with no new evidence
+
+Decision rule:
+Choose the module you can justify from evidence in one sentence.
+
+MSF OPTIONS:
+Use this skill to fill only the minimum justified module options before execution.
+
+What this skill is for:
+Use this skill when a Metasploit module has already been chosen and you need to decide which options to set before running it.
+
+When to use it:
+- After selecting a module that looks like a strong match
+- Before any `run_exploit` or `run_auxiliary_module` call
+- When deciding whether the current evidence is enough to execute safely
+
+How to choose options:
+- Start with the required options only
+- Fill values from CyberState, observed services, web findings, credentials, or explicit operator expectations
+- Add optional values only when they are clearly supported by evidence or needed to make the module work
+- If a value is uncertain, stop and gather more evidence instead of guessing
+
+Core rules:
+- Always fetch module options before execution
+- Set `RHOSTS` or `RHOST` from the selected target
+- Set `RPORT` from the observed open port when the module expects it
+- Set `TARGETURI`, `PATH`, or `URI` only when a real route or path was observed
+- Set credential fields only from discovered or operator-provided credentials
+- Set `SSL` or related protocol flags only when the service evidence supports them
+- Set callback fields like `LHOST` only when you have a real reachable listener configuration
+- Do not fill options just because they exist
+
+Guardrails:
+- Do not invent usernames, passwords, domains, vhosts, or paths
+- Do not guess callback values such as `LHOST`
+- Do not copy options from another module unless they are also valid for the current one
+- Do not set many optional knobs just to see if the module runs
+- If required values are missing, pause and gather evidence
+
+Good patterns:
+- Service shows `80/http` on `10.0.0.15` and findings include `/admin`
+  Good: set `RHOSTS=10.0.0.15`, `RPORT=80`, and `TARGETURI=/admin` only if the module supports it
+- Service shows `22/ssh` and credentials are already present
+  Good: set `RHOSTS`, `RPORT`, `USERNAME`, and `PASSWORD`
+- Reverse payload selected and no real listener info is available
+  Good: stop and obtain a valid `LHOST` first
+
+Bad patterns:
+- Setting `TARGETURI=/` only because many web modules use it
+- Setting `admin:admin` because no credentials were found
+- Setting `LHOST=127.0.0.1` or `localhost`
+- Filling every optional field to brute-force a module into running
+
+Decision rule:
+If you cannot explain where an option value came from, do not set it.
+
+MSF SESSION VERIFICATION:
+Use this skill after execution to confirm whether Metasploit actually opened a usable session.
+
+What this skill is for:
+Use this skill after running a Metasploit exploit or auxiliary module that may produce a session.
+
+When to use it:
+- After any exploit run that claims success
+- After any auxiliary flow that may create or reveal a session
+- Before updating state to say that access has been achieved
+
+How to verify:
+- Treat module output as provisional first
+- Check the reported `session_id` if one exists
+- Confirm it through `list_active_sessions`
+- Only then treat the run as a real success
+
+Core rules:
+- A reported `session_id` is not enough on its own
+- Verify the session through `list_active_sessions`
+- If no matching session is present, treat the run as a failure or unverified result
+- Record the attempt clearly whether it succeeded or failed
+- Pivot after an unverified no-session result instead of thrashing on the same path
+
+Good patterns:
+- Module reports `session_id=5` and `list_active_sessions` includes session `5`
+  Good: treat as success
+- Module output says success but no matching session appears
+  Good: treat as unverified and pivot
+
+Bad patterns:
+- Trusting console text alone
+- Claiming access without session confirmation
+- Repeating the same path because the output looked hopeful
+
+Decision rule:
+No confirmed session means no confirmed success.
+
+KALI WEB EXPLOIT:
+Use this skill to keep web exploitation focused on the observed attack surface.
+
+What this skill is for:
+Use this skill when the evidence points to a web application path and you need to choose a focused Kali step instead of a broad exploit sweep.
+
+When to use it:
+- When discovered services include HTTP or HTTPS
+- When web findings show interesting routes, login pages, admin panels, APIs, or forms
+- When research or operator context suggests SQL injection, WordPress, or a specific web workflow
+
+How to choose the next step:
+- Match the tool to the strongest web signal first
+- Prefer the smallest dedicated tool that directly matches the current hypothesis
+- Use exact URLs, forms, paths, and routes from findings
+- Widen only when the current evidence-backed step is exhausted
+
+Core rules:
+- Use `sqlmap_scan` for a credible SQL injection or injectable form hypothesis
+- Use `wpscan_analyze` for WordPress-specific surfaces
+- Use `execute_command` only for precise validation that the dedicated tools do not cover
+- Keep requests tied to observed paths instead of scanning the whole site aimlessly
+- Treat the current route or form as the unit of work, not the whole application
+
+Good patterns:
+- A login form or parameterized route with strong SQLi indicators
+  Good: run `sqlmap_scan` on that specific URL or form target
+- Clear WordPress indicators such as `wp-login`, `wp-content`, or plugin paths
+  Good: run `wpscan_analyze`
+- A single unusual API route that needs a narrow validation command
+  Good: use `execute_command` for one precise check
+
+Bad patterns:
+- Running broad commands against the whole host because it has port 80 open
+- Using `execute_command` before checking whether `sqlmap_scan` or `wpscan_analyze` already fits
+- Mixing several unrelated web ideas into one attempt
+
+Decision rule:
+If you cannot point to the exact route, form, or web feature you are validating, narrow the hypothesis before acting.
+
+KALI CREDENTIAL:
+Use this skill when the target exposes a service that supports credential validation or SMB enumeration.
+
+What this skill is for:
+Use this skill when the current target exposes SMB or another credential-facing service and you need to decide between evidence gathering and credential validation.
+
+When to use it:
+- When SMB is exposed
+- When SSH, FTP, Telnet, databases, or other login-oriented services are exposed
+- When credentials, usernames, or password hints already exist in state
+
+How to choose the next step:
+- Prefer evidence gathering before credential attacks when the service is still poorly understood
+- Use SMB enumeration first when SMB is present
+- Use Hydra only when the service, username source, and password hypothesis are already grounded in evidence
+- Prefer one service at a time rather than spraying across multiple protocols
+
+Core rules:
+- Prefer `enum4linux_scan` first for SMB-oriented evidence gathering
+- Use `hydra_attack` only when the target service is known and the input credentials are justified
+- Keep Hydra attempts bounded to the specific service under test
+- Use real credential inputs from CyberState, operator context, or clear prior findings
+- Treat credential validation as hypothesis testing, not guessing
+
+Good patterns:
+- SMB is open and no valid accounts are known
+  Good: start with `enum4linux_scan`
+- SSH is open and state already includes a username/password pair
+  Good: run `hydra_attack` against SSH with those exact creds
+- A small username list and one evidence-backed password candidate
+  Good: test only that bounded combination set
+
+Bad patterns:
+- Running Hydra with invented defaults like `admin/admin`
+- Brute-forcing multiple services at once because credentials might work somewhere
+- Skipping SMB enumeration and going straight to noisy guessing
+
+Decision rule:
+If the credential source is weak or unknown, gather more evidence before using Hydra.
+
+KALI AUTOMOTIVE:
+Use this skill when the mission references CAN, UDS, OBD, replay, or related automotive validation tasks.
+
+What this skill is for:
+Use this skill when the mission is about automotive protocol validation rather than ordinary host exploitation.
+
+When to use it:
+- When the context references CAN, UDS, OBD, replay, fuzzing, ECU interaction, or related terms
+- When OT discovery or prior findings suggest an automotive protocol workflow
+- When the right next step is a precise command rather than a standard Kali exploit tool
+
+How to choose the next step:
+- Start from one concrete protocol hypothesis
+- Prefer exact commands that validate or reproduce one expected behavior
+- Keep the action close to the observed bus, service, port, or tool context
+- Treat each command as a bounded experiment
+
+Core rules:
+- Prefer exact, evidence-backed commands over general shell exploration
+- Treat automotive protocol work as validation, not generic host exploitation
+- Use `execute_command` only for narrowly scoped checks that you can explain
+- Keep commands reversible and focused when possible
+- Avoid turning protocol validation into noisy host-level exploration
+
+Good patterns:
+- Validate one suspected CAN or UDS interaction with a single targeted command
+- Reproduce one replay or fuzzing hypothesis against the known interface in context
+- Confirm one observed port or automotive service with a minimal check
+
+Bad patterns:
+- Wandering through the shell because the environment feels unfamiliar
+- Running broad host reconnaissance when the task is protocol-specific
+- Combining several unrelated validation ideas into one command chain
+
+Decision rule:
+If the command is not tied to a specific protocol hypothesis, it is probably too broad.
+
+KALI VALIDATION:
+Use this skill to keep the next Kali step focused and hypothesis-driven.
+
+What this skill is for:
+Use this skill whenever you are deciding whether to continue, pivot, or stop after a Kali-driven attempt.
+
+When to use it:
+- After any Kali tool run
+- When the prior attempt failed or produced weak output
+- When several possible next steps exist and you need to avoid flailing
+
+How to decide what happens next:
+- Prefer one strong validation action over several weak exploratory actions
+- Ask whether the previous attempt produced new evidence
+- Pivot when the path failed cleanly and did not improve understanding
+- Continue only when the next step is clearly justified by what you just learned
+
+Core rules:
+- Avoid repeating a failed tool path without materially new evidence
+- Prefer bounded follow-up over broad escalation
+- Use the smallest next action that answers the current question
+- Treat uncertainty as a reason to narrow the hypothesis, not broaden the activity
+- Stop when the current tool family is no longer a good fit
+
+Good patterns:
+- A failed SQLi check leads to a pivot toward a different web hypothesis
+- SMB enumeration produces usernames, then credential validation follows
+- A precise command confirms or rejects one automotive assumption before moving on
+
+Bad patterns:
+- Re-running the same command with cosmetic tweaks and no new evidence
+- Switching tools repeatedly without a clear reason
+- Expanding the scope because the 
+[STEP] Invoking striker_node with assembled live evidence
+[TRACE] TOOL_START: {"id": 4, "tool": "msf_list_exploits", "args": {"search_term": "werkzeug"}}
+[TRACE] TOOL_END: {"id": 4, "tool": "msf_list_exploits", "status": "ok", "elapsed_s": 6.393}
+[TRACE] TOOL_RESULT[4]:
+[
+  "multi/http/werkzeug_debug_rce"
+]
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+WARNING:  database "vtsaiber" has a collation version mismatch
+DETAIL:  The database was created using collation version 2.41, but the operating system provides version 2.36.
+HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE vtsaiber REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
+[STEP] Striker run completed; returning validation payload
+an error occurred during closing of asynchronous generator <async_generator object sse_client at 0x753fd8aa7c40>
+asyncgen: <async_generator object sse_client at 0x753fd8aa7c40>
+  + Exception Group Traceback (most recent call last):
+  |   File "/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 799, in __aexit__
+  |     raise BaseExceptionGroup(
+  | BaseExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/usr/local/lib/python3.11/site-packages/mcp/client/sse.py", line 159, in sse_client
+    |     yield read_stream, write_stream
+    | GeneratorExit
+    +------------------------------------
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/mcp/client/sse.py", line 63, in sse_client
+    async with anyio.create_task_group() as tg:
+  File "/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 805, in __aexit__
+    if self.cancel_scope.__exit__(type(exc), exc, exc.__traceback__):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 455, in __exit__
+    raise RuntimeError(
+RuntimeError: Attempted to exit cancel scope in a different task than it was entered in
+an error occurred during closing of asynchronous generator <async_generator object sse_client at 0x753fd888e440>
+asyncgen: <async_generator object sse_client at 0x753fd888e440>
+  + Exception Group Traceback (most recent call last):
+  |   File "/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 799, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/usr/local/lib/python3.11/site-packages/mcp/client/sse.py", line 159, in sse_client
+    |     yield read_stream, write_stream
+    | GeneratorExit
+    | 
+    | During handling of the above exception, another exception occurred:
+    | 
+    | Traceback (most recent call last):
+    |   File "/usr/local/lib/python3.11/site-packages/mcp/client/sse.py", line 69, in sse_client
+    |     async with aconnect_sse(
+    |   File "/usr/local/lib/python3.11/contextlib.py", line 267, in __aexit__
+    |     raise RuntimeError("generator didn't stop after athrow()")
+    | RuntimeError: generator didn't stop after athrow()
+    +------------------------------------
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/mcp/client/sse.py", line 63, in sse_client
+    async with anyio.create_task_group() as tg:
+  File "/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 805, in __aexit__
+    if self.cancel_scope.__exit__(type(exc), exc, exc.__traceback__):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 455, in __exit__
+    raise RuntimeError(
+RuntimeError: Attempted to exit cancel scope in a different task than it was entered in
+[STEP] Validating live striker result
+[FAIL] Live run should produce findings or an execution record

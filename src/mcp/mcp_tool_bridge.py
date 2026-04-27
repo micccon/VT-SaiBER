@@ -4,6 +4,7 @@ MCP to LangGraph Bridge
 Connects to MCP servers via SSE and exposes tools to LangGraph agents.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -29,6 +30,8 @@ class MCPToolBridge:
         self.exit_stack = AsyncExitStack()
         self.all_tools: List[StructuredTool] = []
         self.tools_by_server: Dict[str, List[StructuredTool]] = {}
+        self.owner_loop: asyncio.AbstractEventLoop | None = None
+        self.closed = False
     
     async def connect_server(self, name: str, url: str):
         """
@@ -295,8 +298,17 @@ class MCPToolBridge:
     
     async def disconnect(self):
         """Disconnect from all MCP servers."""
-        await self.exit_stack.aclose()
-        logger.info("Disconnected from all MCP servers")
+        if self.closed:
+            return
+
+        try:
+            await self.exit_stack.aclose()
+        finally:
+            self.sessions.clear()
+            self.all_tools.clear()
+            self.tools_by_server.clear()
+            self.closed = True
+            logger.info("Disconnected from all MCP servers")
 
 
 # Global bridge instance
@@ -305,8 +317,17 @@ _bridge = None
 async def get_mcp_bridge() -> MCPToolBridge:
     """Get or create the global MCP bridge."""
     global _bridge
+    current_loop = asyncio.get_running_loop()
+    if _bridge is not None:
+        if getattr(_bridge, "closed", False):
+            _bridge = None
+        elif getattr(_bridge, "owner_loop", None) is not current_loop:
+            logger.warning("Discarding stale MCP bridge bound to a different event loop")
+            _bridge = None
+
     if _bridge is None:
         _bridge = MCPToolBridge()
+        _bridge.owner_loop = current_loop
         
         # Get URLs from environment
         kali_url = os.getenv("KALI_MCP_URL", "http://kali-mcp:5001")
@@ -317,3 +338,17 @@ async def get_mcp_bridge() -> MCPToolBridge:
         await _bridge.connect_server("msf", msf_url)
     
     return _bridge
+
+
+async def reset_mcp_bridge() -> None:
+    """Close and clear the global MCP bridge on the current event loop."""
+    global _bridge
+    bridge = _bridge
+    _bridge = None
+    if bridge is None:
+        return
+
+    try:
+        await bridge.disconnect()
+    except Exception as exc:
+        logger.warning("Error while resetting MCP bridge: %s", exc)

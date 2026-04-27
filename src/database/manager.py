@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from pathlib import Path
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from pgvector.psycopg2 import register_vector
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 PERFORMANCE_INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS targets_mission_ip_idx ON targets (mission_id, ip_address);",
@@ -41,8 +43,42 @@ def _get_db_settings() -> Dict[str, str]:
     }
 
 
+def _ensure_vector_extension(conn) -> None:
+    try:
+        with conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _schema_is_initialized(conn) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.targets');")
+        row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _bootstrap_schema_if_needed(conn) -> None:
+    if _schema_is_initialized(conn):
+        return
+
+    schema_sql = SCHEMA_PATH.read_text()
+    logger.warning("Database schema missing; bootstrapping from %s", SCHEMA_PATH)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(schema_sql)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def get_connection():
     conn = psycopg2.connect(**_get_db_settings())
+    _ensure_vector_extension(conn)
+    _bootstrap_schema_if_needed(conn)
     register_vector(conn)
     return conn
 

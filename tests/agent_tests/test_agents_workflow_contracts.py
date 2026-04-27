@@ -15,6 +15,7 @@ Run all tests including live LLM:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import src.agents.striker as striker_mod
 from src.agents.fuzzer import FuzzerAgent
 from src.agents.librarian import LibrarianAgent, librarian_node
 from src.agents.resident import _extract_resident_updates, resident_node
@@ -275,6 +277,116 @@ def test_resident_returns_error_when_no_sessions():
     out = _run(resident_node(state))
     assert out.get("errors"), "resident must return errors when active_sessions is empty"
     assert out["errors"][0].error_type == "ValidationError"
+
+
+def test_striker_prefers_striker_specific_model_and_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "shared-key")
+    monkeypatch.setenv("STRIKER_API_KEY", "striker-key")
+    monkeypatch.setenv("SUPERVISOR_MODEL", "shared-model")
+    monkeypatch.setenv("STRIKER_MODEL", "striker-model")
+    get_runtime_config.cache_clear()
+
+    captured: Dict[str, Any] = {}
+
+    def fake_build_chat_openai(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(striker_mod, "build_chat_openai", fake_build_chat_openai)
+    agent = striker_mod.StrikerAgent()
+
+    assert agent._llm is not None
+    assert captured["api_key"] == "striker-key"
+    assert captured["model"] == "striker-model"
+    assert captured["base_url"] == get_runtime_config().openrouter_base_url
+    get_runtime_config.cache_clear()
+
+
+def test_striker_falls_back_to_shared_model_and_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "shared-key")
+    monkeypatch.delenv("STRIKER_API_KEY", raising=False)
+    monkeypatch.setenv("SUPERVISOR_MODEL", "shared-model")
+    monkeypatch.delenv("STRIKER_MODEL", raising=False)
+    get_runtime_config.cache_clear()
+
+    captured: Dict[str, Any] = {}
+
+    def fake_build_chat_openai(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(striker_mod, "build_chat_openai", fake_build_chat_openai)
+    agent = striker_mod.StrikerAgent()
+
+    assert agent._llm is not None
+    assert captured["api_key"] == "shared-key"
+    assert captured["model"] == "shared-model"
+    get_runtime_config.cache_clear()
+
+
+def test_striker_search_only_run_still_records_findings():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "services": {"80": {"service_name": "http", "version": "Werkzeug 3.1.8"}}
+        }
+    }
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nSKILL GUIDANCE:\nfoo"
+    messages = [
+        ToolMessage(
+            tool_call_id="c1",
+            name="msf_list_exploits",
+            content=json.dumps(
+                {
+                    "status": "success",
+                    "result": ["multi/http/werkzeug_debug_rce"],
+                    "invocation": {"search_term": "werkzeug"},
+                }
+            ),
+        ),
+    ]
+
+    out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
+    log_entry = out["agent_log"][0].model_dump()
+
+    assert log_entry["findings"]["status"] == "no_candidate"
+    assert log_entry["findings"]["candidate_modules"] == ["multi/http/werkzeug_debug_rce"]
+    assert log_entry["findings"]["search_terms"] == ["werkzeug"]
+    assert log_entry["findings"]["skill_guidance"] is True
+    assert "SKILL GUIDANCE:" in log_entry["reasoning"]
+
+
+def test_striker_aborted_execution_records_selected_module():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "services": {"80": {"service_name": "http", "version": "Werkzeug 3.1.8"}}
+        }
+    }
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nSKILL GUIDANCE:\nfoo"
+    messages = [
+        ToolMessage(
+            tool_call_id="c1",
+            name="msf_run_exploit",
+            content=json.dumps(
+                {
+                    "status": "aborted",
+                    "message": "Execution blocked pending manual approval.",
+                    "invocation": {
+                        "module_name": "multi/http/werkzeug_debug_rce",
+                        "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
+                    },
+                }
+            ),
+        ),
+    ]
+
+    out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
+    log_entry = out["agent_log"][0].model_dump()
+
+    assert log_entry["findings"]["status"] == "aborted"
+    assert log_entry["findings"]["module"] == "multi/http/werkzeug_debug_rce"
+    assert "Execution blocked pending manual approval." in log_entry["reasoning"]
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,4 @@
-"""
-Striker Agent - Metasploit-focused exploitation worker.
-"""
+"""Unified Striker Agent - React exploitation worker for Metasploit and Kali."""
 
 from __future__ import annotations
 
@@ -9,6 +7,7 @@ import ipaddress
 import inspect
 import json
 import os
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -17,17 +16,14 @@ from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import create_react_agent
 
 from src.agents.base import BaseAgent
+from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
 from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.state.cyber_state import CyberState
-from src.state.models import AgentError, AgentLogEntry
+from src.skills.skills import build_skills
 from src.utils.approval import require_manual_approval
+from src.utils.llm import build_chat_openai, extract_text_content
 from src.utils.parsers import metasploit_module_key, normalize_tool_result
-
-try:
-    from langchain_openai import ChatOpenAI
-except Exception:  # pragma: no cover - optional dependency path
-    ChatOpenAI = None
 
 
 STRIKER_ALLOWED_TOOLS = {
@@ -37,6 +33,11 @@ STRIKER_ALLOWED_TOOLS = {
     "run_exploit",
     "run_auxiliary_module",
     "list_active_sessions",
+    "sqlmap_scan",
+    "hydra_attack",
+    "enum4linux_scan",
+    "wpscan_analyze",
+    "execute_command",
 }
 
 STRIKER_REQUIRE_CONFIRMATION = os.getenv("STRIKER_REQUIRE_CONFIRMATION", "true").lower() == "true"
@@ -44,6 +45,31 @@ MAX_EXPLOIT_ATTEMPTS = int(os.getenv("STRIKER_MAX_EXPLOIT_ATTEMPTS", "3"))
 MAX_SEARCH_CALLS = int(os.getenv("STRIKER_MAX_SEARCH_CALLS", "6"))
 EXECUTION_TOOL_NAMES = {"msf_run_exploit", "msf_run_auxiliary_module"}
 SEARCH_TOOL_NAMES = {"msf_list_exploits"}
+KALI_TOOL_NAMES = {
+    "kali_sqlmap_scan",
+    "kali_hydra_attack",
+    "kali_enum4linux_scan",
+    "kali_wpscan_analyze",
+    "kali_execute_command",
+}
+KALI_APPROVAL_TOOLS = {
+    "kali_sqlmap_scan",
+    "kali_hydra_attack",
+    "kali_execute_command",
+}
+STRIKER_SKILL_PATHS = [
+    "striker/metasploit_usage.md",
+    "striker/kali_usage.md",
+    "metasploit/msf_search.md",
+    "metasploit/msf_module_selection.md",
+    "metasploit/msf_options.md",
+    "metasploit/msf_session_verification.md",
+    "kali/kali_web_exploit.md",
+    "kali/kali_credential.md",
+    "kali/kali_automotive.md",
+    "kali/kali_validation.md",
+    "kali/kali_tool_selection.md",
+]
 
 CREDENTIAL_MODULES = {
     "scanner/ssh/ssh_login",
@@ -73,27 +99,15 @@ METASPLOIT_DEFAULT_SERVICES = {
 }
 
 
-def _build_llm():
-    provider = os.getenv("LLM_CLIENT", "openrouter").strip().lower()
-    if provider != "openrouter":
-        raise RuntimeError(
-            f"Unsupported LLM_CLIENT='{provider}'. "
-            "Current VT-SaiBER config supports openrouter only."
-        )
-    if ChatOpenAI is None:
-        raise RuntimeError("langchain-openai is not installed")
-
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is required when LLM_CLIENT=openrouter")
-
-    return ChatOpenAI(
-        model=os.getenv("LLM_MODEL"),
-        api_key=api_key,
-        base_url="https://openrouter.ai/api/v1",
-        temperature=0,
-    )
-
+@dataclass
+class ToolGuardState:
+    seen_options: set[str] = field(default_factory=set)
+    module_valid_options: dict[str, set[str]] = field(default_factory=dict)
+    seen_searches: set[str] = field(default_factory=set)
+    failed_execution_retry_keys: set[tuple[str, str, str]] = field(default_factory=set)
+    failed_service_ports: set[tuple[str, int]] = field(default_factory=set)
+    search_count: int = 0
+    execution_attempts: int = 0
 
 def _create_react_agent_with_prompt(model, tools, system_prompt: str):
     """
@@ -196,6 +210,22 @@ def _normalize_option_map(raw: Any) -> Dict[str, Any]:
     return options
 
 
+def _decode_tool_payload(raw: Any) -> Any:
+    if isinstance(raw, (dict, list)):
+        return raw
+    if not isinstance(raw, str):
+        return raw
+
+    candidate = raw.strip()
+    if not candidate:
+        return {}
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return raw
+
+
 def _is_invalid_callback_host(value: str) -> bool:
     host = str(value or "").strip().lower()
     if not host or host == "localhost":
@@ -210,20 +240,36 @@ def _is_invalid_callback_host(value: str) -> bool:
 
 
 class StrikerAgent(BaseAgent):
-    """Thin Metasploit-focused ReAct worker."""
+    """Unified ReAct exploitation worker."""
 
     ALLOWED_TOOLS = STRIKER_ALLOWED_TOOLS
 
     def __init__(self):
-        super().__init__("striker", "Metasploit Agent")
+        super().__init__("striker", "Unified Exploitation Agent")
+        self.config = get_runtime_config()
+        self._llm = None
+        self._llm_error: Optional[str] = None
         self.require_confirmation = STRIKER_REQUIRE_CONFIRMATION
         self.max_attempts = MAX_EXPLOIT_ATTEMPTS
+        for skill in build_skills(STRIKER_SKILL_PATHS):
+            self.register_skill(skill)
+        try:
+            self._llm = build_chat_openai(
+                model=self.config.striker_model or self.config.supervisor_model,
+                api_key=self.config.striker_api_key or self.config.openrouter_api_key,
+                base_url=self.config.openrouter_base_url,
+                timeout_seconds=self.config.supervisor_timeout_seconds,
+            )
+        except Exception as exc:
+            self._llm_error = str(exc)
 
     @property
     def system_prompt(self) -> str:
-        return f"""You are the VT-SaiBER Metasploit exploitation specialist.
+        return f"""You are the VT-SaiBER striker exploitation specialist.
 
-Use only Metasploit MCP tools:
+Use only the available MCP tools from these two families.
+
+Metasploit tools:
 - list_exploits(search_term)
 - get_module_info(module_type, module_name)
 - get_module_options(module_type, module_name, search, advanced)
@@ -231,17 +277,24 @@ Use only Metasploit MCP tools:
 - run_auxiliary_module(module_name, options, ...)
 - list_active_sessions()
 
+Kali tools:
+- sqlmap_scan(url, data, additional_args)
+- hydra_attack(target, service, username, username_file, password, password_file, additional_args)
+- enum4linux_scan(target, additional_args)
+- wpscan_analyze(url, additional_args)
+- execute_command(command)
+
 Core Rules:
 1. Work only from the provided mission context and discovered evidence.
-2. Stay Metasploit-only. Do not invent Kali, shell, CAN, or fuzzing actions.
-3. Use the ranked candidate paths as guidance, not as a rigid playbook.
-4. Search with narrow evidence-based terms derived from the target technology, service, protocol, version, platform, or CVE.
-5. Treat exploit search as a precision step, not a brainstorming step.
-6. Match the Metasploit module family to the task: exploit modules for exploitation paths, auxiliary modules for scanning, login checks, credential validation, and service interrogation.
-7. get_module_info is encouraged when choosing between candidate modules, payloads, and execution approaches.
+2. Use the markdown skill guidance as doctrine for choosing the next path.
+3. Prefer one strong path at a time. Do not bounce between unrelated weak ideas.
+4. Use Metasploit for module-driven exploitation, auxiliary validation, and session-oriented execution.
+5. Use Kali for focused web exploitation, credential validation, SMB enumeration, WordPress analysis, or precise command-based validation.
+6. Search with narrow evidence-based terms derived from the target technology, service, protocol, version, platform, or CVE.
+7. Treat exploit search and tool execution as precision steps, not brainstorming.
 8. Reverse payloads require a reachable non-loopback LHOST. Never use 127.0.0.1, localhost, or 0.0.0.0.
-9. After each execution attempt, check list_active_sessions to verify outcome.
-10. Maximum execution attempts per run: {self.max_attempts}.
+9. After each Metasploit execution attempt, check list_active_sessions to verify outcome.
+10. Maximum Metasploit execution attempts per run: {self.max_attempts}.
 
 Path Selection Rules:
 - Favor the strongest evidence-backed path over the path with the most tunable options.
@@ -261,7 +314,7 @@ Failure Handling Rules:
 - Prefer changing the path, module family, or evidence basis over making lightly edited retries.
 - Do not retry the same exploit path with lightly edited guessed options after a no-session failure.
 
-Finish with a concise summary of what was attempted, why each path was chosen, and whether a session was opened.
+Finish with a concise summary of what was attempted, why each path was chosen, and whether access or validation succeeded.
 """
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
@@ -269,36 +322,77 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         if validation_error is not None:
             return validation_error
 
-        bridge = await get_mcp_bridge()
-        tools = bridge.get_tools_for_agent(self.ALLOWED_TOOLS)
+        try:
+            bridge = await get_mcp_bridge()
+            tools = bridge.get_tools_for_agent(self.ALLOWED_TOOLS)
+        except Exception as exc:
+            return self._error_update(
+                state,
+                error_type="ToolError",
+                message=f"Striker MCP bridge unavailable: {exc}",
+                recoverable=False,
+            )
+
         if not tools:
             return self._error_update(
                 state,
                 error_type="ToolError",
-                message="No Metasploit tools available from MCP bridge.",
+                message="No striker tools available from MCP bridge.",
                 recoverable=False,
             )
 
         wrapped_tools = self._wrap_tools(tools)
 
-        try:
-            llm = _build_llm()
-        except Exception as exc:
+        if self._llm is None:
             return self._error_update(
                 state,
                 error_type="LLMConfigError",
-                message=str(exc),
+                message=self._llm_error or "STRIKER_API_KEY or OPENROUTER_API_KEY is not configured.",
                 recoverable=False,
             )
 
         context = self._build_context(state)
-        agent = _create_react_agent_with_prompt(
-            model=llm,
-            tools=wrapped_tools,
-            system_prompt=self.system_prompt,
-        )
-        result = await agent.ainvoke({"messages": [("human", context)]})
-        return self._extract_updates(result.get("messages", []), state)
+        try:
+            agent = _create_react_agent_with_prompt(
+                model=self._llm,
+                tools=wrapped_tools,
+                system_prompt=self.system_prompt,
+            )
+            result = await agent.ainvoke({"messages": [("human", context)]})
+        except Exception as exc:
+            return self._error_update(
+                state,
+                error_type="LLMError",
+                message=f"Striker LLM/tool loop failed: {exc}",
+                recoverable=False,
+            )
+
+        if not isinstance(result, dict):
+            return self._error_update(
+                state,
+                error_type="LLMOutputError",
+                message=f"Striker LLM returned an unexpected payload type: {type(result).__name__}",
+                recoverable=False,
+            )
+
+        messages = result.get("messages", [])
+        if not isinstance(messages, list) or not messages:
+            return self._error_update(
+                state,
+                error_type="LLMOutputError",
+                message="Striker LLM returned no messages to interpret.",
+                recoverable=False,
+            )
+
+        try:
+            return self._extract_updates(messages, state, context)
+        except Exception as exc:
+            return self._error_update(
+                state,
+                error_type="ResultParsingError",
+                message=f"Failed to interpret striker result: {exc}",
+                recoverable=False,
+            )
 
     def _validate_state(self, state: CyberState) -> Optional[Dict[str, Any]]:
         discovered_targets = state.get("discovered_targets", {}) or {}
@@ -308,7 +402,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         return self._error_update(
             state,
             error_type="ValidationError",
-            message="No discovered targets available for Metasploit exploitation.",
+            message="No discovered targets available for striker exploitation.",
             recoverable=True,
         )
 
@@ -345,173 +439,273 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
 
         return None
 
+    def _guard_search_budget(
+        self,
+        tool_name: str,
+        call_kwargs: Dict[str, Any],
+        guard: ToolGuardState,
+    ) -> Optional[str]:
+        if tool_name not in SEARCH_TOOL_NAMES:
+            return None
+
+        search_term = str(call_kwargs.get("search_term", "")).strip().lower()
+        if search_term in guard.seen_searches:
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "message": f"Already searched '{search_term}'. Use existing results or pivot to a different service/port.",
+                }
+            )
+
+        if guard.search_count >= MAX_SEARCH_CALLS:
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "message": f"Search budget exceeded ({MAX_SEARCH_CALLS}). Act on available intel or conclude.",
+                }
+            )
+
+        guard.seen_searches.add(search_term)
+        guard.search_count += 1
+        return None
+
+    def _guard_kali_execution(
+        self,
+        tool_name: str,
+        call_kwargs: Dict[str, Any],
+    ) -> Optional[str]:
+        if tool_name not in KALI_APPROVAL_TOOLS:
+            return None
+
+        target = str(
+            call_kwargs.get("target")
+            or call_kwargs.get("url")
+            or call_kwargs.get("command")
+            or "unknown"
+        )
+        module_name = str(
+            call_kwargs.get("service")
+            or call_kwargs.get("command")
+            or call_kwargs.get("additional_args")
+            or ""
+        )
+        approved = require_manual_approval(
+            tool_name=tool_name,
+            module_name=module_name,
+            target=target,
+            enabled=self.require_confirmation,
+        )
+        if approved:
+            return None
+
+        return json.dumps(
+            {
+                "status": "aborted",
+                "message": "Execution blocked pending manual approval.",
+                "tool": tool_name,
+            }
+        )
+
+    def _remember_module_options(
+        self,
+        call_kwargs: Dict[str, Any],
+        response: Any,
+        guard: ToolGuardState,
+    ) -> None:
+        result = normalize_tool_result(response)
+        module_key = metasploit_module_key(
+            call_kwargs.get("module_type"),
+            call_kwargs.get("module_name"),
+        )
+        if not module_key or result.get("status") != "success":
+            return
+
+        guard.seen_options.add(module_key)
+        options_list = result.get("options", [])
+        valid_names = {
+            opt["name"] for opt in options_list if isinstance(opt, dict) and "name" in opt
+        }
+        if valid_names:
+            guard.module_valid_options[module_key] = valid_names
+
+    def _guard_msf_execution(
+        self,
+        tool_name: str,
+        call_kwargs: Dict[str, Any],
+        guard: ToolGuardState,
+    ) -> Optional[str]:
+        if tool_name not in EXECUTION_TOOL_NAMES:
+            return None
+
+        module_type = "exploit" if tool_name == "msf_run_exploit" else "auxiliary"
+        module_key = metasploit_module_key(module_type, call_kwargs.get("module_name"))
+        if module_key not in guard.seen_options:
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "message": "Call msf_get_module_options before execution.",
+                    "module_key": module_key,
+                }
+            )
+
+        validation_error = self._validate_execution_request(tool_name, call_kwargs)
+        if validation_error is not None:
+            return json.dumps(validation_error)
+
+        options = call_kwargs.get("options", {}) if isinstance(call_kwargs.get("options"), dict) else {}
+        exec_target = str(options.get("RHOSTS") or options.get("RHOST") or "").strip().lower()
+        exec_port = int(options.get("RPORT", 0) or 0)
+        if exec_target and exec_port and (exec_target, exec_port) in guard.failed_service_ports:
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "message": f"An exploit already failed on {exec_target}:{exec_port}. Pivot to a different service/port.",
+                }
+            )
+
+        valid_options = guard.module_valid_options.get(module_key, set())
+        if valid_options and options:
+            invalid_options = set(options) - valid_options
+            if invalid_options:
+                return json.dumps(
+                    {
+                        "status": "blocked",
+                        "message": f"Unknown options: {sorted(invalid_options)}. Check msf_get_module_options output for valid options.",
+                        "valid_options_sample": sorted(list(valid_options))[:10],
+                    }
+                )
+
+        execution_retry_key = _execution_retry_key(tool_name, call_kwargs)
+        if execution_retry_key in guard.failed_execution_retry_keys:
+            module_label = "exploit" if tool_name == "msf_run_exploit" else "auxiliary module"
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "message": f"This {module_label} already failed against this target in the current run. Pivot to a different path or gather new evidence first.",
+                    "signature": list(_execution_signature(tool_name, call_kwargs)),
+                }
+            )
+
+        if guard.execution_attempts >= self.max_attempts:
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "message": f"Execution attempt budget exceeded ({self.max_attempts}).",
+                }
+            )
+
+        target = _extract_target_from_execution_args(call_kwargs)
+        approved = require_manual_approval(
+            tool_name=tool_name,
+            module_name=str(call_kwargs.get("module_name", "")),
+            target=target,
+            enabled=self.require_confirmation,
+        )
+        if not approved:
+            return json.dumps(
+                {
+                    "status": "aborted",
+                    "message": "Execution blocked pending manual approval.",
+                    "tool": tool_name,
+                }
+            )
+
+        guard.execution_attempts += 1
+        return None
+
+    def _record_msf_execution_result(
+        self,
+        tool_name: str,
+        call_kwargs: Dict[str, Any],
+        response: Any,
+        guard: ToolGuardState,
+    ) -> None:
+        if tool_name not in EXECUTION_TOOL_NAMES:
+            return
+
+        result = normalize_tool_result(response)
+        if tool_name == "msf_run_exploit":
+            is_failure = (
+                result.get("status") == "error"
+                and not result.get("session_id")
+                and not result.get("session_id_detected")
+            )
+        else:
+            module_output = str(result.get("module_output", "") or "")
+            is_failure = (
+                result.get("status") == "error"
+                or (
+                    not result.get("session_id")
+                    and not result.get("session_id_detected")
+                    and "Error:" in module_output
+                )
+            )
+
+        if not is_failure:
+            return
+
+        guard.failed_execution_retry_keys.add(_execution_retry_key(tool_name, call_kwargs))
+        options = call_kwargs.get("options", {}) if isinstance(call_kwargs.get("options"), dict) else {}
+        target = str(options.get("RHOSTS") or options.get("RHOST") or "").strip().lower()
+        port = int(options.get("RPORT", 0) or 0)
+        if target and port:
+            guard.failed_service_ports.add((target, port))
+
+    def _normalize_tool_response(self, tool_name: str, response: Any, call_kwargs: Dict[str, Any]) -> Any:
+        result = normalize_tool_result(response)
+        if not result:
+            payload = _decode_tool_payload(response)
+            if isinstance(payload, list):
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "result": payload,
+                        "invocation": call_kwargs,
+                    }
+                )
+            if isinstance(payload, str):
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "output": payload,
+                        "tool": tool_name,
+                        "invocation": call_kwargs,
+                    }
+                )
+            return response
+        result.setdefault("invocation", call_kwargs)
+        return json.dumps(result)
+
     def _wrap_tools(self, tools: List[StructuredTool]) -> List[StructuredTool]:
-        seen_options: set[str] = set()
-        failed_execution_signatures: set[tuple[str, str, str, str]] = set()
-        failed_execution_retry_keys: set[tuple[str, str, str]] = set()
-        failed_service_ports: set[tuple[str, int]] = set()
-        module_valid_options: dict[str, set[str]] = {}
-        seen_searches: set[str] = set()
-        search_count = 0
-        execution_attempts = 0
+        guard = ToolGuardState()
         wrapped_tools: List[StructuredTool] = []
 
         for tool in tools:
             original_tool = tool
 
             async def guarded_coroutine(_tool=original_tool, **kwargs):
-                nonlocal execution_attempts, search_count
                 call_kwargs = dict(kwargs or {})
 
-                # Fix #1: Search loop detection
-                if _tool.name in SEARCH_TOOL_NAMES:
-                    search_term = str(call_kwargs.get("search_term", "")).strip().lower()
+                blocked = self._guard_search_budget(_tool.name, call_kwargs, guard)
+                if blocked is not None:
+                    return self._normalize_tool_response(_tool.name, blocked, call_kwargs)
 
-                    if search_term in seen_searches:
-                        return json.dumps({
-                            "status": "blocked",
-                            "message": f"Already searched '{search_term}'. Use existing results or pivot to a different service/port.",
-                        })
-
-                    if search_count >= MAX_SEARCH_CALLS:
-                        return json.dumps({
-                            "status": "blocked",
-                            "message": f"Search budget exceeded ({MAX_SEARCH_CALLS}). Act on available intel or conclude.",
-                        })
-
-                    seen_searches.add(search_term)
-                    search_count += 1
+                blocked = self._guard_kali_execution(_tool.name, call_kwargs)
+                if blocked is not None:
+                    return self._normalize_tool_response(_tool.name, blocked, call_kwargs)
 
                 if _tool.name == "msf_get_module_options":
                     response = await _invoke_tool(_tool, call_kwargs)
-                    result = normalize_tool_result(response)
-                    module_key = metasploit_module_key(
-                        call_kwargs.get("module_type"),
-                        call_kwargs.get("module_name"),
-                    )
-                    if module_key and result.get("status") == "success":
-                        seen_options.add(module_key)
-                        # Fix #4: Cache valid option names for later validation
-                        options_list = result.get("options", [])
-                        valid_names = {
-                            opt["name"] for opt in options_list
-                            if isinstance(opt, dict) and "name" in opt
-                        }
-                        if valid_names:
-                            module_valid_options[module_key] = valid_names
-                    return response
+                    self._remember_module_options(call_kwargs, response, guard)
+                    return self._normalize_tool_response(_tool.name, response, call_kwargs)
 
-                if _tool.name in EXECUTION_TOOL_NAMES:
-                    module_type = "exploit" if _tool.name == "msf_run_exploit" else "auxiliary"
-                    module_key = metasploit_module_key(module_type, call_kwargs.get("module_name"))
-                    if module_key not in seen_options:
-                        return json.dumps(
-                            {
-                                "status": "blocked",
-                                "message": "Call msf_get_module_options before execution.",
-                                "module_key": module_key,
-                            }
-                        )
-
-                    validation_error = self._validate_execution_request(_tool.name, call_kwargs)
-                    if validation_error is not None:
-                        return json.dumps(validation_error)
-
-                    # Fix #2: Service-level pivot enforcement
-                    options = call_kwargs.get("options", {}) if isinstance(call_kwargs.get("options"), dict) else {}
-                    exec_target = str(options.get("RHOSTS") or options.get("RHOST") or "").strip().lower()
-                    exec_port = int(options.get("RPORT", 0) or 0)
-                    if exec_target and exec_port and (exec_target, exec_port) in failed_service_ports:
-                        return json.dumps({
-                            "status": "blocked",
-                            "message": f"An exploit already failed on {exec_target}:{exec_port}. Pivot to a different service/port.",
-                        })
-
-                    # Fix #4: Option validation against cached valid options
-                    valid_options = module_valid_options.get(module_key, set())
-                    if valid_options and options:
-                        provided_options = set(options.keys())
-                        invalid_options = provided_options - valid_options
-                        if invalid_options:
-                            return json.dumps({
-                                "status": "blocked",
-                                "message": f"Unknown options: {sorted(invalid_options)}. Check msf_get_module_options output for valid options.",
-                                "valid_options_sample": sorted(list(valid_options))[:10],
-                            })
-
-                    execution_signature = _execution_signature(_tool.name, call_kwargs)
-                    execution_retry_key = _execution_retry_key(_tool.name, call_kwargs)
-                    if execution_retry_key in failed_execution_retry_keys:
-                        module_type = "exploit" if _tool.name == "msf_run_exploit" else "auxiliary module"
-                        return json.dumps(
-                            {
-                                "status": "blocked",
-                                "message": f"This {module_type} already failed against this target in the current run. Pivot to a different path or gather new evidence first.",
-                                "signature": list(execution_signature),
-                            }
-                        )
-
-                    if execution_attempts >= self.max_attempts:
-                        return json.dumps(
-                            {
-                                "status": "blocked",
-                                "message": f"Execution attempt budget exceeded ({self.max_attempts}).",
-                            }
-                        )
-
-                    target = _extract_target_from_execution_args(call_kwargs)
-                    approved = require_manual_approval(
-                        tool_name=_tool.name,
-                        module_name=str(call_kwargs.get("module_name", "")),
-                        target=target,
-                        enabled=self.require_confirmation,
-                    )
-                    if not approved:
-                        return json.dumps(
-                            {
-                                "status": "aborted",
-                                "message": "Execution blocked pending manual approval.",
-                                "tool": _tool.name,
-                            }
-                        )
-
-                    execution_attempts += 1
+                blocked = self._guard_msf_execution(_tool.name, call_kwargs, guard)
+                if blocked is not None:
+                    return self._normalize_tool_response(_tool.name, blocked, call_kwargs)
 
                 response = await _invoke_tool(_tool, call_kwargs)
-
-                # Track failures for both exploit and auxiliary modules
-                if _tool.name in EXECUTION_TOOL_NAMES:
-                    result = normalize_tool_result(response)
-                    is_failure = False
-
-                    if _tool.name == "msf_run_exploit":
-                        is_failure = (
-                            result.get("status") == "error"
-                            and not result.get("session_id")
-                            and not result.get("session_id_detected")
-                        )
-                    elif _tool.name == "msf_run_auxiliary_module":
-                        # Auxiliary modules fail if error status or no session created
-                        module_output = str(result.get("module_output", "") or "")
-                        is_failure = (
-                            result.get("status") == "error"
-                            or not result.get("session_id")
-                            and not result.get("session_id_detected")
-                            and "Error:" in module_output
-                        )
-
-                    if is_failure:
-                        failed_execution_signatures.add(_execution_signature(_tool.name, call_kwargs))
-                        failed_execution_retry_keys.add(_execution_retry_key(_tool.name, call_kwargs))
-
-                        # Track failed service/port for pivot enforcement
-                        fail_options = call_kwargs.get("options", {}) if isinstance(call_kwargs.get("options"), dict) else {}
-                        fail_target = str(fail_options.get("RHOSTS") or fail_options.get("RHOST") or "").strip().lower()
-                        fail_port = int(fail_options.get("RPORT", 0) or 0)
-                        if fail_target and fail_port:
-                            failed_service_ports.add((fail_target, fail_port))
-
-                return response
+                self._record_msf_execution_result(_tool.name, call_kwargs, response, guard)
+                return self._normalize_tool_response(_tool.name, response, call_kwargs)
 
             def guarded_func(_tool=original_tool, **kwargs):
                 if _tool.func is None or inspect.iscoroutinefunction(_tool.func):
@@ -548,7 +742,8 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             f"RELEVANT WEB FINDINGS:\n{web_block}\n\n"
             f"RESEARCH / OSINT HINTS:\n{research_block}\n\n"
             f"PRIOR EXPLOIT ATTEMPTS:\n{attempts_block}\n\n"
-            f"CANDIDATE PATHS:\n{candidate_block}\n"
+            f"CANDIDATE PATHS:\n{candidate_block}\n\n"
+            f"SKILL GUIDANCE:\n{self._render_skills_for_state(state)}\n"
         )
 
     def _format_targets(self, state: CyberState) -> str:
@@ -785,23 +980,6 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             "cves": self._dedupe_terms(cves)[:2],
         }
 
-    def _extract_matching_cves(
-        self,
-        intelligence_findings: List[Dict[str, Any]],
-        service_name: str,
-        version: str,
-    ) -> List[str]:
-        cves: List[str] = []
-        for item in intelligence_findings:
-            if not isinstance(item, dict):
-                continue
-            text = json.dumps(item, default=str).lower()
-            if (service_name and service_name in text) or (version and version in text):
-                cve = str(item.get("cve", "")).strip()
-                if cve:
-                    cves.append(cve.lower())
-        return cves[:2]
-
     def _attempt_matches_service(self, service_name: str, attempt: Dict[str, Any]) -> bool:
         module = str(attempt.get("module", "")).lower()
 
@@ -826,31 +1004,114 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             deduped.append(normalized)
         return deduped
 
-    def _extract_updates(self, messages: List[Any], state: CyberState) -> Dict[str, Any]:
+    def _base_update(self, state: CyberState) -> Dict[str, Any]:
+        return {
+            "current_agent": self.name,
+            "iteration_count": state.get("iteration_count", 0) + 1,
+        }
+
+    def _extract_updates(self, messages: List[Any], state: CyberState, context: str) -> Dict[str, Any]:
         discovered_targets = state.get("discovered_targets", {}) or {}
         default_target = next(iter(discovered_targets.keys()), "unknown")
 
         last_execution: Dict[str, Any] = {}
         verified_sessions: Dict[str, Any] = {}
+        search_terms: List[str] = []
+        matched_terms: List[str] = []
+        candidate_modules: List[str] = []
+        selected_module = ""
+        stop_reason = ""
+        reasoning_chunks: List[str] = []
+        saw_tool_activity = False
 
         for message in messages:
             if not isinstance(message, ToolMessage):
+                text = extract_text_content(message)
+                if text:
+                    reasoning_chunks.append(text)
                 continue
 
+            saw_tool_activity = True
             data = normalize_tool_result(message.content)
+            if not data:
+                payload = _decode_tool_payload(message.content)
+                data = payload if isinstance(payload, dict) else {}
+
+            if message.name == "msf_list_exploits":
+                invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
+                term = str(invocation.get("search_term", "") or "").strip()
+                if term:
+                    search_terms.append(term)
+                    matched_terms.append(term)
+                raw_results = data.get("result", [])
+                if isinstance(raw_results, list):
+                    for item in raw_results:
+                        normalized = str(item or "").strip()
+                        if normalized:
+                            candidate_modules.append(normalized)
+                continue
+
+            if message.name == "msf_get_module_options":
+                invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
+                module_name = str(invocation.get("module_name", "") or "").strip()
+                if module_name:
+                    selected_module = module_name
+
+            if not isinstance(message, ToolMessage):
+                continue
+
             if not data:
                 continue
 
+            invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
+
             if message.name in EXECUTION_TOOL_NAMES:
                 options = data.get("options", {}) if isinstance(data.get("options"), dict) else {}
-                target = options.get("RHOSTS") or options.get("RHOST") or default_target
+                target = (
+                    options.get("RHOSTS")
+                    or options.get("RHOST")
+                    or invocation.get("target")
+                    or invocation.get("url")
+                    or default_target
+                )
+                module_name = (
+                    data.get("module")
+                    or data.get("module_name")
+                    or invocation.get("module_name")
+                    or selected_module
+                    or "unknown"
+                )
+                selected_module = str(module_name)
                 last_execution = {
                     "target": target,
-                    "module": data.get("module", data.get("module_name", "unknown")),
+                    "module": module_name,
                     "status": data.get("status", "unknown"),
                     "session_id": data.get("session_id") or data.get("session_id_detected"),
                     "timestamp": datetime.now().isoformat(),
                 }
+                message_text = str(data.get("message", "") or "").strip()
+                if message_text:
+                    stop_reason = message_text
+            elif message.name in KALI_TOOL_NAMES:
+                target = (
+                    invocation.get("target")
+                    or invocation.get("url")
+                    or invocation.get("command")
+                    or default_target
+                )
+                status = data.get("status")
+                if status is None and "success" in data:
+                    status = "success" if data.get("success") else "error"
+                last_execution = {
+                    "target": str(target),
+                    "module": message.name,
+                    "status": str(status or "unknown"),
+                    "session_id": None,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                message_text = str(data.get("message", "") or "").strip()
+                if message_text:
+                    stop_reason = message_text
 
             if message.name == "msf_list_active_sessions":
                 if data.get("status") == "success" and isinstance(data.get("sessions"), dict):
@@ -863,18 +1124,58 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 session_id = None
                 last_execution["session_id"] = None
 
+        if candidate_modules and not selected_module:
+            selected_module = candidate_modules[0]
+
+        reasoning = "\n\n".join(chunk for chunk in reasoning_chunks if chunk).strip()
+        if stop_reason and stop_reason not in reasoning:
+            reasoning = f"{reasoning}\n\n{stop_reason}".strip() if reasoning else stop_reason
+        if not last_execution and saw_tool_activity and not stop_reason:
+            if selected_module:
+                stop_reason = "No acceptable Metasploit module matched current evidence."
+            else:
+                stop_reason = "No acceptable Metasploit module matched current evidence."
+            if stop_reason not in reasoning:
+                reasoning = f"{reasoning}\n\n{stop_reason}".strip() if reasoning else stop_reason
+        if context and "SKILL GUIDANCE:" not in reasoning:
+            reasoning = f"{reasoning}\n\n{context}".strip() if reasoning else context
+
+        findings: Dict[str, Any] = {
+            "skill_guidance": True,
+            "search_terms": self._dedupe_terms(search_terms),
+            "matched_terms": self._dedupe_terms(matched_terms),
+        }
+
+        if last_execution:
+            findings.update(last_execution)
+            if selected_module:
+                findings["module"] = selected_module
+                findings["selected_module"] = selected_module
+            if candidate_modules:
+                findings["candidate_modules"] = self._dedupe_terms(candidate_modules)
+            if stop_reason:
+                findings["stop_reason"] = stop_reason
+        elif saw_tool_activity:
+            status = "aborted" if "manual approval" in stop_reason.lower() else "no_candidate"
+            findings.update(
+                {
+                    "status": status,
+                    "candidate_modules": self._dedupe_terms(candidate_modules),
+                    "module": selected_module or None,
+                    "selected_module": selected_module or None,
+                    "stop_reason": stop_reason or "No acceptable Metasploit module matched current evidence.",
+                }
+            )
+
         updates: Dict[str, Any] = {
-            "current_agent": "striker",
-            "iteration_count": state.get("iteration_count", 0) + 1,
-            "agent_log": [
-                AgentLogEntry(
-                    agent="striker",
-                    action="run_exploit",
-                    target=last_execution.get("target", default_target),
-                    findings=last_execution or None,
-                    reasoning="Metasploit striker run complete.",
-                )
-            ],
+            **self._base_update(state),
+            **self.log_action(
+                state,
+                action="run_exploit",
+                target=last_execution.get("target", default_target),
+                findings=findings or None,
+                reasoning=reasoning or context,
+            ),
         }
 
         if last_execution:
@@ -896,6 +1197,10 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             updates["critical_findings"] = [
                 f"Session {session_id} opened on {target} via {last_execution.get('module', 'unknown')}"
             ]
+        elif last_execution and str(last_execution.get("status", "")).lower() == "success":
+            updates["critical_findings"] = [
+                f"Striker validated a Kali path on {last_execution.get('target', default_target)} via {last_execution.get('module', 'unknown')}"
+            ]
 
         return updates
 
@@ -907,16 +1212,13 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         recoverable: bool,
     ) -> Dict[str, Any]:
         return {
-            "current_agent": "striker",
-            "iteration_count": state.get("iteration_count", 0) + 1,
-            "errors": [
-                AgentError(
-                    agent="striker",
-                    error_type=error_type,
-                    error=message,
-                    recoverable=recoverable,
-                )
-            ],
+            **self._base_update(state),
+            **self.log_error(
+                state,
+                error_type=error_type,
+                error=message,
+                recoverable=recoverable,
+            ),
         }
 
 

@@ -22,6 +22,7 @@ DEFAULT_LLM_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 def build_chat_openai(
     *,
     model: str | None = None,
+    api_key: str | None = None,
     base_url: str | None = None,
     temperature: float = 0.0,
     timeout_seconds: int | None = None,
@@ -30,8 +31,8 @@ def build_chat_openai(
     if ChatOpenAI is None:
         raise RuntimeError("langchain-openai is not installed")
 
-    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
+    resolved_api_key = (api_key or os.getenv("OPENROUTER_API_KEY", "")).strip()
+    if not resolved_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is required for agent LLM calls")
 
     resolved_model = (model or os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL)).strip()
@@ -40,7 +41,7 @@ def build_chat_openai(
 
     kwargs: Dict[str, Any] = {
         "model": resolved_model,
-        "api_key": api_key,
+        "api_key": resolved_api_key,
         "base_url": resolved_base_url,
         "temperature": temperature,
     }

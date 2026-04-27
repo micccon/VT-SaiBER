@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Literal
 from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field
@@ -12,8 +12,8 @@ class AgentName(str, Enum):
     SUPERVISOR = "supervisor"
     SCOUT = "scout"
     FUZZER = "fuzzer"
-    STRIKER = "striker"
     LIBRARIAN = "librarian"
+    STRIKER = "striker"
     RESIDENT = "resident"
 
 
@@ -110,27 +110,130 @@ class WebContext(BaseModel):
 
 
 # ============================================================================
-# STRIKER MODELS
+# EXPLOIT MODELS
 # ============================================================================
 
-class StrikerPlan(BaseModel):
-    """Exploitation plan from Striker agent."""
-    selected_module: str
-    payload: str
-    target_id: int
-    required_options: Dict[str, str] = Field(default_factory=dict)
+class ExploitBackend(str, Enum):
+    """Canonical exploit backend selector for the unified striker worker."""
+    METASPLOIT = "metasploit"
+    KALI = "kali"
+
+class MetasploitSearchPlan(BaseModel):
+    """Bounded LLM search-plan output for the hybrid Metasploit worker."""
+    decision: Literal["search", "stop"] = "search"
+    target: str = ""
+    port: int = 0
+    service_name: str = ""
+    module_type_preference: Literal["exploit", "auxiliary", "either"] = "either"
+    search_terms: List[str] = Field(default_factory=list)
+    rationale: str = ""
+    stop_reason: Optional[str] = None
+
+
+class MetasploitSelectionPlan(BaseModel):
+    """Bounded LLM module-selection output for the hybrid Metasploit worker."""
+    decision: Literal["execute", "stop", "pivot"] = "stop"
+    module: str = ""
+    module_type: Literal["exploit", "auxiliary"] = "exploit"
+    target: str = ""
+    port: int = 0
+    option_overrides: Dict[str, Any] = Field(default_factory=dict)
+    payload_name: Optional[str] = None
+    payload_options: Dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+    stop_reason: Optional[str] = None
+
+
+class MetasploitService(BaseModel):
+    """Normalized service evidence used by the Metasploit worker."""
+    target: str
+    port: int
+    name: str
+    version: Optional[str] = None
+    banner: Optional[str] = None
+
+
+class MetasploitEvidence(BaseModel):
+    """Condensed CyberState evidence for module search and execution."""
+    services: List[MetasploitService] = Field(default_factory=list)
+    cves: List[str] = Field(default_factory=list)
+    web_paths: List[str] = Field(default_factory=list)
+    credentials: Dict[str, Any] = Field(default_factory=dict)
+    operator_options: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MetasploitCandidate(BaseModel):
+    """Candidate Metasploit module ranked against observed evidence."""
+    module: str
+    module_type: str
+    service: MetasploitService
+    score: int = 0
+    matched_terms: List[str] = Field(default_factory=list)
+
+
+class MetasploitExecutionPlan(BaseModel):
+    """Executable Metasploit plan after option resolution."""
+    candidate: MetasploitCandidate
+    options: Dict[str, Any] = Field(default_factory=dict)
+    payload_name: Optional[str] = None
+    payload_options: Dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+
+
+class MetasploitAttempt(BaseModel):
+    """Persisted record of a Metasploit execution attempt."""
+    target: str
+    module: str
+    status: str
+    session_id: Optional[int] = None
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class ExploitKaliPlan(BaseModel):
+    """Execution plan for the Kali exploitation worker."""
+    selected_tool: str
+    target: str
+    command: Optional[str] = None
+    arguments: Dict[str, Any] = Field(default_factory=dict)
     rationale: str
 
 
+class ExploitAttempt(BaseModel):
+    """Shared persisted record for one bounded striker execution attempt."""
+    backend: ExploitBackend
+    tool_or_module: str
+    target: str
+    status: str
+    failure_reason: Optional[str] = None
+    session_id: Optional[int] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class StrikerPlan(BaseModel):
+    """Single bounded execution plan for one striker invocation."""
+    backend: ExploitBackend
+    target: str
+    goal: str
+    tool_or_module: str
+    rationale: str
+    option_hints: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ExploitResult(BaseModel):
-    """Result of an exploit attempt."""
+    """Shared result shape for exploit worker attempts."""
     success: bool
+    backend: Optional[ExploitBackend] = None
+    tool_or_module: Optional[str] = None
+    status: str = ""
+    failure_reason: Optional[str] = None
     session_id: Optional[int] = None
     session_type: Optional[str] = None
     target: Optional[str] = None
     user_context: Optional[str] = None
     exploit_used: Optional[str] = None
     error: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ============================================================================
@@ -169,7 +272,7 @@ class EmbeddedFinding(BaseModel):
 class IntelligenceBrief(BaseModel):
     """Intelligence brief from Librarian (RAG + OSINT)."""
     summary: str
-    technical_params: Dict[str, str] = Field(default_factory=dict)
+    technical_params: Dict[str, Any] = Field(default_factory=dict)
     is_osint_derived: bool = False
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     citations: List[str] = Field(default_factory=list)
@@ -204,9 +307,9 @@ class ActiveSession(BaseModel):
     """Active session on a compromised target."""
     session_id: int
     target: str
-    user: str
+    user: Optional[str] = None
     exploit: Optional[str] = None
-    session_type: str
+    session_type: Optional[str] = None
     established: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 

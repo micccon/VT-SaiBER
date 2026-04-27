@@ -20,7 +20,6 @@ sys.path.insert(0, "/app")
 from langchain_core.messages import ToolMessage, AIMessage
 from langchain_core.tools import StructuredTool
 
-import src.agents.striker as striker_mod
 import src.agents.resident as resident_mod
 import src.agents.scout as scout_mod
 from src.graph.router import route_next_agent, validate_all_targets_in_scope
@@ -86,36 +85,6 @@ class PatchContext:
 
 
 # ═══════════════════════════════════════════════════════════════
-# TEST: MCP bridge failures
-# ═══════════════════════════════════════════════════════════════
-
-async def test_striker_mcp_bridge_failure():
-    """Striker should return ToolError when bridge raises."""
-    patches = PatchContext()
-    try:
-        async def failing_bridge():
-            raise ConnectionError("MCP server unreachable")
-
-        patches.set(striker_mod, "get_mcp_bridge", failing_bridge)
-        state = build_initial_state("Test", ["10.0.0.1"], "f-001")
-        state["discovered_targets"] = {"10.0.0.1": {"services": {}}}
-
-        try:
-            out = await striker_mod.striker_node(state)
-            # If bridge failure is not caught, the node should propagate
-            results.add_fail("test_striker_bridge_fail", "Expected exception or error")
-        except ConnectionError:
-            results.add_pass("test_striker_bridge_fail")
-    except Exception as e:
-        # ConnectionError propagation is acceptable behavior
-        if "unreachable" in str(e):
-            results.add_pass("test_striker_bridge_fail")
-        else:
-            results.add_fail("test_striker_bridge_fail", str(e))
-    finally:
-        patches.restore()
-
-
 async def test_resident_mcp_bridge_failure():
     """Resident should return ToolError when bridge raises."""
     patches = PatchContext()
@@ -144,58 +113,6 @@ async def test_resident_mcp_bridge_failure():
 # ═══════════════════════════════════════════════════════════════
 # TEST: Tool unavailability
 # ═══════════════════════════════════════════════════════════════
-
-async def test_striker_no_tools():
-    """Striker returns ToolError when bridge has zero tools."""
-    patches = PatchContext()
-    try:
-        async def empty_bridge():
-            return MockBridge([])
-
-        patches.set(striker_mod, "get_mcp_bridge", empty_bridge)
-        state = build_initial_state("Test", ["10.0.0.1"], "f-003")
-        state["discovered_targets"] = {"10.0.0.1": {"services": {}}}
-
-        out = await striker_mod.striker_node(state)
-        errs = out.get("errors", [])
-        if not errs:
-            results.add_fail("test_striker_no_tools", "Expected errors")
-            return
-        err_type = getattr(errs[0], "error_type", "")
-        if err_type != "ToolError":
-            results.add_fail("test_striker_no_tools", f"Expected ToolError, got {err_type}")
-            return
-        results.add_pass("test_striker_no_tools")
-    finally:
-        patches.restore()
-
-
-async def test_striker_missing_required_tools():
-    """Striker returns error when required exploit tools are missing."""
-    patches = PatchContext()
-    try:
-        tools = [_make_tool("msf_list_exploits")]  # Missing run_exploit and run_auxiliary_module
-
-        async def partial_bridge():
-            return MockBridge(tools)
-
-        patches.set(striker_mod, "get_mcp_bridge", partial_bridge)
-        state = build_initial_state("Test", ["10.0.0.1"], "f-004")
-        state["discovered_targets"] = {"10.0.0.1": {"services": {}}}
-
-        out = await striker_mod.striker_node(state)
-        errs = out.get("errors", [])
-        if not errs:
-            results.add_fail("test_missing_required_tools", "Expected errors")
-            return
-        err_msg = getattr(errs[0], "error", "")
-        if "missing" not in err_msg.lower():
-            results.add_fail("test_missing_required_tools", f"Expected 'missing' in error: {err_msg}")
-            return
-        results.add_pass("test_missing_required_tools")
-    finally:
-        patches.restore()
-
 
 async def test_resident_no_tools():
     """Resident returns ToolError when bridge has zero tools."""
@@ -279,7 +196,7 @@ def test_router_blocks_out_of_scope():
     """Full router should END when targets are out of scope."""
     state = build_initial_state("Test", ["192.168.1.0/24"], "f-010")
     state["discovered_targets"] = {"10.99.99.99": {"services": {}}}
-    state["next_agent"] = "striker"
+    state["next_agent"] = "resident"
     result = route_next_agent(state)
     if result != "__end__":
         results.add_fail("test_router_blocks_oos", f"Expected __end__, got {result}")
@@ -322,10 +239,10 @@ def test_router_max_iterations_boundary():
 def test_recoverable_error_classification():
     """Validation errors should be recoverable; tool errors should not."""
     validation_err = AgentError(
-        agent="striker", error_type="ValidationError", error="No targets", recoverable=True
+        agent="resident", error_type="ValidationError", error="No sessions", recoverable=True
     )
     tool_err = AgentError(
-        agent="striker", error_type="ToolError", error="MCP down", recoverable=False
+        agent="resident", error_type="ToolError", error="MCP down", recoverable=False
     )
     if not validation_err.recoverable:
         results.add_fail("test_error_classification", "ValidationError should be recoverable")
@@ -334,21 +251,6 @@ def test_recoverable_error_classification():
         results.add_fail("test_error_classification", "ToolError should not be recoverable")
         return
     results.add_pass("test_error_classification")
-
-
-async def test_striker_validation_error_is_recoverable():
-    """No-targets error from Striker should be recoverable."""
-    state = build_initial_state("Test", ["10.0.0.1"], "f-012")
-    state["discovered_targets"] = {}
-    out = await striker_mod.striker_node(state)
-    errs = out.get("errors", [])
-    if not errs:
-        results.add_fail("test_striker_recoverable", "Expected errors")
-        return
-    if not getattr(errs[0], "recoverable", False):
-        results.add_fail("test_striker_recoverable", "Should be recoverable")
-        return
-    results.add_pass("test_striker_recoverable")
 
 
 async def test_resident_validation_error_is_recoverable():
@@ -478,12 +380,9 @@ async def main():
     print("=" * 60)
 
     # MCP bridge failures
-    await test_striker_mcp_bridge_failure()
     await test_resident_mcp_bridge_failure()
 
     # Tool unavailability
-    await test_striker_no_tools()
-    await test_striker_missing_required_tools()
     await test_resident_no_tools()
 
     # Scope violations
@@ -498,7 +397,6 @@ async def main():
 
     # Error classification
     test_recoverable_error_classification()
-    await test_striker_validation_error_is_recoverable()
     await test_resident_validation_error_is_recoverable()
 
     # Agent fallbacks

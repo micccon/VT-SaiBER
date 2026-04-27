@@ -1,15 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Protocol
-from datetime import datetime
+from typing import Dict, Any, Optional
 
 from src.state.cyber_state import CyberState
 from src.state.models import AgentLogEntry, AgentError
-
-
-class AgentSkill(Protocol):
-    name: str
-    def is_applicable(self, state: CyberState) -> bool: ...
-    def as_text(self, state: CyberState) -> str: ...
+from src.skills.skills import Skill
 
 
 class BaseAgent(ABC):
@@ -22,7 +16,7 @@ class BaseAgent(ABC):
     def __init__(self, name: str, role: str):
         self.name = name
         self.role = role
-        self.skills: list[AgentSkill] = []  # Registered skills for the agent
+        self.skills: list[Skill] = []  # Registered markdown skills for the agent
         self._db = None  # Lazy initialization
         self._mcp = None  # Lazy initialization
 
@@ -44,16 +38,13 @@ class BaseAgent(ABC):
         """
         pass
 
-    def register_skill(self, skill: AgentSkill) -> None:
-        """Attach a reusable skill module to this agent."""
+    def register_skill(self, skill: Skill) -> None:
+        """Attach a reusable markdown skill to this agent."""
         self.skills.append(skill)
 
     def _render_skills_for_state(self, state: CyberState) -> str:
-        """Return concatenated skill texts that are applicable to current state."""
-        chunks: list[str] = []
-        for skill in self.skills:
-            if skill.is_applicable(state):
-                chunks.append(skill.as_text(state))
+        """Return concatenated skill texts for the current agent."""
+        chunks = [skill.render() for skill in self.skills]
         if not chunks:
             return ""
         return "\n\n".join(chunks)

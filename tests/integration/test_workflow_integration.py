@@ -72,6 +72,40 @@ def _make_tool(name: str) -> StructuredTool:
     )
 
 
+def _make_msf_search_tool(results_by_term: dict[str, list[str]]) -> StructuredTool:
+    async def _async_tool(**kwargs):
+        term = str(kwargs.get("search_term", "") or "").strip().lower()
+        return results_by_term.get(term, [])
+
+    return StructuredTool.from_function(
+        func=lambda **kwargs: results_by_term.get(str(kwargs.get("search_term", "") or "").strip().lower(), []),
+        coroutine=_async_tool,
+        name="msf_list_exploits",
+        description="Mock Metasploit search",
+    )
+
+
+def _make_msf_options_tool(results_by_module: dict[tuple[str, str], dict[str, object]]) -> StructuredTool:
+    async def _async_tool(**kwargs):
+        key = (
+            str(kwargs.get("module_type", "") or ""),
+            str(kwargs.get("module_name", "") or ""),
+        )
+        return results_by_module[key]
+
+    return StructuredTool.from_function(
+        func=lambda **kwargs: results_by_module[
+            (
+                str(kwargs.get("module_type", "") or ""),
+                str(kwargs.get("module_name", "") or ""),
+            )
+        ],
+        coroutine=_async_tool,
+        name="msf_get_module_options",
+        description="Mock Metasploit option lookup",
+    )
+
+
 class MockBridge:
     def __init__(self, tools):
         self._tools = tools
@@ -232,12 +266,12 @@ async def test_scout_output_feeds_striker():
             return
 
         merged_state = {**initial, **scout_output}
-        ctx = striker_mod._build_striker_context(merged_state)
-        if "192.168.1.50" not in ctx:
-            results.add_fail("test_scout_feeds_striker", "Target IP not in Striker context")
+        evidence = striker_mod._build_evidence(merged_state)
+        if not any(service.target == "192.168.1.50" for service in evidence.services):
+            results.add_fail("test_scout_feeds_striker", "Target IP not in Striker evidence")
             return
-        if "ssh" not in ctx.lower():
-            results.add_fail("test_scout_feeds_striker", "SSH service not in Striker context")
+        if not any(service.name == "ssh" for service in evidence.services):
+            results.add_fail("test_scout_feeds_striker", "SSH service not in Striker evidence")
             return
 
         results.add_pass("test_scout_feeds_striker")
@@ -257,54 +291,75 @@ async def test_striker_output_feeds_resident():
     patches = PatchContext()
     try:
         msf_tools = [
-            _make_tool("msf_list_exploits"),
-            _make_tool("msf_get_module_options"),
-            _make_tool("msf_list_payloads"),
-            _make_tool("msf_run_exploit"),
+            _make_msf_search_tool({"apache": ["exploit/multi/http/apache_demo"]}),
+            _make_msf_options_tool(
+                {
+                    ("exploit", "multi/http/apache_demo"): {
+                        "status": "success",
+                        "options": [
+                            {"name": "RHOSTS", "required": True},
+                            {"name": "RPORT", "required": True},
+                        ],
+                    }
+                }
+            ),
+            _make_tool("msf_get_module_info"),
+            StructuredTool.from_function(
+                func=lambda **kwargs: json.dumps(
+                    {
+                        "status": "success",
+                        "module": "exploit/multi/http/apache_demo",
+                        "session_id": 3,
+                    }
+                ),
+                coroutine=lambda **kwargs: asyncio.sleep(
+                    0,
+                    result=json.dumps(
+                        {
+                            "status": "success",
+                            "module": "exploit/multi/http/apache_demo",
+                            "session_id": 3,
+                        }
+                    ),
+                ),
+                name="msf_run_exploit",
+                description="Mock exploit execution",
+            ),
             _make_tool("msf_run_auxiliary_module"),
-            _make_tool("msf_list_active_sessions"),
+            StructuredTool.from_function(
+                func=lambda **kwargs: json.dumps(
+                    {"status": "success", "sessions": {"3": {"target_host": "192.168.1.50"}}}
+                ),
+                coroutine=lambda **kwargs: asyncio.sleep(
+                    0,
+                    result=json.dumps(
+                        {"status": "success", "sessions": {"3": {"target_host": "192.168.1.50"}}}
+                    ),
+                ),
+                name="msf_list_active_sessions",
+                description="Mock session listing",
+            ),
         ]
 
         async def fake_get_bridge():
             return MockBridge(msf_tools)
 
-        def fake_build_llm():
-            return object()
-
-        def fake_create_react_agent_striker(model, tools, **kwargs):
-            class FakeAgent:
-                async def ainvoke(self, payload):
-                    return {
-                        "messages": [
-                            ToolMessage(
-                                tool_call_id="call-1",
-                                name="msf_run_auxiliary_module",
-                                content=json.dumps({
-                                    "status": "success",
-                                    "module": "auxiliary/scanner/ssh/ssh_login",
-                                    "session_id": 3,
-                                    "options": {"RHOSTS": "192.168.1.50"},
-                                }),
-                            ),
-                        ]
-                    }
-            return FakeAgent()
-
         patches.set(striker_mod, "get_mcp_bridge", fake_get_bridge)
-        patches.set(striker_mod, "_build_llm", fake_build_llm)
-        patches.set(striker_mod, "create_react_agent", fake_create_react_agent_striker)
-        patches.set(striker_mod, "STRIKER_REQUIRE_CONFIRMATION", False)
 
         pre_state = build_initial_state("Exploit target", ["192.168.1.0/24"], "test-003")
         pre_state["discovered_targets"] = {
             "192.168.1.50": {
                 "ip_address": "192.168.1.50",
                 "os_guess": "Linux",
-                "services": {"22": {"service_name": "ssh", "version": "OpenSSH 8.2p1"}},
+                "ports": [80],
+                "services": {"80": {"service_name": "http", "version": "Apache 2.4.41"}},
             }
         }
 
-        striker_output = await striker_mod.striker_node(pre_state)
+        agent = striker_mod.StrikerAgent()
+        agent.require_confirmation = False
+
+        striker_output = await agent.call_llm(pre_state)
 
         sessions = striker_output.get("active_sessions", {})
         if "192.168.1.50" not in sessions:
@@ -360,12 +415,54 @@ async def test_full_pipeline_state_propagation():
 
         # Mock Striker's full chain
         msf_tools = [
-            _make_tool("msf_list_exploits"),
-            _make_tool("msf_get_module_options"),
-            _make_tool("msf_list_payloads"),
-            _make_tool("msf_run_exploit"),
+            _make_msf_search_tool({"apache": ["exploit/multi/http/apache_demo"]}),
+            _make_msf_options_tool(
+                {
+                    ("exploit", "multi/http/apache_demo"): {
+                        "status": "success",
+                        "options": [
+                            {"name": "RHOSTS", "required": True},
+                            {"name": "RPORT", "required": True},
+                        ],
+                    }
+                }
+            ),
+            _make_tool("msf_get_module_info"),
+            StructuredTool.from_function(
+                func=lambda **kwargs: json.dumps(
+                    {
+                        "status": "success",
+                        "module": "exploit/multi/http/apache_demo",
+                        "session_id": 5,
+                    }
+                ),
+                coroutine=lambda **kwargs: asyncio.sleep(
+                    0,
+                    result=json.dumps(
+                        {
+                            "status": "success",
+                            "module": "exploit/multi/http/apache_demo",
+                            "session_id": 5,
+                        }
+                    ),
+                ),
+                name="msf_run_exploit",
+                description="Mock exploit execution",
+            ),
             _make_tool("msf_run_auxiliary_module"),
-            _make_tool("msf_list_active_sessions"),
+            StructuredTool.from_function(
+                func=lambda **kwargs: json.dumps(
+                    {"status": "success", "sessions": {"5": {"target_host": "10.0.0.1"}}}
+                ),
+                coroutine=lambda **kwargs: asyncio.sleep(
+                    0,
+                    result=json.dumps(
+                        {"status": "success", "sessions": {"5": {"target_host": "10.0.0.1"}}}
+                    ),
+                ),
+                name="msf_list_active_sessions",
+                description="Mock session listing",
+            ),
         ]
 
         class StrikerBridge:
@@ -394,28 +491,6 @@ async def test_full_pipeline_state_propagation():
             if phase["current"] == "striker":
                 return StrikerBridge()
             return ResidentBridge()
-
-        def fake_build_llm():
-            return object()
-
-        def fake_create_react_striker(model, tools, **kwargs):
-            class FakeAgent:
-                async def ainvoke(self, payload):
-                    return {
-                        "messages": [
-                            ToolMessage(
-                                tool_call_id="c1",
-                                name="msf_run_auxiliary_module",
-                                content=json.dumps({
-                                    "status": "success",
-                                    "module": "auxiliary/scanner/ssh/ssh_login",
-                                    "session_id": 5,
-                                    "options": {"RHOSTS": "10.0.0.1"},
-                                }),
-                            ),
-                        ]
-                    }
-            return FakeAgent()
 
         def fake_create_react_resident(model, tools, **kwargs):
             class FakeAgent:
@@ -459,11 +534,10 @@ async def test_full_pipeline_state_propagation():
         # --- Phase 2: Striker ---
         phase["current"] = "striker"
         patches.set(striker_mod, "get_mcp_bridge", phased_bridge)
-        patches.set(striker_mod, "_build_llm", fake_build_llm)
-        patches.set(striker_mod, "create_react_agent", fake_create_react_striker)
-        patches.set(striker_mod, "STRIKER_REQUIRE_CONFIRMATION", False)
+        striker_agent = striker_mod.StrikerAgent()
+        striker_agent.require_confirmation = False
 
-        striker_out = await striker_mod.striker_node(state)
+        striker_out = await striker_agent.call_llm(state)
         state = {**state, **striker_out}
 
         sessions = state.get("active_sessions", {})

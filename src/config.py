@@ -48,6 +48,8 @@ class RuntimeConfig:
     openrouter_api_key: str
     openrouter_base_url: str
     supervisor_model: str
+    striker_api_key: str
+    striker_model: str
     supervisor_timeout_seconds: int
     supervisor_reasoning_enabled: bool
     supervisor_max_reasoning_messages: int
@@ -75,6 +77,8 @@ def get_runtime_config() -> RuntimeConfig:
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         supervisor_model=os.getenv("SUPERVISOR_MODEL", "minimax/minimax-m2.5:free").strip(),
+        striker_api_key=os.getenv("STRIKER_API_KEY", "").strip(),
+        striker_model=os.getenv("STRIKER_MODEL", "").strip(),
         supervisor_timeout_seconds=_env_int("SUPERVISOR_TIMEOUT_SECONDS", 90),
         supervisor_reasoning_enabled=_env_bool("SUPERVISOR_REASONING_ENABLED", True),
         supervisor_max_reasoning_messages=_env_int("SUPERVISOR_MAX_REASONING_MESSAGES", 12),
@@ -95,4 +99,3 @@ def get_runtime_config() -> RuntimeConfig:
         tavily_api_key=(os.getenv("TAVILY_API_KEY") or "").strip() or None,
         tavily_max_results=_env_int("TAVILY_MAX_RESULTS", 5),
     )
-

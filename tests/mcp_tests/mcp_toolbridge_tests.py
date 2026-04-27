@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, '/app')
 
 import traceback
-from src.mcp.mcp_tool_bridge import get_mcp_bridge
+from src.mcp.mcp_tool_bridge import get_mcp_bridge, reset_mcp_bridge
 
 
 class TestResults:
@@ -414,33 +414,6 @@ async def test_tool_filtering_scout():
         traceback.print_exc()
 
 
-async def test_tool_filtering_striker():
-    """Test filtering tools for Striker agent."""
-    try:
-        bridge = await get_mcp_bridge()
-        
-        # Striker should only get exploit tools
-        striker_allowed = {"run_exploit", "list_exploits", "list_payloads", "list_active_sessions"}
-        striker_tools = bridge.get_tools_for_agent(striker_allowed)
-        
-        striker_names = [t.name for t in striker_tools]
-        
-        # Verify striker has exploits
-        if not any("list_exploits" in name for name in striker_names):
-            raise AssertionError(f"Striker missing list_exploits. Has: {striker_names}")
-        
-        # Verify striker doesn't have nmap
-        if any("nmap_scan" in name for name in striker_names):
-            raise AssertionError("Striker has nmap_scan (should not)")
-        
-        print(f"   Striker tools: {striker_names}")
-        results.add_pass("test_tool_filtering_striker")
-        
-    except Exception as e:
-        results.add_fail("test_tool_filtering_striker", str(e))
-        traceback.print_exc()
-
-
 async def test_none_filter_returns_empty():
     """Test that None allowlist returns no tools (deny by default)."""
     try:
@@ -459,6 +432,26 @@ async def test_none_filter_returns_empty():
 
     except Exception as e:
         results.add_fail("test_none_filter_returns_empty", str(e))
+        traceback.print_exc()
+
+
+async def test_bridge_reset_is_safe():
+    """Test that the global bridge can be reset cleanly."""
+    try:
+        bridge = await get_mcp_bridge()
+        if not bridge.sessions:
+            raise AssertionError("Bridge must have active sessions before reset")
+
+        await reset_mcp_bridge()
+        await reset_mcp_bridge()
+
+        fresh_bridge = await get_mcp_bridge()
+        if not fresh_bridge.sessions:
+            raise AssertionError("Bridge should reconnect after reset")
+
+        results.add_pass("test_bridge_reset_is_safe")
+    except Exception as e:
+        results.add_fail("test_bridge_reset_is_safe", str(e))
         traceback.print_exc()
 
 
@@ -503,8 +496,8 @@ async def run_all_tests():
     # Tool filtering tests
     print("\n--- TOOL FILTERING TESTS ---")
     await test_tool_filtering_scout()
-    await test_tool_filtering_striker()
     await test_none_filter_returns_empty()
+    await test_bridge_reset_is_safe()
     
     # Print summary
     success = results.summary()
@@ -528,7 +521,7 @@ async def run_all_tests():
             print(f"   ... and {len(msf_tools) - 5} more")
     
     # Cleanup
-    await bridge.disconnect()
+    await reset_mcp_bridge()
     
     return 0 if success else 1
 
