@@ -214,8 +214,7 @@ def test_striker_live_scans_into_cyberstate_then_runs_worker(monkeypatch):
         or any(version and version in reasoning_lower for version in observed_versions)
     ), "striker did not appear to consume the live nmap-derived CyberState evidence"
 
-    assert "SKILL GUIDANCE:" in reasoning
-    assert "skill_guidance" in findings, "live run should preserve skill guidance in findings"
+    assert "TARGET INTELLIGENCE:" in reasoning
 
     if LIVE_STRIKER_EXECUTE and result.get("exploited_services"):
         attempt = result["exploited_services"][0]

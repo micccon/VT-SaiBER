@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict, Iterable, Optional
 from src.config import RuntimeConfig
 from src.state.cyber_state import CyberState
 from src.state.models import AgentError, AgentLogEntry
-from src.skills.skills import Skill
 from src.utils.agent_runtime import BaseToolPolicy, run_chat_completion, run_tool_worker, try_resolve_openrouter_runtime
 
 
@@ -16,7 +15,6 @@ class BaseAgent(ABC):
     def __init__(self, name: str, role: str):
         self.name = name
         self.role = role
-        self.skills: list[Skill] = []
         self._client = None
         self._model = ""
         self._client_error: str | None = None
@@ -29,13 +27,6 @@ class BaseAgent(ABC):
     @abstractmethod
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
         pass
-
-    def register_skill(self, skill: Skill) -> None:
-        self.skills.append(skill)
-
-    def _render_skills_for_state(self, state: CyberState) -> str:
-        chunks = [skill.render() for skill in self.skills]
-        return "\n\n".join(chunks) if chunks else ""
 
     def _init_runtime(
         self,

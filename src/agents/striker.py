@@ -22,7 +22,6 @@ from src.utils.agent_runtime import (
 )
 from src.utils.approval import require_manual_approval
 from src.utils.parsers import metasploit_module_key, normalize_tool_result
-from src.skills.skills import build_skills
 
 
 STRIKER_ALLOWED_TOOLS = {
@@ -51,19 +50,6 @@ KALI_TOOL_NAMES = {
     "system_execute_command",
 }
 KALI_APPROVAL_TOOLS = {"web_sqlmap_scan", "access_hydra_attack", "system_execute_command"}
-STRIKER_SKILL_PATHS = [
-    "striker/metasploit_usage.md",
-    "striker/kali_usage.md",
-    "metasploit/msf_search.md",
-    "metasploit/msf_module_selection.md",
-    "metasploit/msf_options.md",
-    "metasploit/msf_session_verification.md",
-    "kali/kali_web_exploit.md",
-    "kali/kali_credential.md",
-    "kali/kali_automotive.md",
-    "kali/kali_validation.md",
-    "kali/kali_tool_selection.md",
-]
 CREDENTIAL_MODULES = {
     "scanner/ssh/ssh_login",
     "scanner/ftp/ftp_login",
@@ -189,16 +175,19 @@ def is_invalid_callback_host(value: str) -> bool:
     return ip.is_loopback or ip.is_unspecified
 
 
-def build_striker_context(state: CyberState, skill_guidance: str) -> str:
+def build_striker_context(state: CyberState) -> str:
     return (
         f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
         f"TARGET INTELLIGENCE:\n{_format_targets(state)}\n\n"
         f"RELEVANT WEB FINDINGS:\n{_format_web_findings(state)}\n\n"
         f"RESEARCH / OSINT HINTS:\n{_format_research_hints(state)}\n\n"
         f"PRIOR EXPLOIT ATTEMPTS:\n{_format_prior_attempts(state)}\n\n"
-        f"CANDIDATE PATHS:\n{_format_candidates(_rank_candidates(state))}\n\n"
-        f"SKILL GUIDANCE:\n{skill_guidance}\n"
+        f"CANDIDATE PATHS:\n{_format_candidates(_rank_candidates(state))}\n"
     )
+
+
+def _build_striker_context(state: CyberState) -> str:
+    return build_striker_context(state)
 
 
 def _format_targets(state: CyberState) -> str:
@@ -606,11 +595,10 @@ def extract_striker_updates(
     if not last_execution and saw_tool_activity and not stop_reason:
         stop_reason = "No acceptable Metasploit module matched current evidence."
         reasoning = f"{reasoning}\n\n{stop_reason}".strip() if reasoning else stop_reason
-    if context and "SKILL GUIDANCE:" not in reasoning:
+    if context and "TARGET INTELLIGENCE:" not in reasoning:
         reasoning = f"{reasoning}\n\n{context}".strip() if reasoning else context
 
     findings: Dict[str, Any] = {
-        "skill_guidance": True,
         "search_terms": dedupe_terms(search_terms),
         "matched_terms": dedupe_terms(matched_terms),
     }
@@ -678,8 +666,6 @@ class StrikerAgent(BaseAgent):
         config = get_runtime_config()
         self.require_confirmation = STRIKER_REQUIRE_CONFIRMATION
         self.max_attempts = MAX_EXPLOIT_ATTEMPTS
-        for skill in build_skills(STRIKER_SKILL_PATHS):
-            self.register_skill(skill)
         self._init_runtime(
             config=config,
             model=config.supervisor_model,
@@ -691,7 +677,7 @@ class StrikerAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         return f"""You are the VT-SaiBER striker exploitation specialist.
-Use only the provided MCP tools and the markdown skill guidance.
+Use only the provided MCP tools and the mission context.
 
 Metasploit: msf_search_modules, msf_get_module_info, msf_get_module_options, msf_run_exploit, msf_run_auxiliary, msf_list_sessions.
 Attackbox: web_sqlmap_scan, access_hydra_attack, access_smb_enum, web_wordpress_scan, system_execute_command.
@@ -699,11 +685,32 @@ Attackbox: web_sqlmap_scan, access_hydra_attack, access_smb_enum, web_wordpress_
 Rules:
 1. Work only from the mission context and discovered evidence.
 2. Prefer one strong evidence-backed path at a time; do not bounce between weak ideas.
-3. Use Metasploit for module-driven exploitation and session-oriented execution; use Kali for focused validation and credential/web paths.
+3. Use Metasploit for module-driven exploitation and session-oriented execution; use attackbox tools for focused validation and credential/web paths.
 4. Search with narrow evidence-based terms derived from service, version, platform, or CVE.
 5. Reverse payloads require a reachable non-loopback LHOST; never use 127.0.0.1, localhost, or 0.0.0.0.
 6. After every Metasploit execution attempt, check msf_list_sessions.
 7. Maximum Metasploit execution attempts per run: {self.max_attempts}.
+
+Metasploit doctrine:
+- Use Metasploit when the evidence suggests a module-driven path, a CVE-backed path, or a service that maps cleanly to a known exploit or auxiliary family.
+- Search with narrow service, product, version, banner, or CVE terms.
+- Prefer exact evidence-backed modules over broad exploratory searches.
+- Inspect module info and module options before execution.
+- Fill only the minimum required options from observed evidence.
+- Use auxiliary modules for validation, login checks, or service interrogation when they advance the path.
+- Verify success with msf_list_sessions; module output alone is not enough.
+- Pivot away from Metasploit when no module family matches cleanly or the path depends mostly on guessed options.
+
+Attackbox doctrine:
+- Use attackbox tools when the evidence favors a focused web, credential, SMB, WordPress, or protocol-validation path rather than a Metasploit module.
+- Choose one primary tool for the current hypothesis.
+- Keep tool arguments tightly scoped to observed hosts, paths, forms, services, or interfaces.
+- Use web_sqlmap_scan for strong SQL injection hypotheses.
+- Use access_hydra_attack only when the service and credential hypothesis are evidence-backed.
+- Use access_smb_enum for SMB evidence gathering.
+- Use web_wordpress_scan for WordPress-specific paths.
+- Use system_execute_command only for precise validation that the dedicated tools do not cover.
+- Pivot away from attackbox tools when the path now clearly maps to a strong Metasploit module family or the current tool idea failed cleanly with no new evidence.
 
 Path selection:
 - Favor the strongest evidence-backed path over the most tunable path.
@@ -719,6 +726,22 @@ Option selection:
 
 Finish with a concise summary of what was attempted, why each path was chosen, and whether access or validation succeeded."""
 
+    def _extract_updates(self, messages: List[Dict[str, Any]], state: CyberState, context: str) -> Dict[str, Any]:
+        return extract_striker_updates(
+            messages,
+            state,
+            context,
+            current_agent=self.name,
+            base_update=self._agent_update(state),
+            log_action_payload=self.log_action(
+                state,
+                action="run_exploit",
+                target=None,
+                findings=None,
+                reasoning=context,
+            ),
+        )
+
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
         if not (state.get("discovered_targets", {}) or {}):
             return self._error_update(
@@ -727,8 +750,8 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 message="No discovered targets available for striker exploitation.",
                 recoverable=True,
             )
+        context = build_striker_context(state)
 
-        context = build_striker_context(state, self._render_skills_for_state(state))
         def extract_updates(messages: List[Dict[str, Any]], current_state: CyberState) -> Dict[str, Any]:
             if not messages:
                 return self._error_update(
@@ -738,20 +761,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                     recoverable=False,
                 )
             try:
-                return extract_striker_updates(
-                    messages,
-                    current_state,
-                    context,
-                    current_agent=self.name,
-                    base_update=self._agent_update(current_state),
-                    log_action_payload=self.log_action(
-                        current_state,
-                        action="run_exploit",
-                        target=None,
-                        findings=None,
-                        reasoning=context,
-                    ),
-                )
+                return self._extract_updates(messages, current_state, context)
             except Exception as exc:
                 return self._error_update(
                     current_state,
@@ -768,6 +778,8 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             extractor=extract_updates,
             error_message="Striker LLM/tool loop failed.",
         )
+
+
 async def striker_node(state: CyberState) -> Dict[str, Any]:
     updates = await StrikerAgent().call_llm(state)
     persist_state_update(state, updates)

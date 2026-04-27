@@ -336,7 +336,7 @@ def test_striker_search_only_run_still_records_findings():
             "services": {"80": {"service_name": "http", "version": "Werkzeug 3.1.8"}}
         }
     }
-    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nSKILL GUIDANCE:\nfoo"
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
     messages = [
         ToolMessage(
             tool_call_id="c1",
@@ -357,8 +357,7 @@ def test_striker_search_only_run_still_records_findings():
     assert log_entry["findings"]["status"] == "no_candidate"
     assert log_entry["findings"]["candidate_modules"] == ["multi/http/werkzeug_debug_rce"]
     assert log_entry["findings"]["search_terms"] == ["werkzeug"]
-    assert log_entry["findings"]["skill_guidance"] is True
-    assert "SKILL GUIDANCE:" in log_entry["reasoning"]
+    assert "TARGET INTELLIGENCE:" in log_entry["reasoning"]
 
 
 def test_striker_aborted_execution_records_selected_module():
@@ -368,7 +367,7 @@ def test_striker_aborted_execution_records_selected_module():
             "services": {"80": {"service_name": "http", "version": "Werkzeug 3.1.8"}}
         }
     }
-    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nSKILL GUIDANCE:\nfoo"
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
     messages = [
         ToolMessage(
             tool_call_id="c1",

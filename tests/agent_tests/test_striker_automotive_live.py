@@ -546,7 +546,7 @@ def _validate_live_result(
     assert findings or result.get("exploited_services"), "Live run should produce findings or an execution record"
 
     reasoning = str(log_entry.get("reasoning") or "")
-    assert "SKILL GUIDANCE:" in reasoning
+    assert "TARGET INTELLIGENCE:" in reasoning
     assert "research_cache" not in reasoning.lower() or state["research_cache"]["query"] in str(state["research_cache"])
 
     observed_services = {
