@@ -9,13 +9,13 @@ import re
 from typing import Any, Dict, List
 
 from src.agents.base import BaseAgent
+from src.agents.worker_harness import call_tool, find_tool, load_filtered_tools
 from src.database.persistence import persist_state_update
-from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.state.cyber_state import CyberState
 from src.state.models import DiscoveredTarget, ServiceInfo
 from src.utils.validators import target_in_scope
 
-SCOUT_ALLOWED_TOOLS = {"nmap_scan"}
+SCOUT_ALLOWED_TOOLS = {"recon_host_discovery", "recon_port_scan", "recon_service_probe"}
 MAX_SCOUT_TARGETS = 5
 
 class ScoutAgent(BaseAgent):
@@ -142,54 +142,52 @@ class ScoutAgent(BaseAgent):
             return False
 
     async def _discover_hosts(self, scope_entry: str) -> List[str]:
-        bridge = None
         try:
-            bridge = await get_mcp_bridge()
+            tools = await load_filtered_tools(SCOUT_ALLOWED_TOOLS)
         except Exception:
-            bridge = None
-
-        if bridge is None:
             return []
 
-        tools = bridge.get_tools_for_agent(SCOUT_ALLOWED_TOOLS)
-        nmap_tool = next((tool for tool in tools if tool.name.endswith("nmap_scan")), None)
-        if nmap_tool is None:
+        discovery_tool = find_tool(tools, "recon_host_discovery")
+        if discovery_tool is None:
             return []
 
         try:
-            raw = await nmap_tool.coroutine(
-                target=scope_entry,
-                scan_type="-sn",
-                ports="",
+            raw = await call_tool(
+                discovery_tool,
+                targets=scope_entry,
                 additional_args="-T4",
             )
+            if isinstance(raw.get("evidence"), dict) and isinstance(raw["evidence"].get("hosts"), list):
+                return [str(host) for host in raw["evidence"]["hosts"]]
             return self._parse_host_discovery_output(raw)
         except Exception:
             return []
 
     async def _discover_services(self, target: str) -> Dict[int, ServiceInfo]:
-        bridge = None
         try:
-            bridge = await get_mcp_bridge()
+            tools = await load_filtered_tools(SCOUT_ALLOWED_TOOLS)
         except Exception:
-            bridge = None
+            tools = []
 
-        if bridge is not None:
-            tools = bridge.get_tools_for_agent(SCOUT_ALLOWED_TOOLS)
-            nmap_tool = next((tool for tool in tools if tool.name.endswith("nmap_scan")), None)
-            if nmap_tool:
-                try:
-                    raw = await nmap_tool.coroutine(
-                        target=target,
-                        scan_type="-sV",
-                        ports="1-1024",
-                        additional_args="",
-                    )
-                    parsed = self._parse_nmap_output(raw)
-                    if parsed:
-                        return parsed
-                except Exception:
-                    pass
+        probe_tool = find_tool(tools, "recon_service_probe")
+        if probe_tool:
+            try:
+                raw = await call_tool(
+                    probe_tool,
+                    target=target,
+                    ports="1-1024",
+                    additional_args="",
+                )
+                evidence = raw.get("evidence", {}) if isinstance(raw, dict) else {}
+                services = evidence.get("services", []) if isinstance(evidence, dict) else []
+                parsed = self._parse_service_records(services)
+                if parsed:
+                    return parsed
+                parsed = self._parse_nmap_output(raw)
+                if parsed:
+                    return parsed
+            except Exception:
+                pass
 
         # Safe fallback when MCP is unavailable.
         return {
@@ -214,7 +212,29 @@ class ScoutAgent(BaseAgent):
                     maybe_text = value.get("output") or value.get("stdout")
                     if isinstance(maybe_text, str):
                         return maybe_text
+            raw = payload.get("raw")
+            if isinstance(raw, dict):
+                maybe_text = raw.get("stdout") or raw.get("output")
+                if isinstance(maybe_text, str):
+                    return maybe_text
         return ""
+
+    def _parse_service_records(self, services: List[Dict[str, Any]]) -> Dict[int, ServiceInfo]:
+        parsed: Dict[int, ServiceInfo] = {}
+        for service in services:
+            if not isinstance(service, dict):
+                continue
+            port = int(service.get("port", 0) or 0)
+            if port <= 0:
+                continue
+            parsed[port] = ServiceInfo(
+                port=port,
+                protocol=str(service.get("protocol", "tcp") or "tcp"),
+                service_name=str(service.get("service_name", "unknown") or "unknown"),
+                version=service.get("version"),
+                banner=service.get("banner"),
+            )
+        return parsed
 
     def _parse_host_discovery_output(self, raw_output: Any) -> List[str]:
         text = self._extract_text_payload(raw_output)

@@ -2,7 +2,7 @@
 # =============================================================================
 # reset_testbed.sh
 # Stops and removes the automotive testbed container.
-# The main VT-SaiBER stack (postgres, kali-mcp, msf-mcp, agents) is unaffected.
+# The main VT-SaiBER stack (postgres, attackbox, agents) is unaffected.
 #
 # Usage:
 #   bash scripts/testbed/reset_testbed.sh          # stop container only

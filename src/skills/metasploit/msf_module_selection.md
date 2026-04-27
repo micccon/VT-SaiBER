@@ -15,7 +15,7 @@ What this skill is for:
 Use this skill after search results are available and you need to choose which module is the best next path.
 
 When to use it:
-- After `list_exploits` returns candidate modules
+- After `msf_search_modules` returns candidate modules
 - When several modules seem related to the same target
 - Before spending time inspecting options or executing a module
 

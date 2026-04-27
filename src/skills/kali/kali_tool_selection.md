@@ -25,28 +25,28 @@ How to choose the tool:
 - Pick the one tool that best matches the strongest current evidence
 - Prefer dedicated tools over generic commands
 - Choose the path that validates the clearest hypothesis with the least noise
-- Use `execute_command` only when the dedicated tools do not fit
+- Use `system_execute_command` only when the dedicated tools do not fit
 
 Core rules:
-- `wpscan_analyze` fits WordPress-specific surfaces
-- `sqlmap_scan` fits a strong SQL injection or web-form hypothesis
-- `enum4linux_scan` fits SMB discovery and account-oriented follow-up
-- `hydra_attack` fits evidence-backed credential validation against a known service
-- `execute_command` is the fallback for precise validation that does not fit the dedicated Kali tools
+- `web_wordpress_scan` fits WordPress-specific surfaces
+- `web_sqlmap_scan` fits a strong SQL injection or web-form hypothesis
+- `access_smb_enum` fits SMB discovery and account-oriented follow-up
+- `access_hydra_attack` fits evidence-backed credential validation against a known service
+- `system_execute_command` is the fallback for precise validation that does not fit the dedicated attackbox tools
 - Use the chosen tool first unless new evidence clearly favors a different path
 
 Good patterns:
 - WordPress indicators present
-  Good: choose `wpscan_analyze`
+  Good: choose `web_wordpress_scan`
 - A strong SQLi hint on one route or form
-  Good: choose `sqlmap_scan`
+  Good: choose `web_sqlmap_scan`
 - SMB present and accounts are still unknown
-  Good: choose `enum4linux_scan`
+  Good: choose `access_smb_enum`
 - Known service plus evidence-backed credentials
-  Good: choose `hydra_attack`
+  Good: choose `access_hydra_attack`
 
 Bad patterns:
-- Starting with `execute_command` because it feels flexible
+- Starting with `system_execute_command` because it feels flexible
 - Using two or three tools in parallel for the same vague idea
 - Choosing a tool that does not match the strongest available signal
 

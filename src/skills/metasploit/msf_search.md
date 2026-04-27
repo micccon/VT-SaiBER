@@ -10,7 +10,7 @@ triggers:
   - metasploit
 ---
 MSF SEARCH:
-Use this skill to keep `list_exploits` focused on observed target evidence.
+Use this skill to keep `msf_search_modules` focused on observed target evidence.
 
 What this skill is for:
 Use this skill when you need to search Metasploit for modules that match the current target, service, product, version, banner, web path, or CVE.

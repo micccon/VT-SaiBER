@@ -9,11 +9,11 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.agents.base import BaseAgent
+from src.agents.worker_harness import call_tool, find_tool, load_filtered_tools
 from src.database.persistence import persist_state_update
-from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.state.cyber_state import CyberState
 
-FUZZER_ALLOWED_TOOLS = {"gobuster_scan", "nikto_scan"}
+FUZZER_ALLOWED_TOOLS = {"web_content_enum", "web_nikto_scan"}
 MAX_RECURSION_DEPTH = 3
 REQUEST_THROTTLE_MS = 200
 SOFT_404_STATUSES = {404}
@@ -90,25 +90,20 @@ class FuzzerAgent(BaseAgent):
         return None
 
     async def _enumerate_paths(self, base_url: str) -> List[Dict[str, Any]]:
-        bridge = None
         try:
-            bridge = await get_mcp_bridge()
+            tools = await load_filtered_tools(FUZZER_ALLOWED_TOOLS)
         except Exception:
-            bridge = None
-
-        if bridge is None:
             return []
 
-        tools = bridge.get_tools_for_agent(FUZZER_ALLOWED_TOOLS)
         findings: List[Dict[str, Any]] = []
-        gobuster_tool = next((tool for tool in tools if tool.name.endswith("gobuster_scan")), None)
-        nikto_tool = next((tool for tool in tools if tool.name.endswith("nikto_scan")), None)
+        gobuster_tool = find_tool(tools, "web_content_enum")
+        nikto_tool = find_tool(tools, "web_nikto_scan")
 
         if gobuster_tool is not None:
             try:
-                raw = await gobuster_tool.coroutine(
+                raw = await call_tool(
+                    gobuster_tool,
                     url=base_url,
-                    mode="dir",
                     wordlist="/usr/share/wordlists/dirb/common.txt",
                     additional_args=f"--delay {REQUEST_THROTTLE_MS}ms",
                 )
@@ -118,7 +113,8 @@ class FuzzerAgent(BaseAgent):
 
         if nikto_tool is not None:
             try:
-                raw = await nikto_tool.coroutine(
+                raw = await call_tool(
+                    nikto_tool,
                     target=base_url,
                     additional_args="",
                 )
@@ -161,6 +157,11 @@ class FuzzerAgent(BaseAgent):
                     maybe_text = value.get("output") or value.get("stdout")
                     if isinstance(maybe_text, str):
                         return maybe_text
+            raw = payload.get("raw")
+            if isinstance(raw, dict):
+                maybe_text = raw.get("stdout") or raw.get("output")
+                if isinstance(maybe_text, str):
+                    return maybe_text
         return ""
 
     def _parse_gobuster_output(self, raw_output: Any, base_url: str) -> List[Dict[str, Any]]:

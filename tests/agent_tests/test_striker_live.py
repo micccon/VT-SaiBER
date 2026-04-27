@@ -1,7 +1,7 @@
 """
 Live striker integration test.
 
-Runs inside the agents container, performs a real Kali `nmap_scan` through the
+Runs inside the agents container, performs a real attackbox `recon_service_probe` through the
 MCP bridge, normalizes the scan into `CyberState.discovered_targets`, and then
 hands that state to the real unified striker worker.
 
@@ -88,17 +88,17 @@ async def _live_bridge_ready() -> bool:
     try:
         bridge = await get_mcp_bridge()
         exploit_tools = {tool.name for tool in bridge.get_tools_for_agent(em.STRIKER_ALLOWED_TOOLS)}
-        scout_tools = {tool.name for tool in bridge.get_tools_for_agent({"nmap_scan"})}
+        scout_tools = {tool.name for tool in bridge.get_tools_for_agent({"recon_service_probe"})}
     except Exception:
         return False
     required = {
-        "msf_list_exploits",
+        "msf_search_modules",
         "msf_get_module_options",
         "msf_run_exploit",
-        "msf_run_auxiliary_module",
-        "msf_list_active_sessions",
+        "msf_run_auxiliary",
+        "msf_list_sessions",
     }
-    return required.issubset(exploit_tools) and any(name.endswith("nmap_scan") for name in scout_tools)
+    return required.issubset(exploit_tools) and "recon_service_probe" in scout_tools
 
 
 def _run(coro):
@@ -114,25 +114,26 @@ def _run(coro):
 async def _scan_target_into_state(target: str) -> tuple[Dict[str, Any], str]:
     bridge = await get_mcp_bridge()
     nmap_tool = next(
-        (tool for tool in bridge.get_tools_for_agent({"nmap_scan"}) if tool.name.endswith("nmap_scan")),
+        (tool for tool in bridge.get_tools_for_agent({"recon_service_probe"}) if tool.name == "recon_service_probe"),
         None,
     )
     if nmap_tool is None:
-        raise RuntimeError("Live Kali nmap_scan tool is unavailable")
+        raise RuntimeError("Live attackbox recon_service_probe tool is unavailable")
 
     raw_scan = await nmap_tool.coroutine(
         target=target,
-        scan_type=LIVE_NMAP_SCAN_TYPE,
         ports=LIVE_NMAP_PORTS,
         additional_args=LIVE_NMAP_EXTRA_ARGS,
     )
 
     scout = ScoutAgent()
-    services = scout._parse_nmap_output(raw_scan)
+    parsed = json.loads(raw_scan) if isinstance(raw_scan, str) else raw_scan
+    service_records = (((parsed or {}).get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
+    services = scout._parse_service_records(service_records) or scout._parse_nmap_output(raw_scan)
     if not services:
         text = scout._extract_text_payload(raw_scan) or str(raw_scan)
         raise RuntimeError(
-            f"No open services were parsed from Kali nmap output for {target}. Raw output:\n{text}"
+            f"No open services were parsed from attackbox service probe output for {target}. Raw output:\n{text}"
         )
 
     state = _base_state(target)
@@ -158,7 +159,7 @@ async def _scan_target_into_state(target: str) -> tuple[Dict[str, Any], str]:
 
 def test_striker_live_scans_into_cyberstate_then_runs_worker(monkeypatch):
     if not _run(_live_bridge_ready()):
-        pytest.skip("Live Kali/MSF MCP bridge or required tools are unavailable")
+        pytest.skip("Live attackbox MCP bridge or required tools are unavailable")
 
     try:
         state, raw_scan = _run(_scan_target_into_state(LIVE_TARGET))

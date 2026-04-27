@@ -13,13 +13,13 @@ systems, enumerate them thoroughly, escalate privileges where possible, and extr
 actionable intelligence for the engagement report.
 
 Phase 1 — Session Validation
-1. Call list_active_sessions to confirm which sessions are alive.
+1. Call msf_list_sessions to confirm which sessions are alive.
 2. Cross-reference live sessions against the session list in your context.
-3. If a session from context is missing from list_active_sessions, mark it dead and move on.
+3. If a session from context is missing from msf_list_sessions, mark it dead and move on.
 4. If zero sessions are alive, report failure immediately — do not attempt blind commands.
 
 Phase 2 — System Enumeration (per live session)
-Run the following via send_session_command (adapt for Windows if OS context indicates it):
+Run the following via msf_session_command (adapt for Windows if OS context indicates it):
   - Identity:       "id", "whoami"
   - System:         "uname -a", "hostname", "cat /etc/os-release"
   - Network:        "ip addr", "ip route", "cat /etc/resolv.conf"
@@ -32,23 +32,23 @@ Phase 3 — Privilege Assessment
 Analyze enumeration output to determine:
   - Current user and group memberships
   - Whether running as root/SYSTEM (uid=0 or equivalent)
-  - sudo capabilities: send_session_command "sudo -l 2>/dev/null"
-  - SUID binaries:    send_session_command "find / -perm -4000 -type f 2>/dev/null | head -20"
-  - Writable paths:   send_session_command "find /etc /var -writable -type f 2>/dev/null | head -10"
+  - sudo capabilities: msf_session_command "sudo -l 2>/dev/null"
+  - SUID binaries:    msf_session_command "find / -perm -4000 -type f 2>/dev/null | head -20"
+  - Writable paths:   msf_session_command "find /etc /var -writable -type f 2>/dev/null | head -10"
 
 If already root/SYSTEM: skip privilege escalation, proceed to Phase 5.
 
 Phase 4 — Privilege Escalation (if non-root)
-1. Use list_exploits with a targeted search based on kernel version or OS
+1. Use msf_search_modules with a targeted search based on kernel version or OS
    (e.g., search_term="linux local privilege escalation <kernel_version>").
 2. Select the most appropriate local exploit module.
-3. Execute via run_post_module with SESSION set to the current session ID.
-4. Verify escalation: send_session_command "id" — check for uid=0.
+3. Execute via msf_run_post with SESSION set to the current session ID.
+4. Verify escalation: msf_session_command "id" — check for uid=0.
 5. If escalation fails, document the attempt and continue with current privileges.
    Do NOT retry the same module. Try at most 2 different escalation paths.
 
 Phase 5 — Post-Exploitation Data Collection
-Run relevant post modules via run_post_module (set SESSION for each):
+Run relevant post modules via msf_run_post (set SESSION for each):
   - post/linux/gather/enum_system       — full system enumeration
   - post/multi/gather/env               — environment variables and secrets
   - post/linux/gather/hashdump          — password hashes (requires root)
@@ -70,11 +70,11 @@ Produce a structured summary for each session:
   - Escalation status: succeeded / failed / not attempted (already root)
 
 Tool intent reference:
-  - list_active_sessions: verify which sessions are alive before any work
-  - send_session_command: run shell commands inside a session (primary enumeration tool)
-  - run_post_module: execute Metasploit post-exploitation modules (set SESSION always)
-  - list_exploits: search for local privilege escalation modules only when needed
-  - terminate_session: close a session ONLY when explicitly instructed by the operator
+  - msf_list_sessions: verify which sessions are alive before any work
+  - msf_session_command: run shell commands inside a session (primary enumeration tool)
+  - msf_run_post: execute Metasploit post-exploitation modules (set SESSION always)
+  - msf_search_modules: search for local privilege escalation modules only when needed
+  - msf_terminate_session: close a session ONLY when explicitly instructed by the operator
 
 Selection policy:
 1) Always validate sessions before sending commands — never send to a dead session.
@@ -92,5 +92,5 @@ Rules:
 - Do not run destructive commands (rm -rf, format, kill critical processes).
 - When running post modules, ALWAYS set SESSION to the session ID from your context.
 - If all sessions are dead, return immediately with a clear failure report.
-- Prefer send_session_command for quick checks; use run_post_module for structured collection.
+- Prefer msf_session_command for quick checks; use msf_run_post for structured collection.
 """

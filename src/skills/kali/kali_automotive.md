@@ -29,7 +29,7 @@ How to choose the next step:
 Core rules:
 - Prefer exact, evidence-backed commands over general shell exploration
 - Treat automotive protocol work as validation, not generic host exploitation
-- Use `execute_command` only for narrowly scoped checks that you can explain
+- Use `system_execute_command` only for narrowly scoped checks that you can explain
 - Keep commands reversible and focused when possible
 - Avoid turning protocol validation into noisy host-level exploration
 

@@ -37,7 +37,7 @@ fi
 
 # 3. Wait for ALL containers to be healthy
 echo "[3/4] Waiting for all services to be healthy..."
-services=("vt-saiber-postgres" "vt-saiber-kali-mcp" "vt-saiber-msf-mcp")
+services=("vt-saiber-postgres" "vt-saiber-attackbox")
 
 for container in "${services[@]}"; do
     echo "   ⏳ Checking $container..."
@@ -102,12 +102,8 @@ FAIL=0
 
 # Test Agents -> Kali
 # Removing -s so we see errors, but capturing them in variable
-run_test "Testing Agents -> Kali MCP" \
-    "docker exec vt-saiber-agents curl -v --fail http://kali-mcp:5000/health" || FAIL=1
-
-# Test Agents -> Metasploit
-run_test "Testing Agents -> Metasploit MCP" \
-    "docker exec vt-saiber-agents curl -v --fail http://msf-mcp:8085/docs" || FAIL=1
+run_test "Testing Agents -> Attackbox MCP" \
+    "docker exec vt-saiber-agents python3 -c \"import socket; socket.create_connection(('attackbox', 8080), 3).close()\"" || FAIL=1
 
 # Test Agents -> Postgres (Using Python Socket)
 run_test "Testing Agents -> PostgreSQL (Port Check)" \

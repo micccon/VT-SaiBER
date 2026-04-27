@@ -27,17 +27,17 @@ How to choose the next step:
 - Prefer one service at a time rather than spraying across multiple protocols
 
 Core rules:
-- Prefer `enum4linux_scan` first for SMB-oriented evidence gathering
-- Use `hydra_attack` only when the target service is known and the input credentials are justified
+- Prefer `access_smb_enum` first for SMB-oriented evidence gathering
+- Use `access_hydra_attack` only when the target service is known and the input credentials are justified
 - Keep Hydra attempts bounded to the specific service under test
 - Use real credential inputs from CyberState, operator context, or clear prior findings
 - Treat credential validation as hypothesis testing, not guessing
 
 Good patterns:
 - SMB is open and no valid accounts are known
-  Good: start with `enum4linux_scan`
+  Good: start with `access_smb_enum`
 - SSH is open and state already includes a username/password pair
-  Good: run `hydra_attack` against SSH with those exact creds
+  Good: run `access_hydra_attack` against SSH with those exact creds
 - A small username list and one evidence-backed password candidate
   Good: test only that bounded combination set
 

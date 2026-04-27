@@ -1,7 +1,7 @@
 """
 Live striker-only automotive integration test.
 
-Runs inside the agents container, performs a real Kali `nmap_scan`, executes
+Runs inside the agents container, performs a real attackbox `recon_service_probe`, executes
 real web fuzzing tools directly through the MCP bridge, persists those findings
 into the operational database, queries the database and RAG layer using the
 fresh evidence, and then invokes only the striker worker.
@@ -243,7 +243,7 @@ async def _live_prereqs_ready() -> bool:
         striker_tools = {tool.name for tool in bridge.get_tools_for_agent(striker_module.STRIKER_ALLOWED_TOOLS)}
         _step(f"Striker tool count: {len(striker_tools)}")
         _step("Filtering scout tools for prereq check")
-        scout_tools = {tool.name for tool in bridge.get_tools_for_agent({"nmap_scan"})}
+        scout_tools = {tool.name for tool in bridge.get_tools_for_agent({"recon_service_probe"})}
         _step(f"Scout tool count: {len(scout_tools)}")
         _step("Filtering fuzzer tools for prereq check")
         fuzz_tools = {tool.name for tool in bridge.get_tools_for_agent(FUZZER_ALLOWED_TOOLS)}
@@ -252,16 +252,14 @@ async def _live_prereqs_ready() -> bool:
         return False
 
     required_striker = {
-        "msf_list_exploits",
+        "msf_search_modules",
         "msf_get_module_options",
         "msf_run_exploit",
-        "msf_run_auxiliary_module",
-        "msf_list_active_sessions",
+        "msf_run_auxiliary",
+        "msf_list_sessions",
     }
-    has_nmap = any(name.endswith("nmap_scan") for name in scout_tools)
-    has_fuzzer = any(name.endswith("gobuster_scan") for name in fuzz_tools) or any(
-        name.endswith("nikto_scan") for name in fuzz_tools
-    )
+    has_nmap = "recon_service_probe" in scout_tools
+    has_fuzzer = ("web_content_enum" in fuzz_tools) or ("web_nikto_scan" in fuzz_tools)
     return required_striker.issubset(striker_tools) and has_nmap and has_fuzzer
 
 
@@ -269,25 +267,26 @@ async def _scan_target_into_state(
     target: str,
     mission_id: str,
 ) -> Tuple[CyberState, str]:
-    _step(f"Starting Kali nmap scan for {target}")
-    tools = await _bridge_tools_for_suffixes({"nmap_scan"})
-    nmap_tool = tools.get("nmap_scan")
+    _step(f"Starting attackbox service probe for {target}")
+    tools = await _bridge_tools_for_suffixes({"recon_service_probe"})
+    nmap_tool = tools.get("recon_service_probe")
     if nmap_tool is None:
-        raise RuntimeError("Live Kali nmap_scan tool is unavailable")
+        raise RuntimeError("Live attackbox recon_service_probe tool is unavailable")
 
     raw_scan = await nmap_tool.coroutine(
         target=target,
-        scan_type=LIVE_NMAP_SCAN_TYPE,
         ports=LIVE_NMAP_PORTS,
         additional_args=LIVE_NMAP_EXTRA_ARGS,
     )
-    _step("Finished Kali nmap scan; parsing discovered services")
+    _step("Finished attackbox service probe; parsing discovered services")
 
     scout = ScoutAgent()
-    services = scout._parse_nmap_output(raw_scan)
+    parsed = json.loads(raw_scan) if isinstance(raw_scan, str) else raw_scan
+    service_records = (((parsed or {}).get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
+    services = scout._parse_service_records(service_records) or scout._parse_nmap_output(raw_scan)
     if not services:
         text = scout._extract_text_payload(raw_scan) or str(raw_scan)
-        raise RuntimeError(f"No open services were parsed from Kali nmap output for {target}.\n{text}")
+        raise RuntimeError(f"No open services were parsed from attackbox service probe output for {target}.\n{text}")
 
     state = _base_state(target, mission_id)
     state["discovered_targets"] = {

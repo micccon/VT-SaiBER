@@ -13,6 +13,7 @@ import asyncio
 import json
 import sys
 import traceback
+from types import SimpleNamespace
 
 sys.path.insert(0, "/app")
 
@@ -80,7 +81,7 @@ def _make_msf_search_tool(results_by_term: dict[str, list[str]]) -> StructuredTo
     return StructuredTool.from_function(
         func=lambda **kwargs: results_by_term.get(str(kwargs.get("search_term", "") or "").strip().lower(), []),
         coroutine=_async_tool,
-        name="msf_list_exploits",
+        name="msf_search_modules",
         description="Mock Metasploit search",
     )
 
@@ -104,15 +105,6 @@ def _make_msf_options_tool(results_by_module: dict[tuple[str, str], dict[str, ob
         name="msf_get_module_options",
         description="Mock Metasploit option lookup",
     )
-
-
-class MockBridge:
-    def __init__(self, tools):
-        self._tools = tools
-
-    def get_tools_for_agent(self, allowed_tools):
-        _ = allowed_tools
-        return self._tools
 
 
 class PatchContext:
@@ -223,32 +215,29 @@ async def test_scout_output_feeds_striker():
     """Verify Scout's discovered_targets output is consumed by Striker's context builder."""
     patches = PatchContext()
     try:
-        nmap_tool = _make_tool("kali_nmap_scan")
-
-        async def fake_nmap(**kwargs):
+        async def fake_probe(**kwargs):
             return json.dumps({
-                "output": (
-                    "22/tcp   open  ssh     OpenSSH 8.2p1 Ubuntu\n"
-                    "80/tcp   open  http    Apache httpd 2.4.41\n"
-                    "3306/tcp open  mysql   MySQL 5.7.33\n"
-                )
+                "status": "success",
+                "evidence": {
+                    "services": [
+                        {"port": 22, "protocol": "tcp", "service_name": "ssh", "version": "OpenSSH 8.2p1 Ubuntu"},
+                        {"port": 80, "protocol": "tcp", "service_name": "http", "version": "Apache httpd 2.4.41"},
+                        {"port": 3306, "protocol": "tcp", "service_name": "mysql", "version": "MySQL 5.7.33"},
+                    ]
+                },
             })
 
-        nmap_tool_patched = StructuredTool.from_function(
+        probe_tool = StructuredTool.from_function(
             func=lambda **kw: "{}",
-            coroutine=fake_nmap,
-            name="kali_nmap_scan",
-            description="Mock nmap",
+            coroutine=fake_probe,
+            name="recon_service_probe",
+            description="Mock service probe",
         )
 
-        class NmapBridge:
-            def get_tools_for_agent(self, allowed):
-                return [nmap_tool_patched]
+        async def fake_load_filtered_tools(_allowed):
+            return [probe_tool]
 
-        async def fake_get_bridge():
-            return NmapBridge()
-
-        patches.set(scout_mod, "get_mcp_bridge", fake_get_bridge)
+        patches.set(scout_mod, "load_filtered_tools", fake_load_filtered_tools)
 
         initial = build_initial_state("Exploit target", ["192.168.1.0/24"], "test-002")
         initial["target_scope"] = ["192.168.1.50"]
@@ -266,12 +255,12 @@ async def test_scout_output_feeds_striker():
             return
 
         merged_state = {**initial, **scout_output}
-        evidence = striker_mod._build_evidence(merged_state)
-        if not any(service.target == "192.168.1.50" for service in evidence.services):
-            results.add_fail("test_scout_feeds_striker", "Target IP not in Striker evidence")
+        striker_context = striker_mod._build_striker_context(merged_state)
+        if "192.168.1.50" not in striker_context:
+            results.add_fail("test_scout_feeds_striker", "Target IP not in Striker context")
             return
-        if not any(service.name == "ssh" for service in evidence.services):
-            results.add_fail("test_scout_feeds_striker", "SSH service not in Striker evidence")
+        if "ssh" not in striker_context.lower():
+            results.add_fail("test_scout_feeds_striker", "SSH service not in Striker context")
             return
 
         results.add_pass("test_scout_feeds_striker")
@@ -325,7 +314,7 @@ async def test_striker_output_feeds_resident():
                 name="msf_run_exploit",
                 description="Mock exploit execution",
             ),
-            _make_tool("msf_run_auxiliary_module"),
+            _make_tool("msf_run_auxiliary"),
             StructuredTool.from_function(
                 func=lambda **kwargs: json.dumps(
                     {"status": "success", "sessions": {"3": {"target_host": "192.168.1.50"}}}
@@ -336,15 +325,75 @@ async def test_striker_output_feeds_resident():
                         {"status": "success", "sessions": {"3": {"target_host": "192.168.1.50"}}}
                     ),
                 ),
-                name="msf_list_active_sessions",
+                name="msf_list_sessions",
                 description="Mock session listing",
             ),
         ]
 
-        async def fake_get_bridge():
-            return MockBridge(msf_tools)
+        async def fake_load_filtered_tools(_allowed):
+            return msf_tools
 
-        patches.set(striker_mod, "get_mcp_bridge", fake_get_bridge)
+        async def fake_run_agent_tool_loop(**kwargs):
+            return SimpleNamespace(
+                messages=[
+                    ToolMessage(
+                        tool_call_id="c1",
+                        name="msf_search_modules",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "result": ["exploit/multi/http/apache_demo"],
+                                "invocation": {"search_term": "apache"},
+                            }
+                        ),
+                    ),
+                    ToolMessage(
+                        tool_call_id="c2",
+                        name="msf_get_module_options",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "options": [
+                                    {"name": "RHOSTS", "required": True},
+                                    {"name": "RPORT", "required": True},
+                                ],
+                                "invocation": {
+                                    "module_type": "exploit",
+                                    "module_name": "multi/http/apache_demo",
+                                },
+                            }
+                        ),
+                    ),
+                    ToolMessage(
+                        tool_call_id="c3",
+                        name="msf_run_exploit",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "module": "exploit/multi/http/apache_demo",
+                                "session_id": 3,
+                                "invocation": {
+                                    "module_name": "multi/http/apache_demo",
+                                    "options": {"RHOSTS": "192.168.1.50", "RPORT": 80},
+                                },
+                            }
+                        ),
+                    ),
+                    ToolMessage(
+                        tool_call_id="c4",
+                        name="msf_list_sessions",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "sessions": {"3": {"target_host": "192.168.1.50"}},
+                            }
+                        ),
+                    ),
+                ]
+            )
+
+        patches.set(striker_mod, "load_filtered_tools", fake_load_filtered_tools)
+        patches.set(striker_mod, "run_agent_tool_loop", fake_run_agent_tool_loop)
 
         pre_state = build_initial_state("Exploit target", ["192.168.1.0/24"], "test-003")
         pre_state["discovered_targets"] = {
@@ -405,13 +454,9 @@ async def test_full_pipeline_state_propagation():
         nmap_tool = StructuredTool.from_function(
             func=lambda **kw: "{}",
             coroutine=fake_nmap,
-            name="kali_nmap_scan",
-            description="Mock nmap",
+            name="recon_service_probe",
+            description="Mock service probe",
         )
-
-        class ScoutBridge:
-            def get_tools_for_agent(self, allowed):
-                return [nmap_tool]
 
         # Mock Striker's full chain
         msf_tools = [
@@ -449,7 +494,7 @@ async def test_full_pipeline_state_propagation():
                 name="msf_run_exploit",
                 description="Mock exploit execution",
             ),
-            _make_tool("msf_run_auxiliary_module"),
+            _make_tool("msf_run_auxiliary"),
             StructuredTool.from_function(
                 func=lambda **kwargs: json.dumps(
                     {"status": "success", "sessions": {"5": {"target_host": "10.0.0.1"}}}
@@ -460,67 +505,118 @@ async def test_full_pipeline_state_propagation():
                         {"status": "success", "sessions": {"5": {"target_host": "10.0.0.1"}}}
                     ),
                 ),
-                name="msf_list_active_sessions",
+                name="msf_list_sessions",
                 description="Mock session listing",
             ),
         ]
 
-        class StrikerBridge:
-            def get_tools_for_agent(self, allowed):
-                return msf_tools
-
         # Mock Resident's tools
         resident_tools = [
-            _make_tool("msf_list_active_sessions"),
-            _make_tool("msf_send_session_command"),
-            _make_tool("msf_run_post_module"),
-            _make_tool("msf_list_exploits"),
+            _make_tool("msf_list_sessions"),
+            _make_tool("msf_session_command"),
+            _make_tool("msf_run_post"),
+            _make_tool("msf_search_modules"),
             _make_tool("msf_terminate_session"),
         ]
-
-        class ResidentBridge:
-            def get_tools_for_agent(self, allowed):
-                return resident_tools
 
         # Phase tracking
         phase = {"current": "scout"}
 
-        async def phased_bridge():
+        async def phased_tools(_allowed):
             if phase["current"] == "scout":
-                return ScoutBridge()
+                return [nmap_tool]
             if phase["current"] == "striker":
-                return StrikerBridge()
-            return ResidentBridge()
+                return msf_tools
+            return resident_tools
 
-        def fake_create_react_resident(model, tools, **kwargs):
-            class FakeAgent:
-                async def ainvoke(self, payload):
-                    return {
-                        "messages": [
-                            ToolMessage(
-                                tool_call_id="c1",
-                                name="msf_send_session_command",
-                                content=json.dumps({
-                                    "output": "uid=0(root) gid=0(root)",
-                                    "status": "success",
-                                }),
-                            ),
-                            ToolMessage(
-                                tool_call_id="c2",
-                                name="msf_run_post_module",
-                                content=json.dumps({
-                                    "status": "success",
-                                    "module": "post/linux/gather/enum_system",
-                                    "module_output": "Linux box 5.4.0-91-generic",
-                                }),
-                            ),
-                        ]
-                    }
-            return FakeAgent()
+        async def fake_run_striker_tool_loop(**kwargs):
+            return SimpleNamespace(
+                messages=[
+                    ToolMessage(
+                        tool_call_id="c1",
+                        name="msf_search_modules",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "result": ["exploit/multi/http/apache_demo"],
+                                "invocation": {"search_term": "apache"},
+                            }
+                        ),
+                    ),
+                    ToolMessage(
+                        tool_call_id="c2",
+                        name="msf_get_module_options",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "options": [
+                                    {"name": "RHOSTS", "required": True},
+                                    {"name": "RPORT", "required": True},
+                                ],
+                                "invocation": {
+                                    "module_type": "exploit",
+                                    "module_name": "multi/http/apache_demo",
+                                },
+                            }
+                        ),
+                    ),
+                    ToolMessage(
+                        tool_call_id="c3",
+                        name="msf_run_exploit",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "module": "exploit/multi/http/apache_demo",
+                                "session_id": 5,
+                                "invocation": {
+                                    "module_name": "multi/http/apache_demo",
+                                    "options": {"RHOSTS": "10.0.0.1", "RPORT": 80},
+                                },
+                            }
+                        ),
+                    ),
+                    ToolMessage(
+                        tool_call_id="c4",
+                        name="msf_list_sessions",
+                        content=json.dumps(
+                            {
+                                "status": "success",
+                                "sessions": {"5": {"target_host": "10.0.0.1"}},
+                            }
+                        ),
+                    ),
+                ]
+            )
+
+        def fake_resolve_openrouter_runtime(**kwargs):
+            return SimpleNamespace(client=object(), model="test-model")
+
+        async def fake_run_resident_tool_loop(**kwargs):
+            return SimpleNamespace(
+                messages=[
+                    ToolMessage(
+                        tool_call_id="c1",
+                        name="msf_session_command",
+                        content=json.dumps({
+                            "output": "uid=0(root) gid=0(root)",
+                            "status": "success",
+                        }),
+                    ),
+                    ToolMessage(
+                        tool_call_id="c2",
+                        name="msf_run_post",
+                        content=json.dumps({
+                            "status": "success",
+                            "module": "post/linux/gather/enum_system",
+                            "module_output": "Linux box 5.4.0-91-generic",
+                        }),
+                    ),
+                ]
+            )
 
         # --- Phase 1: Scout ---
         phase["current"] = "scout"
-        patches.set(scout_mod, "get_mcp_bridge", phased_bridge)
+        patches.set(scout_mod, "load_filtered_tools", phased_tools)
 
         state = build_initial_state("Full pipeline test", ["10.0.0.0/24"], "test-pipeline-001")
         state["target_scope"] = ["10.0.0.1"]
@@ -533,7 +629,8 @@ async def test_full_pipeline_state_propagation():
 
         # --- Phase 2: Striker ---
         phase["current"] = "striker"
-        patches.set(striker_mod, "get_mcp_bridge", phased_bridge)
+        patches.set(striker_mod, "load_filtered_tools", phased_tools)
+        patches.set(striker_mod, "run_agent_tool_loop", fake_run_striker_tool_loop)
         striker_agent = striker_mod.StrikerAgent()
         striker_agent.require_confirmation = False
 
@@ -550,9 +647,9 @@ async def test_full_pipeline_state_propagation():
 
         # --- Phase 3: Resident ---
         phase["current"] = "resident"
-        patches.set(resident_mod, "get_mcp_bridge", phased_bridge)
-        patches.set(resident_mod, "_build_llm", fake_build_llm)
-        patches.set(resident_mod, "create_react_agent", fake_create_react_resident)
+        patches.set(resident_mod, "load_filtered_tools", phased_tools)
+        patches.set(resident_mod, "resolve_openrouter_runtime", fake_resolve_openrouter_runtime)
+        patches.set(resident_mod, "run_agent_tool_loop", fake_run_resident_tool_loop)
 
         resident_out = await resident_mod.resident_node(state)
         state = {**state, **resident_out}

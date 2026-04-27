@@ -2,7 +2,7 @@
 # =============================================================================
 # setup_testbed.sh
 # Starts the automotive pentesting testbed and connects it to vt-saiber-network
-# so that kali-mcp and msf-mcp containers can reach it by hostname.
+# so that the unified attackbox container can reach it by hostname.
 #
 # Usage:
 #   bash scripts/testbed/setup_testbed.sh

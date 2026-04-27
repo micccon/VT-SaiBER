@@ -5,9 +5,8 @@
 #
 # Services defined:
 #   1. postgres  - PostgreSQL database
-#   2. kali-mcp  - Kali Linux tools MCP server
-#   3. msf-mcp   - Metasploit Framework MCP server
-#   4. agents    - Python application (your agents)
+#   2. attackbox - Unified Kali + Metasploit MCP server
+#   3. agents    - Python application (your agents)
 
 version: '3.8'
 
@@ -92,82 +91,43 @@ services:
       "
 
   # ---------------------------------------------------------------------------
-  # Kali MCP Server
+  # Unified Attackbox MCP Server
   # ---------------------------------------------------------------------------
-  # Provides: nmap, gobuster, ffuf, nikto, and other security tools
-  # Uses pre-built mcp-kali-server package from Kali repos
-  kali-mcp:
-    # Build from Dockerfile instead of pulling pre-built image
-    build:
-      context: .                          # Build context is project root
-      dockerfile: docker/kali_mcp.Dockerfile  # Path to Dockerfile
-    
-    container_name: vt-saiber-kali-mcp
-    
-    networks:
-      - vt-saiber-network
-    
-    # Port 5000 inside container
-    # Not mapped to host (only accessible inside Docker network)
-    ports:
-      - "5000"
-      - "5001"
-
-    # Mount startup script (in case we need to update it without rebuilding)
-    volumes:
-      - ./scripts/docker/start_kali_mcp.sh:/app/start_kali_mcp.sh:ro
-      - ./src/mcp/kali_mcp_server.py:/app/kali-mcp/mcp_server.py:ro
-
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    
-    restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # Metasploit MCP Server
-  # ---------------------------------------------------------------------------
-  # Provides: Metasploit exploits, payloads, sessions
-  # Uses MetasploitMCP from GitHub
-  msf-mcp:
+  attackbox:
     build:
       context: .
-      dockerfile: docker/msf_mcp.Dockerfile
-    
-    container_name: vt-saiber-msf-mcp
-    
-    entrypoint: []
+      dockerfile: docker/attackbox.Dockerfile
 
-    # Environment variables for Metasploit RPC
+    container_name: vt-saiber-attackbox
+
     environment:
       - MSF_PASSWORD=${MSF_PASSWORD}
       - MSF_SERVER=127.0.0.1
       - MSF_PORT=55553
       - MSF_SSL=false
-      - DATABASE_URL=postgres://vtsaiber:${DB_PASSWORD}@vt-saiber-postgres:5432/vtsaiber
-    
+      - ATTACKBOX_MCP_HOST=0.0.0.0
+      - ATTACKBOX_MCP_PORT=8080
+      - ATTACKBOX_MCP_TRANSPORT=streamable-http
+
     networks:
       - vt-saiber-network
-    
+
     ports:
-      - "55553"  # msfrpcd (Metasploit RPC daemon)
-      - "8085"   # MetasploitMCP HTTP server
-    
-    # Persist Metasploit data
+      - "55553"
+      - "8080"
+
     volumes:
       - msf_data:/root/.msf4
-      - ./scripts/docker/start_msf_mcp.sh:/app/start_msf_mcp.sh:ro
-    
+      - ./src:/app/src:ro
+      - ./scripts/docker/start_attackbox.sh:/app/start_attackbox.sh:ro
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8085/docs"]
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 30s  # Give it 30 seconds before health checks start
-    
+      start_period: 90s
+
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -189,8 +149,7 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
-      - KALI_MCP_URL=${KALI_MCP_URL}
-      - MSF_MCP_URL=${MSF_MCP_URL}
+      - ATTACKBOX_MCP_URL=${ATTACKBOX_MCP_URL}
       - STRIKER_API_KEY=${STRIKER_API_KEY}
       - STRIKER_MODEL=${STRIKER_MODEL}
       - REPORT_EXPORT_DIR=/app/exports
@@ -213,9 +172,7 @@ services:
         condition: service_healthy
       knowledge_base:
         condition: service_completed_successfully
-      kali-mcp:
-        condition: service_healthy
-      msf-mcp:
+      attackbox:
         condition: service_healthy
     
     # Command to run when container starts

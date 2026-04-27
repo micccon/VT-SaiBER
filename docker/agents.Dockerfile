@@ -77,4 +77,4 @@ CMD ["python", "src/main.py"]
 # 1. Container starts
 # 2. Python runs src/main.py
 # 3. main.py initializes LangGraph and starts agents
-# 4. Agents make HTTP calls to kali-mcp and msf-mcp
+# 4. Agents make HTTP calls to attackbox

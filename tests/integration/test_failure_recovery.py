@@ -65,13 +65,6 @@ def _make_tool(name: str) -> StructuredTool:
     return StructuredTool.from_function(func=_sync, coroutine=_async, name=name, description=f"Mock: {name}")
 
 
-class MockBridge:
-    def __init__(self, tools):
-        self._tools = tools
-    def get_tools_for_agent(self, allowed):
-        return self._tools
-
-
 class PatchContext:
     def __init__(self):
         self._saved = {}
@@ -89,10 +82,10 @@ async def test_resident_mcp_bridge_failure():
     """Resident should return ToolError when bridge raises."""
     patches = PatchContext()
     try:
-        async def failing_bridge():
+        async def failing_load_filtered_tools(_allowed_tools):
             raise ConnectionError("MCP server unreachable")
 
-        patches.set(resident_mod, "get_mcp_bridge", failing_bridge)
+        patches.set(resident_mod, "load_filtered_tools", failing_load_filtered_tools)
         state = build_initial_state("Test", ["10.0.0.1"], "f-002")
         state["active_sessions"] = {"10.0.0.1": {"session_id": 1}}
 
@@ -118,10 +111,10 @@ async def test_resident_no_tools():
     """Resident returns ToolError when bridge has zero tools."""
     patches = PatchContext()
     try:
-        async def empty_bridge():
-            return MockBridge([])
+        async def empty_load_filtered_tools(_allowed_tools):
+            return []
 
-        patches.set(resident_mod, "get_mcp_bridge", empty_bridge)
+        patches.set(resident_mod, "load_filtered_tools", empty_load_filtered_tools)
         state = build_initial_state("Test", ["10.0.0.1"], "f-005")
         state["active_sessions"] = {"10.0.0.1": {"session_id": 1}}
 
@@ -276,10 +269,10 @@ async def test_scout_fallback_on_bridge_failure():
     """Scout should return fallback services when MCP bridge fails."""
     patches = PatchContext()
     try:
-        async def failing_bridge():
+        async def failing_load_filtered_tools(_allowed_tools):
             raise ConnectionError("MCP down")
 
-        patches.set(scout_mod, "get_mcp_bridge", failing_bridge)
+        patches.set(scout_mod, "load_filtered_tools", failing_load_filtered_tools)
         state = build_initial_state("Test", ["10.0.0.1"], "f-014")
         state["target_scope"] = ["10.0.0.1"]
 
@@ -322,7 +315,7 @@ def test_extract_handles_mixed_message_types():
     """Extractor should skip non-ToolMessage types."""
     messages = [
         AIMessage(content="Analyzing session..."),
-        ToolMessage(tool_call_id="c1", name="msf_send_session_command",
+        ToolMessage(tool_call_id="c1", name="msf_session_command",
                     content=json.dumps({"output": "uid=0(root)"})),
         AIMessage(content="Found root!"),
     ]

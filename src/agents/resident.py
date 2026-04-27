@@ -2,75 +2,32 @@
 Resident Agent - Post-Exploitation Specialist.
 
 Maintains access and performs post-exploitation activities on open sessions.
-Uses LangGraph's create_react_agent for autonomous enumeration and escalation.
+Uses the shared OpenRouter tool loop for autonomous enumeration and escalation.
 """
 
 from __future__ import annotations
 
-import inspect
-import json
-import os
 from datetime import datetime
 from typing import Any, Dict, List
 
-from langchain_core.messages import ToolMessage
-from langgraph.prebuilt import create_react_agent
-
+from src.agents.helpers import iter_tool_payloads, resolve_openrouter_runtime, run_agent_tool_loop
+from src.agents.worker_harness import load_filtered_tools, tool_names
+from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
-from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.prompts.resident_prompt import RESIDENT_SYSTEM_PROMPT
 from src.state.cyber_state import CyberState
 from src.state.models import AgentError, AgentLogEntry
 
-try:
-    from langchain_openai import ChatOpenAI
-except Exception:  # pragma: no cover - optional dependency path
-    ChatOpenAI = None
-
 
 RESIDENT_ALLOWED_TOOLS = {
-    "list_active_sessions",
-    "send_session_command",
-    "run_post_module",
-    "list_exploits",
-    "terminate_session",
+    "msf_list_sessions",
+    "msf_session_command",
+    "msf_run_post",
+    "msf_search_modules",
+    "msf_terminate_session",
 }
 
-POST_TOOL_NAMES = {"msf_send_session_command", "msf_run_post_module"}
-
-
-def _build_llm():
-    provider = os.getenv("LLM_CLIENT", "openrouter").strip().lower()
-    if provider != "openrouter":
-        raise RuntimeError(
-            f"Unsupported LLM_CLIENT='{provider}'. "
-            "Current VT-SaiBER config supports openrouter only."
-        )
-    if ChatOpenAI is None:
-        raise RuntimeError("langchain-openai is not installed")
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is required when LLM_CLIENT=openrouter")
-    model = os.getenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
-    return ChatOpenAI(
-        model=model,
-        api_key=api_key,
-        base_url="https://openrouter.ai/api/v1",
-        temperature=0,
-    )
-
-
-def _create_react_agent_with_prompt(model, tools, system_prompt: str):
-    try:
-        params = inspect.signature(create_react_agent).parameters
-    except Exception:
-        params = {}
-
-    if "prompt" in params:
-        return create_react_agent(model=model, tools=tools, prompt=system_prompt)
-    if "state_modifier" in params:
-        return create_react_agent(model=model, tools=tools, state_modifier=system_prompt)
-    return create_react_agent(model=model, tools=tools)
+POST_TOOL_NAMES = {"msf_session_command", "msf_run_post"}
 
 
 def _build_resident_context(state: CyberState) -> str:
@@ -126,57 +83,83 @@ def _build_resident_context(state: CyberState) -> str:
 def _extract_resident_updates(messages: List[Any], state: CyberState) -> Dict[str, Any]:
     active_sessions = state.get("active_sessions", {}) or {}
     critical_findings: List[str] = []
-    findings_summary: Dict[str, Any] = {}
+    findings_by_session: Dict[str, Dict[str, Any]] = {}
 
-    for msg in messages:
-        if not isinstance(msg, ToolMessage) or msg.name not in POST_TOOL_NAMES:
+    for msg, data in iter_tool_payloads(messages):
+        if msg.name not in POST_TOOL_NAMES:
             continue
-
-        try:
-            data = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
-        except (json.JSONDecodeError, TypeError):
-            data = {}
 
         if not isinstance(data, dict):
             continue
 
-        output = data.get("output", "") or data.get("module_output", "") or ""
+        output = (
+            data.get("output", "")
+            or data.get("module_output", "")
+            or (
+                data.get("raw", {}).get("output")
+                if isinstance(data.get("raw"), dict)
+                else ""
+            )
+            or ""
+        )
         status = data.get("status", "")
+        session_id = str(
+            data.get("session_id")
+            or data.get("session")
+            or (data.get("options", {}) or {}).get("SESSION")
+            or "unknown"
+        )
+        session_findings = findings_by_session.setdefault(session_id, {"successful_post_modules": []})
 
         if "uid=0" in output or output.strip().startswith("root"):
-            findings_summary["privilege"] = "root"
+            session_findings["privilege"] = "root"
             critical_findings.append("Post-exploitation: root privileges confirmed")
-        elif "uid=" in output and "privilege" not in findings_summary:
-            findings_summary["privilege"] = "user"
+        elif "uid=" in output and "privilege" not in session_findings:
+            session_findings["privilege"] = "user"
 
-        if "linux" in output.lower() and findings_summary.get("os_info") is None:
-            findings_summary["os_info"] = output.strip()[:120]
+        if output.strip():
+            first_line = output.strip().splitlines()[0].strip()
+            if first_line and msg.name == "msf_session_command" and (" " not in first_line or "uid=" not in first_line):
+                session_findings.setdefault("user_context", first_line[:120])
 
-        if msg.name == "msf_run_post_module" and status == "success":
-            critical_findings.append(f"Post module succeeded: {data.get('module', 'unknown')}")
+        if "linux" in output.lower() and session_findings.get("os_info") is None:
+            session_findings["os_info"] = output.strip()[:120]
+
+        if msg.name == "msf_run_post" and status == "success":
+            module_name = str(data.get("module", "unknown") or "unknown")
+            session_findings.setdefault("successful_post_modules", []).append(module_name)
+            critical_findings.append(f"Post module succeeded: {module_name}")
 
     updates: Dict[str, Any] = {
         "iteration_count": state.get("iteration_count", 0) + 1,
         "agent_log": [AgentLogEntry(
             agent="resident",
             action="post_exploitation",
-            findings=findings_summary or None,
-            reasoning="ReAct agent completed post-exploitation tasks",
+            findings={"session_count": len(active_sessions)} or None,
+            reasoning="Resident completed post-exploitation tasks",
         )],
     }
 
     if critical_findings:
         updates["critical_findings"] = critical_findings
 
-    if findings_summary and active_sessions:
+    if findings_by_session and active_sessions:
         enriched = {}
         for target, info in active_sessions.items():
+            session_key = str(info.get("session_id", "unknown"))
             enriched[target] = {
                 **info,
-                **findings_summary,
+                **findings_by_session.get(session_key, {}),
                 "post_exploitation_at": datetime.now().isoformat(),
             }
         updates["active_sessions"] = enriched
+        updates["validations"] = [
+            {
+                "type": "session_post_exploitation",
+                "status": "success",
+                "sessions": list(findings_by_session.keys()),
+            }
+        ]
 
     return updates
 
@@ -198,14 +181,13 @@ async def resident_node(state: CyberState) -> Dict[str, Any]:
         persist_state_update(state, updates)
         return updates
 
-    bridge = await get_mcp_bridge()
-    tools = bridge.get_tools_for_agent(RESIDENT_ALLOWED_TOOLS)
+    tools = await load_filtered_tools(RESIDENT_ALLOWED_TOOLS)
     if not tools:
         updates = {
             "errors": [AgentError(
                 agent="resident",
                 error_type="ToolError",
-                error="No MSF tools available - is msf-mcp running?",
+                error="No attackbox post-exploitation tools are available.",
                 recoverable=False,
             )],
             "iteration_count": state.get("iteration_count", 0) + 1,
@@ -213,13 +195,13 @@ async def resident_node(state: CyberState) -> Dict[str, Any]:
         persist_state_update(state, updates)
         return updates
 
-    tool_names = {tool.name for tool in tools}
-    if "msf_send_session_command" not in tool_names:
+    available_tools = tool_names(tools)
+    if "msf_session_command" not in available_tools:
         updates = {
             "errors": [AgentError(
                 agent="resident",
                 error_type="ToolError",
-                error="Required tool msf_send_session_command missing from bridge",
+                error="Required tool msf_session_command missing from bridge",
                 recoverable=False,
             )],
             "iteration_count": state.get("iteration_count", 0) + 1,
@@ -227,16 +209,46 @@ async def resident_node(state: CyberState) -> Dict[str, Any]:
         persist_state_update(state, updates)
         return updates
 
-    llm = _build_llm()
-    agent = _create_react_agent_with_prompt(
-        model=llm,
-        tools=tools,
-        system_prompt=RESIDENT_SYSTEM_PROMPT,
-    )
+    try:
+        runtime = resolve_openrouter_runtime(
+            config=get_runtime_config(),
+        )
+    except Exception as exc:
+        updates = {
+            "errors": [AgentError(
+                agent="resident",
+                error_type="LLMConfigError",
+                error=str(exc),
+                recoverable=False,
+            )],
+            "iteration_count": state.get("iteration_count", 0) + 1,
+        }
+        persist_state_update(state, updates)
+        return updates
 
-    print(f"[Resident] Starting ReAct agent - {len(active_sessions)} active session(s)")
+    print(f"[Resident] Starting tool loop - {len(active_sessions)} active session(s)")
 
-    result = await agent.ainvoke({"messages": [("human", _build_resident_context(state))]})
-    updates = _extract_resident_updates(result["messages"], state)
+    try:
+        result = await run_agent_tool_loop(
+            client=runtime.client,
+            model=runtime.model,
+            tools=tools,
+            system_prompt=RESIDENT_SYSTEM_PROMPT,
+            user_prompt=_build_resident_context(state),
+        )
+    except Exception as exc:
+        updates = {
+            "errors": [AgentError(
+                agent="resident",
+                error_type="LLMError",
+                error=f"Resident LLM/tool loop failed: {exc}",
+                recoverable=False,
+            )],
+            "iteration_count": state.get("iteration_count", 0) + 1,
+        }
+        persist_state_update(state, updates)
+        return updates
+
+    updates = _extract_resident_updates(result.messages, state)
     persist_state_update(state, updates)
     return updates

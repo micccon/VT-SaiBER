@@ -12,6 +12,7 @@ import asyncio
 import json
 import sys
 import traceback
+from types import SimpleNamespace
 
 sys.path.insert(0, "/app")
 
@@ -73,7 +74,7 @@ MOCK_STATE = {
         "automotive-testbed": {
             "session_id": 7,
             "module": "auxiliary/scanner/ssh/ssh_login",
-            "lhost": "msf-mcp",
+            "lhost": "attackbox",
             "lport": "4444",
             "established_at": "2025-01-15T10:30:00",
         }
@@ -111,15 +112,6 @@ def _make_tool(name: str) -> StructuredTool:
         name=name,
         description=f"Mock tool: {name}",
     )
-
-
-class MockBridge:
-    def __init__(self, tools):
-        self._tools = tools
-
-    def get_tools_for_agent(self, allowed_tools):
-        _ = allowed_tools
-        return self._tools
 
 
 class PatchContext:
@@ -204,10 +196,10 @@ async def test_resident_node_no_sessions_returns_validation_error():
 async def test_resident_node_no_tools_returns_tool_error():
     patches = PatchContext()
     try:
-        async def fake_get_bridge():
-            return MockBridge([])
+        async def fake_load_filtered_tools(_allowed_tools):
+            return []
 
-        patches.set(resident_mod, "get_mcp_bridge", fake_get_bridge)
+        patches.set(resident_mod, "load_filtered_tools", fake_load_filtered_tools)
         out = await resident_mod.resident_node(MOCK_STATE)
         errs = out.get("errors", [])
         if not errs:
@@ -230,21 +222,21 @@ async def test_resident_node_missing_send_session_command():
     patches = PatchContext()
     try:
         tools = [
-            _make_tool("msf_list_active_sessions"),
-            _make_tool("msf_run_post_module"),
+            _make_tool("msf_list_sessions"),
+            _make_tool("msf_run_post"),
         ]
 
-        async def fake_get_bridge():
-            return MockBridge(tools)
+        async def fake_load_filtered_tools(_allowed_tools):
+            return tools
 
-        patches.set(resident_mod, "get_mcp_bridge", fake_get_bridge)
+        patches.set(resident_mod, "load_filtered_tools", fake_load_filtered_tools)
         out = await resident_mod.resident_node(MOCK_STATE)
         errs = out.get("errors", [])
         if not errs:
             results.add_fail("test_missing_send_session_command", "No errors returned")
             return
         err_msg = getattr(errs[0], "error", "")
-        if "msf_send_session_command" not in err_msg:
+        if "msf_session_command" not in err_msg:
             results.add_fail("test_missing_send_session_command", f"Expected mention of missing tool: {err_msg}")
             return
         results.add_pass("test_missing_send_session_command")
@@ -261,7 +253,7 @@ def test_extract_root_privilege_detection():
         AIMessage(content="Checking session..."),
         ToolMessage(
             tool_call_id="call-1",
-            name="msf_send_session_command",
+            name="msf_session_command",
             content=json.dumps({
                 "output": "uid=0(root) gid=0(root) groups=0(root)",
                 "status": "success",
@@ -290,7 +282,7 @@ def test_extract_user_privilege_detection():
     messages = [
         ToolMessage(
             tool_call_id="call-1",
-            name="msf_send_session_command",
+            name="msf_session_command",
             content=json.dumps({
                 "output": "uid=1000(admin) gid=1000(admin) groups=1000(admin)",
                 "status": "success",
@@ -310,7 +302,7 @@ def test_extract_os_info_from_uname():
     messages = [
         ToolMessage(
             tool_call_id="call-1",
-            name="msf_send_session_command",
+            name="msf_session_command",
             content=json.dumps({
                 "output": "Linux testbed 5.4.0-91-generic #102-Ubuntu SMP x86_64 GNU/Linux",
                 "status": "success",
@@ -331,7 +323,7 @@ def test_extract_post_module_success():
     messages = [
         ToolMessage(
             tool_call_id="call-1",
-            name="msf_run_post_module",
+            name="msf_run_post",
             content=json.dumps({
                 "status": "success",
                 "module": "post/linux/gather/enum_system",
@@ -352,7 +344,7 @@ def test_extract_ignores_non_post_tools():
     messages = [
         ToolMessage(
             tool_call_id="call-1",
-            name="msf_list_active_sessions",
+            name="msf_list_sessions",
             content=json.dumps({"sessions": {"7": {"type": "shell"}}, "count": 1}),
         ),
     ]
@@ -367,7 +359,7 @@ def test_extract_handles_malformed_json():
     messages = [
         ToolMessage(
             tool_call_id="call-1",
-            name="msf_send_session_command",
+            name="msf_session_command",
             content="this is not valid json {{{",
         ),
     ]
@@ -399,56 +391,53 @@ async def test_resident_node_success_with_mocked_react_loop():
     patches = PatchContext()
     try:
         tools = [
-            _make_tool("msf_list_active_sessions"),
-            _make_tool("msf_send_session_command"),
-            _make_tool("msf_run_post_module"),
-            _make_tool("msf_list_exploits"),
+            _make_tool("msf_list_sessions"),
+            _make_tool("msf_session_command"),
+            _make_tool("msf_run_post"),
+            _make_tool("msf_search_modules"),
             _make_tool("msf_terminate_session"),
         ]
 
-        async def fake_get_bridge():
-            return MockBridge(tools)
+        async def fake_load_filtered_tools(_allowed_tools):
+            return tools
 
-        def fake_build_llm():
-            return object()
+        def fake_resolve_openrouter_runtime(**kwargs):
+            return SimpleNamespace(client=object(), model="test-model")
 
-        def fake_create_react_agent(model, tools, **kwargs):
-            class FakeAgent:
-                async def ainvoke(self, payload):
-                    return {
-                        "messages": [
-                            ToolMessage(
-                                tool_call_id="call-1",
-                                name="msf_send_session_command",
-                                content=json.dumps({
-                                    "output": "uid=0(root) gid=0(root) groups=0(root)",
-                                    "status": "success",
-                                }),
-                            ),
-                            ToolMessage(
-                                tool_call_id="call-2",
-                                name="msf_send_session_command",
-                                content=json.dumps({
-                                    "output": "Linux testbed 5.4.0-91-generic #102-Ubuntu SMP x86_64 GNU/Linux",
-                                    "status": "success",
-                                }),
-                            ),
-                            ToolMessage(
-                                tool_call_id="call-3",
-                                name="msf_run_post_module",
-                                content=json.dumps({
-                                    "status": "success",
-                                    "module": "post/linux/gather/enum_system",
-                                    "module_output": "System enumeration complete",
-                                }),
-                            ),
-                        ]
-                    }
-            return FakeAgent()
+        async def fake_run_agent_tool_loop(**kwargs):
+            return SimpleNamespace(
+                messages=[
+                    ToolMessage(
+                        tool_call_id="call-1",
+                        name="msf_session_command",
+                        content=json.dumps({
+                            "output": "uid=0(root) gid=0(root) groups=0(root)",
+                            "status": "success",
+                        }),
+                    ),
+                    ToolMessage(
+                        tool_call_id="call-2",
+                        name="msf_session_command",
+                        content=json.dumps({
+                            "output": "Linux testbed 5.4.0-91-generic #102-Ubuntu SMP x86_64 GNU/Linux",
+                            "status": "success",
+                        }),
+                    ),
+                    ToolMessage(
+                        tool_call_id="call-3",
+                        name="msf_run_post",
+                        content=json.dumps({
+                            "status": "success",
+                            "module": "post/linux/gather/enum_system",
+                            "module_output": "System enumeration complete",
+                        }),
+                    ),
+                ]
+            )
 
-        patches.set(resident_mod, "get_mcp_bridge", fake_get_bridge)
-        patches.set(resident_mod, "_build_llm", fake_build_llm)
-        patches.set(resident_mod, "create_react_agent", fake_create_react_agent)
+        patches.set(resident_mod, "load_filtered_tools", fake_load_filtered_tools)
+        patches.set(resident_mod, "resolve_openrouter_runtime", fake_resolve_openrouter_runtime)
+        patches.set(resident_mod, "run_agent_tool_loop", fake_run_agent_tool_loop)
 
         out = await resident_mod.resident_node(MOCK_STATE)
 

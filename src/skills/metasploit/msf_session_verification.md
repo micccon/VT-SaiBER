@@ -22,18 +22,18 @@ When to use it:
 How to verify:
 - Treat module output as provisional first
 - Check the reported `session_id` if one exists
-- Confirm it through `list_active_sessions`
+- Confirm it through `msf_list_sessions`
 - Only then treat the run as a real success
 
 Core rules:
 - A reported `session_id` is not enough on its own
-- Verify the session through `list_active_sessions`
+- Verify the session through `msf_list_sessions`
 - If no matching session is present, treat the run as a failure or unverified result
 - Record the attempt clearly whether it succeeded or failed
 - Pivot after an unverified no-session result instead of thrashing on the same path
 
 Good patterns:
-- Module reports `session_id=5` and `list_active_sessions` includes session `5`
+- Module reports `session_id=5` and `msf_list_sessions` includes session `5`
   Good: treat as success
 - Module output says success but no matching session appears
   Good: treat as unverified and pivot

@@ -5,7 +5,7 @@ VT-SaiBER is a Dockerized multi-agent cyber security application for running mod
 The system is built around:
 - `LangGraph` for orchestration
 - `PostgreSQL + pgvector` for persistence and RAG
-- `MCP servers` for Kali and Metasploit tool access
+- a unified `attackbox` MCP server for Kali and Metasploit tool access
 - a shared mission state passed between specialized agents
 
 ## What Starts Automatically
@@ -13,8 +13,7 @@ The system is built around:
 When you start the stack with Docker Compose, these pieces work together:
 - `postgres`: mission data, findings, sessions, attack chain, and knowledge base storage
 - `knowledge_base`: ingests and syncs `src/database/testbed_docs` into `knowledge_base`
-- `kali-mcp`: exposes scanning and enumeration tools
-- `msf-mcp`: exposes Metasploit RPC-backed tools
+- `attackbox`: exposes the unified offensive tool surface
 - `agents`: runs the VT-SaiBER application environment
 
 Important behavior:
@@ -41,7 +40,7 @@ VT-SaiBER/
 |  |  |- schema.sql
 |  |  `- testbed_docs/      # Documentation corpus indexed into the KB
 |  |- graph/                # LangGraph workflow assembly and routing
-|  `- mcp/                  # Kali / Metasploit bridges and servers
+|  `- mcp/                  # Attackbox bridge and MCP servers
 `- tests/
 ```
 
@@ -58,8 +57,7 @@ cp .env.example .env
 At minimum, set:
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 - `OPENROUTER_API_KEY`
-- `KALI_MCP_URL`
-- `MSF_MCP_URL`
+- `ATTACKBOX_MCP_URL`
 
 Optional but useful:
 - `REPORT_EXPORT_DIR=exports`

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import ipaddress
-import inspect
 import json
 import os
 from dataclasses import dataclass, field
@@ -13,49 +11,55 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool
-from langgraph.prebuilt import create_react_agent
 
 from src.agents.base import BaseAgent
+from src.agents.helpers import (
+    BaseToolPolicy,
+    ToolInterception,
+    collect_reasoning_chunks,
+    iter_tool_payloads,
+    resolve_openrouter_runtime,
+    run_agent_tool_loop,
+)
+from src.agents.worker_harness import load_filtered_tools
 from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
-from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.state.cyber_state import CyberState
 from src.skills.skills import build_skills
 from src.utils.approval import require_manual_approval
-from src.utils.llm import build_chat_openai, extract_text_content
 from src.utils.parsers import metasploit_module_key, normalize_tool_result
 
 
 STRIKER_ALLOWED_TOOLS = {
-    "list_exploits",
-    "get_module_info",
-    "get_module_options",
-    "run_exploit",
-    "run_auxiliary_module",
-    "list_active_sessions",
-    "sqlmap_scan",
-    "hydra_attack",
-    "enum4linux_scan",
-    "wpscan_analyze",
-    "execute_command",
+    "msf_search_modules",
+    "msf_get_module_info",
+    "msf_get_module_options",
+    "msf_run_exploit",
+    "msf_run_auxiliary",
+    "msf_list_sessions",
+    "web_sqlmap_scan",
+    "access_hydra_attack",
+    "access_smb_enum",
+    "web_wordpress_scan",
+    "system_execute_command",
 }
 
 STRIKER_REQUIRE_CONFIRMATION = os.getenv("STRIKER_REQUIRE_CONFIRMATION", "true").lower() == "true"
 MAX_EXPLOIT_ATTEMPTS = int(os.getenv("STRIKER_MAX_EXPLOIT_ATTEMPTS", "3"))
 MAX_SEARCH_CALLS = int(os.getenv("STRIKER_MAX_SEARCH_CALLS", "6"))
-EXECUTION_TOOL_NAMES = {"msf_run_exploit", "msf_run_auxiliary_module"}
-SEARCH_TOOL_NAMES = {"msf_list_exploits"}
+EXECUTION_TOOL_NAMES = {"msf_run_exploit", "msf_run_auxiliary"}
+SEARCH_TOOL_NAMES = {"msf_search_modules"}
 KALI_TOOL_NAMES = {
-    "kali_sqlmap_scan",
-    "kali_hydra_attack",
-    "kali_enum4linux_scan",
-    "kali_wpscan_analyze",
-    "kali_execute_command",
+    "web_sqlmap_scan",
+    "access_hydra_attack",
+    "access_smb_enum",
+    "web_wordpress_scan",
+    "system_execute_command",
 }
 KALI_APPROVAL_TOOLS = {
-    "kali_sqlmap_scan",
-    "kali_hydra_attack",
-    "kali_execute_command",
+    "web_sqlmap_scan",
+    "access_hydra_attack",
+    "system_execute_command",
 }
 STRIKER_SKILL_PATHS = [
     "striker/metasploit_usage.md",
@@ -109,23 +113,6 @@ class ToolGuardState:
     search_count: int = 0
     execution_attempts: int = 0
 
-def _create_react_agent_with_prompt(model, tools, system_prompt: str):
-    """
-    Handle LangGraph API drift:
-    - newer versions: create_react_agent(..., prompt=...)
-    - older versions: create_react_agent(..., state_modifier=...)
-    """
-    try:
-        params = inspect.signature(create_react_agent).parameters
-    except Exception:
-        params = {}
-
-    if "prompt" in params:
-        return create_react_agent(model=model, tools=tools, prompt=system_prompt)
-    if "state_modifier" in params:
-        return create_react_agent(model=model, tools=tools, state_modifier=system_prompt)
-    return create_react_agent(model=model, tools=tools)
-
 
 def _parse_services(target_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     services = target_data.get("services", {}) or {}
@@ -155,14 +142,6 @@ def _parse_services(target_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
 
     return sorted(parsed, key=lambda item: item["port"])
-
-
-async def _invoke_tool(tool: StructuredTool, kwargs: Dict[str, Any]) -> Any:
-    if tool.coroutine is not None:
-        return await tool.coroutine(**kwargs)
-    if tool.func is not None:
-        return await asyncio.to_thread(tool.func, **kwargs)
-    return json.dumps({"status": "error", "message": f"Tool {tool.name} has no callable handler"})
 
 
 def _extract_target_from_execution_args(kwargs: Dict[str, Any]) -> str:
@@ -239,6 +218,44 @@ def _is_invalid_callback_host(value: str) -> bool:
     return ip.is_loopback or ip.is_unspecified
 
 
+class _StrikerToolPolicy(BaseToolPolicy):
+    def __init__(self, agent: "StrikerAgent"):
+        self.agent = agent
+        self.guard = ToolGuardState()
+
+    async def before_call(
+        self,
+        tool: StructuredTool,
+        arguments: dict[str, Any],
+    ) -> ToolInterception | None:
+        blocked = self.agent._guard_search_budget(tool.name, arguments, self.guard)
+        if blocked is not None:
+            return ToolInterception(self.agent._normalize_tool_response(tool.name, blocked, arguments))
+
+        blocked = self.agent._guard_kali_execution(tool.name, arguments)
+        if blocked is not None:
+            return ToolInterception(self.agent._normalize_tool_response(tool.name, blocked, arguments))
+
+        blocked = self.agent._guard_msf_execution(tool.name, arguments, self.guard)
+        if blocked is not None:
+            return ToolInterception(self.agent._normalize_tool_response(tool.name, blocked, arguments))
+
+        return None
+
+    async def after_call(
+        self,
+        tool: StructuredTool,
+        arguments: dict[str, Any],
+        raw_result: Any,
+    ) -> Any:
+        if tool.name == "msf_get_module_options":
+            self.agent._remember_module_options(arguments, raw_result, self.guard)
+        else:
+            self.agent._record_msf_execution_result(tool.name, arguments, raw_result, self.guard)
+
+        return self.agent._normalize_tool_response(tool.name, raw_result, arguments)
+
+
 class StrikerAgent(BaseAgent):
     """Unified ReAct exploitation worker."""
 
@@ -247,21 +264,25 @@ class StrikerAgent(BaseAgent):
     def __init__(self):
         super().__init__("striker", "Unified Exploitation Agent")
         self.config = get_runtime_config()
-        self._llm = None
-        self._llm_error: Optional[str] = None
+        self._client = None
+        self._model = ""
+        self._client_error: Optional[str] = None
         self.require_confirmation = STRIKER_REQUIRE_CONFIRMATION
         self.max_attempts = MAX_EXPLOIT_ATTEMPTS
         for skill in build_skills(STRIKER_SKILL_PATHS):
             self.register_skill(skill)
         try:
-            self._llm = build_chat_openai(
+            runtime = resolve_openrouter_runtime(
+                config=self.config,
                 model=self.config.striker_model or self.config.supervisor_model,
                 api_key=self.config.striker_api_key or self.config.openrouter_api_key,
                 base_url=self.config.openrouter_base_url,
                 timeout_seconds=self.config.supervisor_timeout_seconds,
             )
+            self._client = runtime.client
+            self._model = runtime.model
         except Exception as exc:
-            self._llm_error = str(exc)
+            self._client_error = str(exc)
 
     @property
     def system_prompt(self) -> str:
@@ -270,19 +291,19 @@ class StrikerAgent(BaseAgent):
 Use only the available MCP tools from these two families.
 
 Metasploit tools:
-- list_exploits(search_term)
-- get_module_info(module_type, module_name)
-- get_module_options(module_type, module_name, search, advanced)
-- run_exploit(module_name, options, ...)
-- run_auxiliary_module(module_name, options, ...)
-- list_active_sessions()
+- msf_search_modules(search_term, module_type)
+- msf_get_module_info(module_type, module_name)
+- msf_get_module_options(module_type, module_name, search, advanced)
+- msf_run_exploit(module_name, options, ...)
+- msf_run_auxiliary(module_name, options, ...)
+- msf_list_sessions()
 
-Kali tools:
-- sqlmap_scan(url, data, additional_args)
-- hydra_attack(target, service, username, username_file, password, password_file, additional_args)
-- enum4linux_scan(target, additional_args)
-- wpscan_analyze(url, additional_args)
-- execute_command(command)
+Attackbox workflow tools:
+- web_sqlmap_scan(url, data, additional_args)
+- access_hydra_attack(target, service, username, username_file, password, password_file, additional_args)
+- access_smb_enum(target, additional_args)
+- web_wordpress_scan(url, additional_args)
+- system_execute_command(command)
 
 Core Rules:
 1. Work only from the provided mission context and discovered evidence.
@@ -293,7 +314,7 @@ Core Rules:
 6. Search with narrow evidence-based terms derived from the target technology, service, protocol, version, platform, or CVE.
 7. Treat exploit search and tool execution as precision steps, not brainstorming.
 8. Reverse payloads require a reachable non-loopback LHOST. Never use 127.0.0.1, localhost, or 0.0.0.0.
-9. After each Metasploit execution attempt, check list_active_sessions to verify outcome.
+9. After each Metasploit execution attempt, check msf_list_sessions to verify outcome.
 10. Maximum Metasploit execution attempts per run: {self.max_attempts}.
 
 Path Selection Rules:
@@ -323,8 +344,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             return validation_error
 
         try:
-            bridge = await get_mcp_bridge()
-            tools = bridge.get_tools_for_agent(self.ALLOWED_TOOLS)
+            tools = await load_filtered_tools(self.ALLOWED_TOOLS)
         except Exception as exc:
             return self._error_update(
                 state,
@@ -341,24 +361,24 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 recoverable=False,
             )
 
-        wrapped_tools = self._wrap_tools(tools)
-
-        if self._llm is None:
+        if self._client is None:
             return self._error_update(
                 state,
                 error_type="LLMConfigError",
-                message=self._llm_error or "STRIKER_API_KEY or OPENROUTER_API_KEY is not configured.",
+                message=self._client_error or "STRIKER_API_KEY or OPENROUTER_API_KEY is not configured.",
                 recoverable=False,
             )
 
         context = self._build_context(state)
         try:
-            agent = _create_react_agent_with_prompt(
-                model=self._llm,
-                tools=wrapped_tools,
+            result = await run_agent_tool_loop(
+                client=self._client,
+                model=self._model,
+                tools=tools,
                 system_prompt=self.system_prompt,
+                user_prompt=context,
+                policy=_StrikerToolPolicy(self),
             )
-            result = await agent.ainvoke({"messages": [("human", context)]})
         except Exception as exc:
             return self._error_update(
                 state,
@@ -367,15 +387,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 recoverable=False,
             )
 
-        if not isinstance(result, dict):
-            return self._error_update(
-                state,
-                error_type="LLMOutputError",
-                message=f"Striker LLM returned an unexpected payload type: {type(result).__name__}",
-                recoverable=False,
-            )
-
-        messages = result.get("messages", [])
+        messages = result.messages
         if not isinstance(messages, list) or not messages:
             return self._error_update(
                 state,
@@ -422,7 +434,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                     }
 
         # Validate credentials for login scanner modules
-        if tool_name == "msf_run_auxiliary_module":
+        if tool_name == "msf_run_auxiliary":
             module_name = str(kwargs.get("module_name", "") or "").strip().lower()
             if any(cred_module in module_name for cred_module in CREDENTIAL_MODULES):
                 options = kwargs.get("options", {}) if isinstance(kwargs.get("options"), dict) else {}
@@ -675,59 +687,6 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             return response
         result.setdefault("invocation", call_kwargs)
         return json.dumps(result)
-
-    def _wrap_tools(self, tools: List[StructuredTool]) -> List[StructuredTool]:
-        guard = ToolGuardState()
-        wrapped_tools: List[StructuredTool] = []
-
-        for tool in tools:
-            original_tool = tool
-
-            async def guarded_coroutine(_tool=original_tool, **kwargs):
-                call_kwargs = dict(kwargs or {})
-
-                blocked = self._guard_search_budget(_tool.name, call_kwargs, guard)
-                if blocked is not None:
-                    return self._normalize_tool_response(_tool.name, blocked, call_kwargs)
-
-                blocked = self._guard_kali_execution(_tool.name, call_kwargs)
-                if blocked is not None:
-                    return self._normalize_tool_response(_tool.name, blocked, call_kwargs)
-
-                if _tool.name == "msf_get_module_options":
-                    response = await _invoke_tool(_tool, call_kwargs)
-                    self._remember_module_options(call_kwargs, response, guard)
-                    return self._normalize_tool_response(_tool.name, response, call_kwargs)
-
-                blocked = self._guard_msf_execution(_tool.name, call_kwargs, guard)
-                if blocked is not None:
-                    return self._normalize_tool_response(_tool.name, blocked, call_kwargs)
-
-                response = await _invoke_tool(_tool, call_kwargs)
-                self._record_msf_execution_result(_tool.name, call_kwargs, response, guard)
-                return self._normalize_tool_response(_tool.name, response, call_kwargs)
-
-            def guarded_func(_tool=original_tool, **kwargs):
-                if _tool.func is None or inspect.iscoroutinefunction(_tool.func):
-                    return json.dumps(
-                        {
-                            "status": "error",
-                            "message": f"Tool {_tool.name} does not have a sync handler.",
-                        }
-                    )
-                return _tool.func(**kwargs)
-
-            wrapped_tools.append(
-                StructuredTool(
-                    name=original_tool.name,
-                    description=original_tool.description,
-                    args_schema=original_tool.args_schema,
-                    func=guarded_func,
-                    coroutine=guarded_coroutine,
-                )
-            )
-
-        return wrapped_tools
 
     def _build_context(self, state: CyberState) -> str:
         targets_block = self._format_targets(state)
@@ -1023,21 +982,18 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         stop_reason = ""
         reasoning_chunks: List[str] = []
         saw_tool_activity = False
+        collected_artifacts: List[Dict[str, Any]] = []
 
-        for message in messages:
-            if not isinstance(message, ToolMessage):
-                text = extract_text_content(message)
-                if text:
-                    reasoning_chunks.append(text)
-                continue
+        reasoning_chunks.extend(collect_reasoning_chunks(messages))
 
+        for message, normalized in iter_tool_payloads(messages):
             saw_tool_activity = True
-            data = normalize_tool_result(message.content)
+            data = normalized
             if not data:
                 payload = _decode_tool_payload(message.content)
                 data = payload if isinstance(payload, dict) else {}
 
-            if message.name == "msf_list_exploits":
+            if message.name == "msf_search_modules":
                 invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
                 term = str(invocation.get("search_term", "") or "").strip()
                 if term:
@@ -1057,13 +1013,14 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 if module_name:
                     selected_module = module_name
 
-            if not isinstance(message, ToolMessage):
-                continue
-
             if not data:
                 continue
 
             invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
+            if isinstance(data.get("artifacts"), list):
+                for artifact in data.get("artifacts", []):
+                    if isinstance(artifact, dict):
+                        collected_artifacts.append(artifact)
 
             if message.name in EXECUTION_TOOL_NAMES:
                 options = data.get("options", {}) if isinstance(data.get("options"), dict) else {}
@@ -1113,7 +1070,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 if message_text:
                     stop_reason = message_text
 
-            if message.name == "msf_list_active_sessions":
+            if message.name == "msf_list_sessions":
                 if data.get("status") == "success" and isinstance(data.get("sessions"), dict):
                     verified_sessions = data.get("sessions", {})
 
@@ -1183,6 +1140,15 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
                 *state.get("exploited_services", []),
                 last_execution,
             ]
+            updates["exploit_attempts"] = [
+                {
+                    "target": last_execution.get("target", default_target),
+                    "module": last_execution.get("module", "unknown"),
+                    "status": last_execution.get("status", "unknown"),
+                    "session_id": last_execution.get("session_id"),
+                    "summary": stop_reason or reasoning[:240] or "striker execution",
+                }
+            ]
 
         if session_id is not None:
             target = last_execution.get("target", default_target)
@@ -1201,6 +1167,9 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
             updates["critical_findings"] = [
                 f"Striker validated a Kali path on {last_execution.get('target', default_target)} via {last_execution.get('module', 'unknown')}"
             ]
+
+        if collected_artifacts:
+            updates["artifacts"] = collected_artifacts
 
         return updates
 

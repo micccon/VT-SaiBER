@@ -213,7 +213,7 @@ async def scenario_full_pipeline(live: bool) -> Dict[str, Any]:
             "automotive-testbed": {
                 "session_id": 7,
                 "module": "auxiliary/scanner/ssh/ssh_login",
-                "lhost": "msf-mcp",
+                "lhost": "attackbox",
                 "lport": "4444",
                 "established_at": datetime.now(timezone.utc).isoformat(),
             }

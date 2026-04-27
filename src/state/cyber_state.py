@@ -35,6 +35,13 @@ class CyberState(TypedDict):
     # Exploitation State
     active_sessions: Annotated[Dict[str, Dict[str, Any]], _merge_dicts]
     exploited_services: Annotated[List[Dict[str, Any]], _merge_lists]
+    credential_findings: Annotated[List[Dict[str, Any]], _merge_lists]
+    exploit_attempts: Annotated[List[Dict[str, Any]], _merge_lists]
+    protocol_observations: Annotated[List[Dict[str, Any]], _merge_lists]
+    fuzzing_runs: Annotated[List[Dict[str, Any]], _merge_lists]
+    crash_indicators: Annotated[List[Dict[str, Any]], _merge_lists]
+    artifacts: Annotated[List[Dict[str, Any]], _merge_lists]
+    validations: Annotated[List[Dict[str, Any]], _merge_lists]
 
     # Knowledge
     research_cache: Annotated[Dict[str, Any], _merge_dicts]

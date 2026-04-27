@@ -17,7 +17,7 @@ How to work inside Metasploit:
 - Inspect module info and module options before execution
 - Fill only the minimum required options from observed evidence
 - Use auxiliary modules for validation, login checks, or service interrogation when they advance the path
-- Verify success with `list_active_sessions`; module output alone is not enough
+- Verify success with `msf_list_sessions`; module output alone is not enough
 
 When to pivot away from Metasploit:
 - No module family matches the target cleanly

@@ -35,10 +35,10 @@ else
 fi
 
 echo "[4/4] Verifying MCP connectivity from agents..."
-if docker exec vt-saiber-agents python3 -c "import socket; socket.create_connection(('kali-mcp',5001),3).close(); socket.create_connection(('msf-mcp',8085),3).close(); print('ok')" > /dev/null; then
-    echo "✅ Agents can reach kali-mcp:5001 and msf-mcp:8085."
+if docker exec vt-saiber-agents python3 -c "import socket; socket.create_connection(('attackbox',8080),3).close(); print('ok')" > /dev/null; then
+    echo "✅ Agents can reach attackbox:8080."
 else
-    echo "❌ Agents cannot reach one or more MCP services."
+    echo "❌ Agents cannot reach attackbox MCP."
     exit 1
 fi
 

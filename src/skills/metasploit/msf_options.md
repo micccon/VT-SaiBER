@@ -17,7 +17,7 @@ Use this skill when a Metasploit module has already been chosen and you need to 
 
 When to use it:
 - After selecting a module that looks like a strong match
-- Before any `run_exploit` or `run_auxiliary_module` call
+- Before any `msf_run_exploit` or `msf_run_auxiliary` call
 - When deciding whether the current evidence is enough to execute safely
 
 How to choose options:

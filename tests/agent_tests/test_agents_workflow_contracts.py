@@ -19,6 +19,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
 
 import pytest
@@ -61,6 +62,13 @@ def _base_state() -> Dict[str, Any]:
         "web_findings": [],
         "active_sessions": {},
         "exploited_services": [],
+        "credential_findings": [],
+        "exploit_attempts": [],
+        "protocol_observations": [],
+        "fuzzing_runs": [],
+        "crash_indicators": [],
+        "artifacts": [],
+        "validations": [],
         "research_cache": {},
         "intelligence_findings": [],
         "supervisor_messages": [],
@@ -241,24 +249,24 @@ def test_resident_keeps_session_findings_separate():
         AIMessage(
             content="tool calls",
             tool_calls=[
-                {"id": "call-1", "name": "msf_send_session_command", "args": {"session_id": 1, "command": "whoami"}},
-                {"id": "call-2", "name": "msf_send_session_command", "args": {"session_id": 2, "command": "id"}},
-                {"id": "call-3", "name": "msf_run_post_module", "args": {"session_id": 2, "module_name": "post/linux/gather/enum_system"}},
+                {"id": "call-1", "name": "msf_session_command", "args": {"session_id": 1, "command": "whoami"}},
+                {"id": "call-2", "name": "msf_session_command", "args": {"session_id": 2, "command": "id"}},
+                {"id": "call-3", "name": "msf_run_post", "args": {"session_id": 2, "module_name": "post/linux/gather/enum_system"}},
             ],
         ),
         ToolMessage(
             tool_call_id="call-1",
-            name="msf_send_session_command",
+            name="msf_session_command",
             content='{"status":"success","output":"alice\\n"}',
         ),
         ToolMessage(
             tool_call_id="call-2",
-            name="msf_send_session_command",
+            name="msf_session_command",
             content='{"status":"success","output":"uid=0(root) gid=0(root) groups=0(root)"}',
         ),
         ToolMessage(
             tool_call_id="call-3",
-            name="msf_run_post_module",
+            name="msf_run_post",
             content='{"status":"success","module":"post/linux/gather/enum_system","options":{"SESSION":2}}',
         ),
     ]
@@ -288,14 +296,14 @@ def test_striker_prefers_striker_specific_model_and_key(monkeypatch):
 
     captured: Dict[str, Any] = {}
 
-    def fake_build_chat_openai(**kwargs):
+    def fake_resolve_openrouter_runtime(**kwargs):
         captured.update(kwargs)
-        return object()
+        return SimpleNamespace(client=object(), model=kwargs["model"])
 
-    monkeypatch.setattr(striker_mod, "build_chat_openai", fake_build_chat_openai)
+    monkeypatch.setattr(striker_mod, "resolve_openrouter_runtime", fake_resolve_openrouter_runtime)
     agent = striker_mod.StrikerAgent()
 
-    assert agent._llm is not None
+    assert agent._client is not None
     assert captured["api_key"] == "striker-key"
     assert captured["model"] == "striker-model"
     assert captured["base_url"] == get_runtime_config().openrouter_base_url
@@ -311,14 +319,14 @@ def test_striker_falls_back_to_shared_model_and_key(monkeypatch):
 
     captured: Dict[str, Any] = {}
 
-    def fake_build_chat_openai(**kwargs):
+    def fake_resolve_openrouter_runtime(**kwargs):
         captured.update(kwargs)
-        return object()
+        return SimpleNamespace(client=object(), model=kwargs["model"])
 
-    monkeypatch.setattr(striker_mod, "build_chat_openai", fake_build_chat_openai)
+    monkeypatch.setattr(striker_mod, "resolve_openrouter_runtime", fake_resolve_openrouter_runtime)
     agent = striker_mod.StrikerAgent()
 
-    assert agent._llm is not None
+    assert agent._client is not None
     assert captured["api_key"] == "shared-key"
     assert captured["model"] == "shared-model"
     get_runtime_config.cache_clear()
@@ -335,7 +343,7 @@ def test_striker_search_only_run_still_records_findings():
     messages = [
         ToolMessage(
             tool_call_id="c1",
-            name="msf_list_exploits",
+            name="msf_search_modules",
             content=json.dumps(
                 {
                     "status": "success",

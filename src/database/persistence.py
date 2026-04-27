@@ -48,6 +48,11 @@ def persist_state_update(previous_state: CyberState, updates: Dict[str, Any]) ->
             merged_targets,
             updates.get("intelligence_findings", []) or [],
         )
+        _persist_generic_findings(
+            mission_id,
+            merged_targets,
+            updates,
+        )
         _persist_agent_logs(mission_id, updates.get("agent_log", []) or [], updates)
         _persist_errors(mission_id, updates.get("errors", []) or [])
         _persist_sessions(mission_id, merged_targets, merged_active_sessions)
@@ -206,6 +211,56 @@ def _persist_intelligence_findings(
             data=persisted_finding,
             auto_embed=True,
         )
+
+
+GENERIC_FINDING_SPECS = {
+    "credential_findings": ("credential_finding", "striker", "high"),
+    "exploit_attempts": ("exploit_attempt", "striker", "medium"),
+    "protocol_observations": ("protocol_observation", "scout", "info"),
+    "fuzzing_runs": ("fuzzing_run", "fuzzer", "medium"),
+    "crash_indicators": ("crash_indicator", "fuzzer", "high"),
+    "artifacts": ("artifact", "attackbox", "info"),
+    "validations": ("validation", "resident", "info"),
+}
+
+
+def _persist_generic_findings(
+    mission_id: str,
+    discovered_targets: Dict[str, Dict[str, Any]],
+    updates: Dict[str, Any],
+) -> None:
+    default_target_ip = next(iter(discovered_targets.keys()), None)
+    for key, (finding_type, agent_name, severity) in GENERIC_FINDING_SPECS.items():
+        for item in updates.get(key, []) or []:
+            if not isinstance(item, dict):
+                continue
+
+            target_ip = (
+                item.get("target")
+                or item.get("target_ip")
+                or item.get("host")
+                or default_target_ip
+            )
+            title = str(item.get("title") or item.get("module") or item.get("type") or key).strip()
+            description = str(item.get("summary") or item.get("status") or title or key).strip()
+            persisted = dict(item)
+            persisted["persistence_key"] = _persistence_key(key, target_ip, persisted)
+
+            if finding_exists_by_persistence_key(mission_id, persisted["persistence_key"]):
+                continue
+
+            create_finding(
+                mission_id=mission_id,
+                agent_name=agent_name,
+                finding_type=finding_type,
+                severity=severity,
+                target_ip=str(target_ip) if target_ip else None,
+                target_port=int(item.get("port", 0) or 0) or None,
+                title=title[:255] or finding_type,
+                description=description or finding_type,
+                data=persisted,
+                auto_embed=False,
+            )
 
 
 def _persist_agent_logs(

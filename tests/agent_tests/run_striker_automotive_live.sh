@@ -62,11 +62,10 @@ echo ""
 
 AGENTS_RUNNING=$(docker ps --filter "name=^vt-saiber-agents$" --filter "status=running" -q)
 POSTGRES_RUNNING=$(docker ps --filter "name=^vt-saiber-postgres$" --filter "status=running" -q)
-KALI_RUNNING=$(docker ps --filter "name=^vt-saiber-kali-mcp$" --filter "status=running" -q)
-MSF_RUNNING=$(docker ps --filter "name=^vt-saiber-msf-mcp$" --filter "status=running" -q)
+ATTACKBOX_RUNNING=$(docker ps --filter "name=^vt-saiber-attackbox$" --filter "status=running" -q)
 TESTBED_RUNNING=$(docker ps --filter "name=^automotive-testbed$" --filter "status=running" -q)
 
-if [ -z "$AGENTS_RUNNING" ] || [ -z "$POSTGRES_RUNNING" ] || [ -z "$KALI_RUNNING" ] || [ -z "$MSF_RUNNING" ]; then
+if [ -z "$AGENTS_RUNNING" ] || [ -z "$POSTGRES_RUNNING" ] || [ -z "$ATTACKBOX_RUNNING" ]; then
     echo "Required VT-SaiBER containers are not all running."
     echo "Start them with: docker compose up -d"
     exit 1
@@ -116,8 +115,7 @@ docker exec -t \
     -e DB_NAME="${DB_NAME:-vtsaiber}" \
     -e DB_USER="${DB_USER:-vtsaiber}" \
     -e DB_PASSWORD="${DB_PASSWORD:-}" \
-    -e KALI_MCP_URL="${KALI_MCP_URL:-http://kali-mcp:5001}" \
-    -e MSF_MCP_URL="${MSF_MCP_URL:-http://msf-mcp:8085}" \
+    -e ATTACKBOX_MCP_URL="${ATTACKBOX_MCP_URL:-http://attackbox:8080/mcp}" \
     -e TARGET_HOST="$TARGET_HOST" \
     -e LIVE_STRIKER_TARGET="$TARGET_HOST" \
     -e LIVE_STRIKER_PORTS="$LIVE_STRIKER_PORTS" \
