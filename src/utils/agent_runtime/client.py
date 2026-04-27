@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any, Iterable
 
 from src.config import RuntimeConfig, get_runtime_config
 
@@ -31,7 +32,6 @@ def build_openrouter_client(
     base_url: str | None = None,
     timeout_seconds: int | None = None,
 ):
-    """Build a reusable AsyncOpenAI client pointed at OpenRouter."""
     if AsyncOpenAI is None:
         raise RuntimeError("openai is not installed")
 
@@ -60,9 +60,12 @@ def resolve_openrouter_runtime(
     base_url: str | None = None,
     timeout_seconds: int | None = None,
 ) -> OpenRouterRuntime:
-    """Resolve the client + model tuple used by an executable agent."""
     runtime_config = config or get_runtime_config()
-    resolved_model = (model or runtime_config.supervisor_model or os.getenv("LLM_MODEL", DEFAULT_MODEL)).strip()
+    resolved_model = (
+        model
+        or runtime_config.supervisor_model
+        or os.getenv("LLM_MODEL", DEFAULT_MODEL)
+    ).strip()
     resolved_model = resolved_model or DEFAULT_MODEL
 
     client = build_openrouter_client(
@@ -71,3 +74,49 @@ def resolve_openrouter_runtime(
         timeout_seconds=timeout_seconds or runtime_config.supervisor_timeout_seconds,
     )
     return OpenRouterRuntime(client=client, model=resolved_model)
+
+
+def try_resolve_openrouter_runtime(
+    *,
+    config: RuntimeConfig | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    timeout_seconds: int | None = None,
+) -> tuple[OpenRouterRuntime | None, str | None]:
+    try:
+        return (
+            resolve_openrouter_runtime(
+                config=config,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+            ),
+            None,
+        )
+    except Exception as exc:
+        return None, str(exc)
+
+
+async def run_chat_completion(
+    *,
+    client: Any,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    history: Iterable[dict[str, Any]] | None = None,
+    temperature: float = 0.0,
+) -> str:
+    from src.utils.agent_runtime.transcript import extract_message_text
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            *(list(history or [])),
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=temperature,
+    )
+    return extract_message_text(response.choices[0].message)

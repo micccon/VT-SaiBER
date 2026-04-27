@@ -1,18 +1,16 @@
-"""
-Scout Agent - network reconnaissance worker.
-"""
+"""Scout Agent - network reconnaissance worker."""
 
 from __future__ import annotations
-from ipaddress import ip_address, ip_network
-import json
-import re
+
 from typing import Any, Dict, List
 
 from src.agents.base import BaseAgent
-from src.agents.worker_harness import call_tool, find_tool, load_filtered_tools
+from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
 from src.state.cyber_state import CyberState
-from src.state.models import DiscoveredTarget, ServiceInfo
+from src.state.models import DiscoveredTarget
+from src.utils.agent_runtime import iter_tool_messages
+from src.utils.agent_parsers import parse_host_discovery_output, parse_nmap_output, parse_service_records
 from src.utils.validators import target_in_scope
 
 SCOUT_ALLOWED_TOOLS = {"recon_host_discovery", "recon_port_scan", "recon_service_probe"}
@@ -23,260 +21,136 @@ class ScoutAgent(BaseAgent):
 
     def __init__(self):
         super().__init__("scout", "Network Reconnaissance Specialist")
+        self._init_runtime(config=get_runtime_config())
 
     @property
     def system_prompt(self) -> str:
-        return "Recon worker: discover active services and versions."
+        return (
+            "You are the VT-SaiBER scout agent.\n"
+            "Use only the provided recon tools.\n"
+            "If scope contains concrete hosts, probe them directly.\n"
+            "If scope contains CIDR ranges, discover live hosts first, then probe up to "
+            f"{MAX_SCOUT_TARGETS} in-scope hosts.\n"
+            "Prefer recon_service_probe for service/version detail.\n"
+            "Do not go out of scope.\n"
+            "Finish with a concise summary."
+        )
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
         target_scope = state.get("target_scope", [])
         if not target_scope:
-            return self.log_error(
+            return self._error_update(
                 state,
                 error_type="ValidationError",
-                error="No targets in target_scope",
+                message="No targets in target_scope",
             )
+        return await self._run_tool_agent(
+            state,
+            user_prompt=self._build_context(state),
+            allowed_tools=SCOUT_ALLOWED_TOOLS,
+            extractor=self._extract_updates,
+            max_rounds=6,
+            error_message="Scout LLM/tool loop failed.",
+        )
 
-        scan_targets = await self._resolve_scan_targets(state)
-        if not scan_targets:
-            return self.log_error(
-                state,
-                error_type="ValidationError",
-                error="Scout could not derive a concrete in-scope host to scan",
-            )
+    def _build_context(self, state: CyberState) -> str:
+        discovered_targets = list((state.get("discovered_targets", {}) or {}).keys())
+        target_scope = state.get("target_scope", []) or []
+        return (
+            f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
+            f"TARGET SCOPE: {target_scope}\n"
+            f"ALREADY KNOWN TARGETS: {discovered_targets[:MAX_SCOUT_TARGETS] or '(none)'}\n\n"
+            "Discover live in-scope hosts and enumerate their exposed services with versions."
+        )
 
+    def _extract_updates(self, messages: List[Dict[str, Any]], state: CyberState) -> Dict[str, Any]:
+        target_scope = state.get("target_scope", []) or []
         discovered_targets: Dict[str, Dict[str, Any]] = {}
-        total_services = 0
-        total_ports: List[int] = []
+        discovered_hosts: List[str] = []
 
-        for target in scan_targets:
-            if not target_in_scope(target, target_scope):
+        for message, data in iter_tool_messages(messages):
+            name = str(message.get("name", "") or "")
+            invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
+
+            if name == "recon_host_discovery":
+                evidence = data.get("evidence", {}) if isinstance(data, dict) else {}
+                if isinstance(evidence, dict) and isinstance(evidence.get("hosts"), list):
+                    for host in evidence["hosts"]:
+                        host_text = str(host)
+                        if target_in_scope(host_text, target_scope) and host_text not in discovered_hosts:
+                            discovered_hosts.append(host_text)
+                else:
+                    for host in parse_host_discovery_output(data, max_hosts=MAX_SCOUT_TARGETS):
+                        if target_in_scope(host, target_scope) and host not in discovered_hosts:
+                            discovered_hosts.append(host)
                 continue
 
-            services = await self._discover_services(target)
-            ports = sorted(services.keys())
-            total_services += len(services)
-            total_ports.extend(ports)
+            if name not in {"recon_service_probe", "recon_port_scan"}:
+                continue
+
+            target = str(invocation.get("target") or "").strip()
+            if not target or not target_in_scope(target, target_scope):
+                continue
+
+            evidence = data.get("evidence", {}) if isinstance(data, dict) else {}
+            services = evidence.get("services", []) if isinstance(evidence, dict) else []
+            parsed = parse_service_records(services)
+            if not parsed:
+                parsed = parse_nmap_output(data)
+            if not parsed:
+                continue
 
             discovered_target = DiscoveredTarget(
                 ip_address=target,
-                ports=ports,
-                services=services,
+                ports=sorted(parsed.keys()),
+                services=parsed,
                 os_guess="Unknown",
             )
             discovered_targets[target] = discovered_target.model_dump()
 
         if not discovered_targets:
-            return self.log_error(
+            for host in discovered_hosts[:MAX_SCOUT_TARGETS]:
+                discovered_targets[host] = DiscoveredTarget(
+                    ip_address=host,
+                    ports=[],
+                    services={},
+                    os_guess="Unknown",
+                ).model_dump()
+
+        if not discovered_targets:
+            return self._error_update(
                 state,
-                error_type="ScopeViolation",
-                error="Scout derived only out-of-scope targets",
+                error_type="ValidationError",
+                message="Scout did not produce any in-scope targets or services",
             )
 
+        total_ports = sorted(
+            {
+                int(port)
+                for target in discovered_targets.values()
+                for port in (target.get("ports", []) or [])
+            }
+        )
+        total_services = sum(
+            len((target.get("services", {}) or {}))
+            for target in discovered_targets.values()
+        )
+
         return {
-            "current_agent": "scout",
             "discovered_targets": discovered_targets,
+            **self._agent_update(state),
             **self.log_action(
                 state,
                 action="recon_scan",
-                target=", ".join(scan_targets),
+                target=", ".join(discovered_targets.keys()),
                 findings={
                     "targets_scanned": list(discovered_targets.keys()),
-                    "ports_found": sorted(set(total_ports)),
+                    "ports_found": total_ports,
                     "services_found": total_services,
                 },
-                reasoning="Scout completed reconnaissance update using concrete in-scope hosts",
+                reasoning="Scout completed reconnaissance update using shared OpenRouter tool orchestration",
             ),
         }
-
-    async def _resolve_scan_targets(self, state: CyberState) -> List[str]:
-        discovered_targets = state.get("discovered_targets", {}) or {}
-        target_scope = state.get("target_scope", []) or []
-
-        concrete_targets = [
-            target
-            for target in discovered_targets.keys()
-            if target_in_scope(str(target), target_scope)
-        ]
-        if concrete_targets:
-            return concrete_targets[:MAX_SCOUT_TARGETS]
-
-        direct_targets = [
-            entry
-            for entry in target_scope
-            if self._is_concrete_target(entry)
-        ]
-        if direct_targets:
-            return direct_targets[:MAX_SCOUT_TARGETS]
-
-        discovered_hosts: List[str] = []
-        for scope_entry in target_scope:
-            if not self._is_network_scope(scope_entry):
-                continue
-            hosts = await self._discover_hosts(scope_entry)
-            for host in hosts:
-                if host not in discovered_hosts and target_in_scope(host, target_scope):
-                    discovered_hosts.append(host)
-                if len(discovered_hosts) >= MAX_SCOUT_TARGETS:
-                    return discovered_hosts
-        return discovered_hosts
-
-    def _is_concrete_target(self, value: str) -> bool:
-        candidate = str(value or "").strip()
-        if not candidate or self._is_network_scope(candidate):
-            return False
-        try:
-            ip_address(candidate)
-            return True
-        except ValueError:
-            return True
-
-    def _is_network_scope(self, value: str) -> bool:
-        candidate = str(value or "").strip()
-        if "/" not in candidate:
-            return False
-        try:
-            ip_network(candidate, strict=False)
-            return True
-        except ValueError:
-            return False
-
-    async def _discover_hosts(self, scope_entry: str) -> List[str]:
-        try:
-            tools = await load_filtered_tools(SCOUT_ALLOWED_TOOLS)
-        except Exception:
-            return []
-
-        discovery_tool = find_tool(tools, "recon_host_discovery")
-        if discovery_tool is None:
-            return []
-
-        try:
-            raw = await call_tool(
-                discovery_tool,
-                targets=scope_entry,
-                additional_args="-T4",
-            )
-            if isinstance(raw.get("evidence"), dict) and isinstance(raw["evidence"].get("hosts"), list):
-                return [str(host) for host in raw["evidence"]["hosts"]]
-            return self._parse_host_discovery_output(raw)
-        except Exception:
-            return []
-
-    async def _discover_services(self, target: str) -> Dict[int, ServiceInfo]:
-        try:
-            tools = await load_filtered_tools(SCOUT_ALLOWED_TOOLS)
-        except Exception:
-            tools = []
-
-        probe_tool = find_tool(tools, "recon_service_probe")
-        if probe_tool:
-            try:
-                raw = await call_tool(
-                    probe_tool,
-                    target=target,
-                    ports="1-1024",
-                    additional_args="",
-                )
-                evidence = raw.get("evidence", {}) if isinstance(raw, dict) else {}
-                services = evidence.get("services", []) if isinstance(evidence, dict) else []
-                parsed = self._parse_service_records(services)
-                if parsed:
-                    return parsed
-                parsed = self._parse_nmap_output(raw)
-                if parsed:
-                    return parsed
-            except Exception:
-                pass
-
-        # Safe fallback when MCP is unavailable.
-        return {
-            22: ServiceInfo(port=22, service_name="ssh", version="OpenSSH", banner=""),
-            80: ServiceInfo(port=80, service_name="http", version="Apache", banner=""),
-        }
-
-    def _extract_text_payload(self, raw_output: Any) -> str:
-        payload = raw_output
-        if isinstance(payload, str):
-            try:
-                payload = json.loads(payload)
-            except json.JSONDecodeError:
-                payload = {"output": raw_output}
-
-        if isinstance(payload, dict):
-            for key in ("output", "stdout", "result", "data"):
-                value = payload.get(key)
-                if isinstance(value, str):
-                    return value
-                if isinstance(value, dict):
-                    maybe_text = value.get("output") or value.get("stdout")
-                    if isinstance(maybe_text, str):
-                        return maybe_text
-            raw = payload.get("raw")
-            if isinstance(raw, dict):
-                maybe_text = raw.get("stdout") or raw.get("output")
-                if isinstance(maybe_text, str):
-                    return maybe_text
-        return ""
-
-    def _parse_service_records(self, services: List[Dict[str, Any]]) -> Dict[int, ServiceInfo]:
-        parsed: Dict[int, ServiceInfo] = {}
-        for service in services:
-            if not isinstance(service, dict):
-                continue
-            port = int(service.get("port", 0) or 0)
-            if port <= 0:
-                continue
-            parsed[port] = ServiceInfo(
-                port=port,
-                protocol=str(service.get("protocol", "tcp") or "tcp"),
-                service_name=str(service.get("service_name", "unknown") or "unknown"),
-                version=service.get("version"),
-                banner=service.get("banner"),
-            )
-        return parsed
-
-    def _parse_host_discovery_output(self, raw_output: Any) -> List[str]:
-        text = self._extract_text_payload(raw_output)
-        if not text:
-            return []
-
-        hosts: List[str] = []
-        report_regex = re.compile(r"^Nmap scan report for (.+)$", re.IGNORECASE)
-        ip_regex = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
-        for line in text.splitlines():
-            match = report_regex.match(line.strip())
-            if not match:
-                continue
-            candidate = match.group(1).strip()
-            ip_match = ip_regex.search(candidate)
-            host = ip_match.group(0) if ip_match else candidate
-            if host and host not in hosts:
-                hosts.append(host)
-        return hosts[:MAX_SCOUT_TARGETS]
-
-    def _parse_nmap_output(self, raw_output: Any) -> Dict[int, ServiceInfo]:
-        text = self._extract_text_payload(raw_output)
-
-        services: Dict[int, ServiceInfo] = {}
-        if text:
-            pattern = re.compile(r"^(\d{1,5})/(tcp|udp)\s+open\s+([^\s]+)\s*(.*)$", re.IGNORECASE)
-            for line in text.splitlines():
-                match = pattern.match(line.strip())
-                if not match:
-                    continue
-                port = int(match.group(1))
-                proto = match.group(2).lower()
-                service_name = match.group(3).lower()
-                version = match.group(4).strip() or None
-                services[port] = ServiceInfo(
-                    port=port,
-                    protocol=proto,
-                    service_name=service_name,
-                    version=version,
-                    banner=None,
-                )
-        return services
 
 
 async def scout_node(state: CyberState) -> Dict[str, Any]:

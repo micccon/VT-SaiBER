@@ -1,11 +1,4 @@
-"""
-Librarian Agent - research and intelligence worker.
-
-Responsibilities:
-- Turn CyberState telemetry + RAG + OSINT into a structured intelligence brief.
-- Do NOT execute tools directly; only provide cited intelligence for other agents.
-"""
-
+"""Librarian agent - turns telemetry, RAG, and OSINT into an intelligence brief."""
 
 from __future__ import annotations
 
@@ -14,118 +7,53 @@ from typing import Any, Dict, List, Optional
 
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
+from src.database.librarian.prompts import LibrarianPrompts
+from src.database.librarian.query_builder import TelemetryProcessor
+from src.database.persistence import persist_state_update
 from src.state.cyber_state import CyberState
 from src.state.models import IntelligenceBrief
-from src.utils.llm import build_chat_openai, extract_text_content
 from src.utils.parsers import extract_json_payload
-
-from src.database.librarian.query_builder import TelemetryProcessor
-from src.database.librarian.prompts import LibrarianPrompts
-from src.database.persistence import persist_state_update
-
-MIN_DOCS = 3  # Compatibility defaults, overridden by RuntimeConfig
-MIN_SCORE = 0.75  # Compatibility defaults, overridden by RuntimeConfig
 
 
 class LibrarianAgent(BaseAgent):
     def __init__(self, rag_orchestrator: Optional[Any] = None):
         super().__init__("librarian", "Research and Intelligence Specialist")
         cfg = get_runtime_config()
-
-        # 1. LLM Client
-        self._llm = None
-        if cfg.openrouter_api_key:
-            self._llm = build_chat_openai(
-                model=cfg.supervisor_model,
-                base_url=cfg.openrouter_base_url,
-                timeout_seconds=cfg.supervisor_timeout_seconds,
-            )
-        self._client = self._llm
+        self._init_runtime(
+            config=cfg,
+            model=cfg.supervisor_model,
+            api_key=cfg.openrouter_api_key,
+            base_url=cfg.openrouter_base_url,
+            timeout_seconds=cfg.supervisor_timeout_seconds,
+        )
         self._rag_top_k = cfg.rag_kb_top_k
         self._min_docs = cfg.rag_min_docs
         self._min_score = cfg.rag_min_score
-        
-        # 2. Query Builder
         self._telemetry_processor = TelemetryProcessor()
-
-        # 3. RAG Orchestrator
-        if rag_orchestrator is not None:
-            self._rag = rag_orchestrator
-        else:
-            try:
-                from src.database.rag.rag_engine import RAGOrchestrator
-                self._rag = RAGOrchestrator()
-            except Exception:
-                self._rag = None
-        
-        # 4. OSINT Client
-        try:
-            from src.database.librarian.osint_client import OSINTClient
-            self._osint_client = OSINTClient()
-        except Exception:
-            self._osint_client = None
-
+        self._rag = rag_orchestrator or self._build_rag()
+        self._osint_client = self._build_osint_client()
 
     @property
     def system_prompt(self) -> str:
         return LibrarianPrompts.SYSTEM_PROMPT
 
-
     def _build_research_query(self, state: CyberState) -> str:
-        """Wrapper method for backward compatibility with tests."""
         return self._telemetry_processor.build_research_query(state)
 
-
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
-        # A. build query from telemetry
-        query = self._telemetry_processor.build_research_query(state)
+        query = self._build_research_query(state)
         cache_key = self._cache_key(query)
-
-        # check cache first (simple in-memory cache keyed by query hash)
         research_cache = dict(state.get("research_cache", {}) or {})
         cached = research_cache.get(cache_key)
-
-        if cached:
-            # directly restore cached brief
-            brief = IntelligenceBrief.model_validate(cached)
-        else:
-            # B. RAG first, check confidence
-            rag_results = await self._retrieve_from_kb(query)
-            rag_confident = self._is_rag_confident(rag_results)
-
-            # C. OSINT only if RAG is not confident
-            osint_results: List[Dict[str, Any]] = []
-            if not rag_confident:
-                osint_results = await self._retrieve_osint(query)
-
-            # D. generate Intelligence Brief（decided by LLM is_osint_derived）
-            brief = await self._research_brief(query, rag_results, osint_results)
-
-            # E. Update State cache
+        brief = IntelligenceBrief.model_validate(cached) if cached else await self._build_brief(query)
+        if not cached:
             research_cache[cache_key] = brief.model_dump()
 
-        # F. Build high-level intelligence findings for downstream agents
-        intelligence_findings = [{
-            "source": "librarian",
-            "description": brief.summary,
-            "exploit_available": bool(brief.technical_params.get("exploit_module")),
-            "data": {
-                "technical_params": brief.technical_params,
-                "citations": brief.citations,
-                "confidence": brief.confidence,
-                "is_osint_derived": brief.is_osint_derived,
-                "conflicting_sources": brief.conflicting_sources or [],
-            },
-        }]
-
-        # rag_fallback_triggered directly uses brief.is_osint_derived
-        rag_fallback_triggered = bool(getattr(brief, "is_osint_derived", False))
-
         return {
-            "current_agent": "librarian",
+            **self._agent_update(state),
             "research_cache": research_cache,
-            "intelligence_findings": intelligence_findings,
-            "rag_fallback_triggered": rag_fallback_triggered,
+            "intelligence_findings": [self._finding_from_brief(brief)],
+            "rag_fallback_triggered": bool(getattr(brief, "is_osint_derived", False)),
             **self.log_action(
                 state,
                 action="research_brief",
@@ -139,56 +67,52 @@ class LibrarianAgent(BaseAgent):
             ),
         }
 
+    def _build_rag(self) -> Any:
+        try:
+            from src.database.rag.rag_engine import RAGOrchestrator
+
+            return RAGOrchestrator()
+        except Exception:
+            return None
+
+    def _build_osint_client(self) -> Any:
+        try:
+            from src.database.librarian.osint_client import OSINTClient
+
+            return OSINTClient()
+        except Exception:
+            return None
+
+    async def _build_brief(self, query: str) -> IntelligenceBrief:
+        rag_results = await self._retrieve_from_kb(query)
+        osint_results = [] if self._is_rag_confident(rag_results) else await self._retrieve_osint(query)
+        return await self._research_brief(query, rag_results, osint_results)
+
     async def _retrieve_from_kb(self, query: str) -> List[Dict[str, Any]]:
         if self._rag is None:
             return []
         try:
-            res = await self._rag.retrieve(
-                query=query,
-                source="kb",
-                top_k=self._rag_top_k,
-            )
-            return res.get("kb_results", [])
+            result = await self._rag.retrieve(query=query, source="kb", top_k=self._rag_top_k)
+            return result.get("kb_results", [])
         except Exception:
             return []
 
-
     def _is_rag_confident(self, rag_results: List[Dict[str, Any]]) -> bool:
-        """
-        Check if RAG results meet minimum quality threshold.
-        
-        A result is considered confident if:
-        1. It has at least MIN_DOCS_THRESHOLD results
-        2. The highest scoring result meets MIN_SCORE_THRESHOLD
-        
-        Returns:
-            True if RAG is confident, False if we should fallback to OSINT
-        """
-        min_docs = self._min_docs
-        min_score = self._min_score
-
-        if not rag_results or len(rag_results) < min_docs:
+        if len(rag_results or []) < self._min_docs:
             return False
-        
-        # Extract scores from results (assuming 'score' or 'similarity' field)
-        scores = []
-        for result in rag_results:
-            if isinstance(result, dict):
-                score = result.get("score") or result.get("similarity")
-                if score is not None:
-                    scores.append(score)
-        
-        if not scores or max(scores) < min_score:
-            return False
-        
-        return True
-
+        scores = [
+            score
+            for result in rag_results
+            if isinstance(result, dict)
+            for score in [result.get("score") or result.get("similarity")]
+            if score is not None
+        ]
+        return bool(scores) and max(scores) >= self._min_score
 
     async def _retrieve_osint(self, query: str) -> List[Dict[str, Any]]:
         if self._osint_client is None:
             return []
         return await self._osint_client.search(query)
-
 
     async def _research_brief(
         self,
@@ -198,34 +122,9 @@ class LibrarianAgent(BaseAgent):
     ) -> IntelligenceBrief:
         rag_results = rag_results or []
         osint_results = osint_results or []
-
-        # Fallback：when there's no LLM, and no RAG or OSINT results
-        if self._llm is None and not rag_results and not osint_results:
+        if self._client is None:
             return IntelligenceBrief(
-                summary=f"LLM not configured; fallback for: {query}",
-                technical_params={},
-                is_osint_derived=False,
-                confidence=0.0,
-                citations=[],
-                conflicting_sources=None,
-            )
-
-        # additional fallback：match test_fallback_brief_no_client（client is None, no any results）
-        if self._client is None and not rag_results and not osint_results:
-            return IntelligenceBrief(
-                summary=f"Fallback intelligence brief (no API client available) for: {query}",
-                technical_params={},
-                is_osint_derived=False,
-                confidence=0.1,
-                citations=[],
-                conflicting_sources=None,
-            )
-
-        # normal path：use RAG / OSINT results with LLM to generate brief
-        if self._llm is None:
-            # has RAG/OSINT but no LLM fallback
-            return IntelligenceBrief(
-                summary=f"LLM not configured; partial data-based brief for: {query}",
+                summary=f"LLM not configured; {'partial data-based' if (rag_results or osint_results) else 'fallback'} brief for: {query}",
                 technical_params={},
                 is_osint_derived=bool(osint_results),
                 confidence=0.0,
@@ -233,25 +132,21 @@ class LibrarianAgent(BaseAgent):
                 conflicting_sources=None,
             )
 
-        user_content = LibrarianPrompts.build_user_content(query, rag_results, osint_results)
-
         try:
-            response = await self._llm.ainvoke(
-                [
-                    ("system", LibrarianPrompts.SYSTEM_PROMPT),
-                    ("human", user_content),
-                ]
+            content = await self._run_chat_agent(
+                state={},
+                user_prompt=LibrarianPrompts.build_user_content(query, rag_results, osint_results),
+                temperature=0.0,
+                error_message="Librarian chat completion failed.",
             )
-            payload = extract_json_payload(extract_text_content(response))
-
+            if isinstance(content, dict):
+                raise RuntimeError(content.get("errors", [{}])[0].get("error", "Chat completion failed"))
+            payload = extract_json_payload(content)
             if osint_results:
                 payload["is_osint_derived"] = True
-
             if "confidence_score" in payload and "confidence" not in payload:
                 payload["confidence"] = payload["confidence_score"]
-
             payload["citations"] = self._normalize_citations(payload.get("citations"))
-
             return IntelligenceBrief.model_validate(payload)
         except (RuntimeError, ValueError):
             return IntelligenceBrief(
@@ -263,27 +158,38 @@ class LibrarianAgent(BaseAgent):
                 conflicting_sources=None,
             )
 
+    def _finding_from_brief(self, brief: IntelligenceBrief) -> Dict[str, Any]:
+        return {
+            "source": "librarian",
+            "description": brief.summary,
+            "exploit_available": bool(brief.technical_params.get("exploit_module")),
+            "data": {
+                "technical_params": brief.technical_params,
+                "citations": brief.citations,
+                "confidence": brief.confidence,
+                "is_osint_derived": brief.is_osint_derived,
+                "conflicting_sources": brief.conflicting_sources or [],
+            },
+        }
 
     def _cache_key(self, query: str) -> str:
         return f"research_{hashlib.sha1(query.encode()).hexdigest()[:10]}"
 
     @staticmethod
     def _normalize_citations(raw: Any) -> List[str]:
-        normalized: List[str] = []
+        citations: List[str] = []
         for item in list(raw or []):
             if isinstance(item, str):
-                text = item.strip()
-                if text:
-                    normalized.append(text)
-                continue
-            if isinstance(item, dict):
+                if item.strip():
+                    citations.append(item.strip())
+            elif isinstance(item, dict):
                 source = str(item.get("source") or "").strip()
                 reference = str(item.get("reference") or item.get("url") or "").strip()
                 if source and reference:
-                    normalized.append(f"{source}:{reference}")
+                    citations.append(f"{source}:{reference}")
                 elif reference:
-                    normalized.append(reference)
-        return normalized
+                    citations.append(reference)
+        return citations
 
 
 async def librarian_node(state: CyberState) -> Dict[str, Any]:

@@ -11,9 +11,8 @@ import os
 from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional, Set
 
-from langchain_core.tools import StructuredTool
 from mcp import ClientSession
-from pydantic import BaseModel, Field, create_model
+from src.utils.agent_runtime.models import RuntimeTool
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +50,8 @@ class MCPToolBridge:
         self.session: ClientSession | None = None
         self.owner_loop: asyncio.AbstractEventLoop | None = None
         self.closed = False
-        self.all_tools: List[StructuredTool] = []
-        self._tool_cache: Dict[str, StructuredTool] = {}
+        self.all_tools: List[RuntimeTool] = []
+        self._tool_cache: Dict[str, RuntimeTool] = {}
 
     async def connect(self, url: str) -> None:
         if not url:
@@ -76,38 +75,16 @@ class MCPToolBridge:
         await self.session.initialize()
 
         tools_result = await self.session.list_tools()
-        self.all_tools = [self._mcp_to_langchain(tool_def) for tool_def in tools_result.tools]
+        self.all_tools = [self._mcp_to_runtime_tool(tool_def) for tool_def in tools_result.tools]
         self._tool_cache = {tool.name: tool for tool in self.all_tools}
         logger.info("Attackbox MCP connected with %d tools", len(self.all_tools))
 
-    def _mcp_to_langchain(self, mcp_tool: Any) -> StructuredTool:
+    def _mcp_to_runtime_tool(self, mcp_tool: Any) -> RuntimeTool:
         input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
-        fields: Dict[str, Any] = {}
-        required = set(input_schema.get("required", []) or [])
         defaults: Dict[str, Any] = {}
-
         for prop_name, prop_schema in (input_schema.get("properties", {}) or {}).items():
-            field_type = self._json_type_to_python(prop_schema.get("type", "string"))
-            has_default = "default" in prop_schema
-            default_value = prop_schema.get("default")
-            field_required = (prop_name in required) and (not has_default)
-            field_description = prop_schema.get("description", "")
-
-            if field_required:
-                fields[prop_name] = (field_type, Field(description=field_description))
-            else:
-                effective_default = default_value if has_default else None
-                fields[prop_name] = (
-                    Optional[field_type],
-                    Field(default=effective_default, description=field_description),
-                )
-                if has_default:
-                    defaults[prop_name] = default_value
-
-        if fields:
-            ArgsSchema = create_model(f"{mcp_tool.name}_args", **fields)
-        else:
-            ArgsSchema = create_model(f"{mcp_tool.name}_args", __base__=BaseModel)
+            if "default" in prop_schema:
+                defaults[prop_name] = prop_schema.get("default")
 
         async def execute_tool(**kwargs: Any) -> str:
             if self.session is None:
@@ -125,12 +102,12 @@ class MCPToolBridge:
             result = await self.session.call_tool(mcp_tool.name, cleaned_kwargs)
             return self._serialize_result(result)
 
-        return StructuredTool(
+        return RuntimeTool(
             name=mcp_tool.name,
             description=getattr(mcp_tool, "description", "") or mcp_tool.name,
-            func=execute_tool,
-            coroutine=execute_tool,
-            args_schema=ArgsSchema,
+            input_schema=input_schema,
+            executor=execute_tool,
+            defaults=defaults,
         )
 
     def _serialize_result(self, result: Any) -> str:
@@ -155,17 +132,7 @@ class MCPToolBridge:
 
         return "{}"
 
-    def _json_type_to_python(self, json_type: str) -> type:
-        return {
-            "string": str,
-            "integer": int,
-            "number": float,
-            "boolean": bool,
-            "object": dict,
-            "array": list,
-        }.get(json_type, str)
-
-    def get_tools_for_agent(self, allowed_tools: Optional[Set[str]] = None) -> List[StructuredTool]:
+    def get_tools_for_agent(self, allowed_tools: Optional[Set[str]] = None) -> List[RuntimeTool]:
         if allowed_tools is None:
             logger.warning("get_tools_for_agent called with no allowlist; returning no tools")
             return []

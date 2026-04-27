@@ -1,6 +1,4 @@
-"""
-Supervisor Agent - mission orchestration and routing.
-"""
+"""Supervisor agent - mission orchestration and routing."""
 
 from __future__ import annotations
 
@@ -8,38 +6,29 @@ import json
 import logging
 from typing import Any, Dict, List, Tuple
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
 from src.graph.router import validate_all_targets_in_scope
 from src.state.cyber_state import CyberState
 from src.state.models import SupervisorDecision
-from src.utils.llm import build_chat_openai, extract_text_content, to_langchain_messages
 from src.utils.parsers import extract_json_payload
-from src.utils.validators import (
-    has_agent_run,
-    has_service_version_intel,
-    list_recent_agent_names,
-)
+from src.utils.validators import has_agent_run, has_service_version_intel, list_recent_agent_names
 
 logger = logging.getLogger(__name__)
-
 VALID_NEXT_AGENTS = {"scout", "fuzzer", "librarian", "striker", "resident", "end"}
 
 
 class SupervisorAgent(BaseAgent):
-    """Centralized supervisor that routes specialist workers."""
-
     def __init__(self):
         super().__init__("supervisor", "Mission Coordinator")
         self.config = get_runtime_config()
-        self._llm = None
         if self.config.openrouter_api_key:
-            self._llm = build_chat_openai(
+            self._init_runtime(
+                config=self.config,
                 model=self.config.supervisor_model,
                 base_url=self.config.openrouter_base_url,
+                api_key=self.config.openrouter_api_key,
                 timeout_seconds=self.config.supervisor_timeout_seconds,
             )
         else:
@@ -47,153 +36,88 @@ class SupervisorAgent(BaseAgent):
 
     @property
     def system_prompt(self) -> str:
-        return """You are the VT-SaiBER Supervisor. You route the mission to the best specialist worker agent.
-
-Agent roles:
-- scout: Network reconnaissance — host discovery, port scanning, service fingerprinting.
-- fuzzer: Web attack-surface enumeration — directory brute-forcing, endpoint and API path discovery.
-- librarian: Vulnerability intelligence — CVE research, exploit-path analysis, OSINT gathering.
-- striker: Exploitation — launching exploits, gaining shells and remote sessions.
-- resident: Post-exploitation — session enumeration, privilege escalation, persistence.
-- end: Mission complete or awaiting human review.
-
-Output format — return ONLY a single JSON object:
-{
-  "next_agent": "scout|fuzzer|librarian|striker|resident|end",
-  "rationale": "<concise technical reason>",
-  "specific_goal": "<one precise objective for the selected agent>",
-  "confidence_score": <0.0–1.0>
-}
-
-Routing strategy:
-
-1. MATCH THE MISSION GOAL to the agent whose role best fits the requested task.
-   This is the strongest routing signal.
-   - Goal asks to discover, scan, or fingerprint hosts/services      → scout
-   - Goal asks to enumerate web directories, endpoints, or API paths → fuzzer
-   - Goal asks to research vulnerabilities, look up CVEs, or gather intelligence → librarian
-   - Goal asks to exploit a target, gain a shell, or launch an attack → striker
-   - Goal asks to enumerate sessions, escalate privileges, or perform post-exploitation → resident
-   Key distinction: "research exploit paths" or "find CVEs" = librarian;
-   "run the exploit" or "gain a shell" = striker.
-
-2. RESPECT PIPELINE PROGRESSION. Read the MISSION PHASE block in the context.
-   The standard pipeline is: scout → fuzzer → librarian → striker → resident → end.
-   Prefer advancing forward. Only go backward if the mission goal explicitly demands it.
-
-3. HARD CONSTRAINTS (never violate):
-   - NEVER pick striker unless librarian has already run (librarian_ran=True).
-   - NEVER pick resident unless active_sessions > 0.
-   - If the last exploit attempt failed, pick librarian or fuzzer — not striker again.
-
-4. When the goal is ambiguous, follow the MISSION PHASE recommendation.
-
-Do not call any tools. You are routing-only.
-"""
+        return (
+            "You are the VT-SaiBER Supervisor. Route the mission to the best specialist worker.\n\n"
+            "Roles:\n"
+            "- scout: host discovery, port scanning, service fingerprinting\n"
+            "- fuzzer: web directories, endpoints, API path discovery\n"
+            "- librarian: CVE research, exploit-path analysis, OSINT\n"
+            "- striker: exploitation, gaining shells or sessions\n"
+            "- resident: session enumeration, privilege escalation, post-exploitation\n"
+            "- end: mission complete or awaiting human review\n\n"
+            'Return ONLY JSON: {"next_agent":"scout|fuzzer|librarian|striker|resident|end","rationale":"...","specific_goal":"...","confidence_score":0.0}\n\n'
+            "Routing rules:\n"
+            "1. Match the mission goal to the best role.\n"
+            "2. Prefer the pipeline scout -> fuzzer -> librarian -> striker -> resident -> end.\n"
+            "3. Never pick striker before librarian. Never pick resident without active sessions.\n"
+            "4. After a failed exploit, pick librarian or fuzzer instead of striker.\n"
+            "5. When ambiguous, follow the MISSION PHASE recommendation.\n"
+            "Do not call tools."
+        )
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
         iteration_count = int(state.get("iteration_count", 0))
         mission_status = str(state.get("mission_status", "active")).lower()
-
         if mission_status in {"success", "failed", "wait_for_human"}:
-            return self._terminal_update(
-                state=state,
-                mission_status=mission_status,
-                rationale=f"Mission already in terminal state: {mission_status}",
-                specific_goal="N/A",
-            )
-
+            return self._terminal_update(state, mission_status, f"Mission already in terminal state: {mission_status}", "N/A")
         if iteration_count > self.config.max_iterations:
             return self._terminal_update(
-                state=state,
-                mission_status="wait_for_human",
-                rationale=(
-                    f"Iteration cap exceeded ({self.config.max_iterations}). "
-                    "Escalating to human operator."
-                ),
-                specific_goal="Wait for human guidance",
+                state,
+                "wait_for_human",
+                f"Iteration cap exceeded ({self.config.max_iterations}). Escalating to human operator.",
+                "Wait for human guidance",
             )
-
         if not validate_all_targets_in_scope(state):
-            update = self._terminal_update(
-                state=state,
-                mission_status="failed",
-                rationale="Out-of-scope target detected. Mission aborted for safety.",
-                specific_goal="N/A",
-            )
+            update = self._terminal_update(state, "failed", "Out-of-scope target detected. Mission aborted for safety.", "N/A")
             update["errors"] = [{
-                "agent": "supervisor",
+                "agent": self.name,
                 "error_type": "scope_violation",
                 "error": "Out-of-scope target discovered in state",
                 "recoverable": False,
             }]
             return update
 
-        # Deterministic Phase-6 shortcut: resident has verified the session — no LLM needed.
         agent_log = state.get("agent_log", []) or []
         if (state.get("active_sessions") or {}) and has_agent_run(agent_log, "resident"):
             return self._terminal_update(
-                state=state,
-                mission_status="success",
-                rationale="Active session confirmed and post-exploitation completed by resident.",
-                specific_goal="Mission objectives satisfied.",
+                state,
+                "success",
+                "Active session confirmed and post-exploitation completed by resident.",
+                "Mission objectives satisfied.",
             )
 
-        context_summary = self._build_context_summary(state)
+        context = self._build_context_summary(state)
         history = self._sanitize_history(state.get("supervisor_messages", []))
-        prompt_messages = [
-            SystemMessage(content=self.system_prompt),
-            *to_langchain_messages(history),
-            HumanMessage(content=context_summary),
-        ]
-
         try:
-            if self._llm is None:
-                raise RuntimeError("ChatOpenAI client unavailable")
-            llm_message = await self._llm.ainvoke(prompt_messages)
-            llm_content = extract_text_content(llm_message)
-            decision = self._parse_decision(llm_content)
-            assistant_payload = {
-                "role": "assistant",
-                "content": llm_content,
-            }
+            content = await self._run_chat_agent(
+                state,
+                user_prompt=context,
+                history=history,
+                temperature=0.0,
+                error_message="Supervisor chat completion failed.",
+            )
+            if isinstance(content, dict):
+                raise RuntimeError(content.get("errors", [{}])[0].get("error", "OpenRouter client unavailable"))
+            decision = self._parse_decision(content)
+            assistant_payload = {"role": "assistant", "content": content}
         except Exception as exc:
             logger.warning("Supervisor LLM fallback engaged: %s", exc)
-            decision = self._fallback_decision(state, reason=str(exc))
-            assistant_payload = {
-                "role": "assistant",
-                "content": json.dumps(decision.model_dump()),
-            }
+            decision = self._fallback_decision(state, str(exc))
+            assistant_payload = {"role": "assistant", "content": json.dumps(decision.model_dump())}
 
         decision, guardrail_reason = self._apply_guardrails(state, decision)
-        next_agent = decision.next_agent.strip().lower()
+        reasoning = decision.rationale if not guardrail_reason else f"{decision.rationale} | Guardrail: {guardrail_reason}"
+        history = [*history, {"role": "user", "content": context}, assistant_payload]
+        history = history[-max(2, self.config.supervisor_max_reasoning_messages):]
 
-        new_history = [
-            *history,
-            {"role": "user", "content": context_summary},
-            assistant_payload,
-        ]
-        max_msgs = max(2, self.config.supervisor_max_reasoning_messages)
-        new_history = new_history[-max_msgs:]
-
-        reasoning = decision.rationale
-        if guardrail_reason:
-            reasoning = f"{reasoning} | Guardrail: {guardrail_reason}"
-
-        if next_agent == "end":
+        if decision.next_agent == "end":
             terminal_status, terminal_goal = self._derive_terminal_outcome(state, decision.specific_goal)
-            return self._terminal_update(
-                state=state,
-                mission_status=terminal_status,
-                rationale=reasoning,
-                specific_goal=terminal_goal,
-            )
+            return self._terminal_update(state, terminal_status, reasoning, terminal_goal)
 
         return {
-            "current_agent": "supervisor",
-            "next_agent": next_agent,
-            "iteration_count": iteration_count + 1,
-            "supervisor_messages": new_history,
+            **self._agent_update(state),
+            "next_agent": decision.next_agent,
+            "supervisor_messages": history,
             "supervisor_expectations": {
                 "specific_goal": decision.specific_goal,
                 "confidence_score": decision.confidence_score,
@@ -201,7 +125,7 @@ Do not call any tools. You are routing-only.
             **self.log_action(
                 state,
                 action="route_decision",
-                decision=next_agent,
+                decision=decision.next_agent,
                 reasoning=reasoning,
                 findings={
                     "specific_goal": decision.specific_goal,
@@ -210,22 +134,12 @@ Do not call any tools. You are routing-only.
             ),
         }
 
-    def _terminal_update(
-        self,
-        state: CyberState,
-        mission_status: str,
-        rationale: str,
-        specific_goal: str,
-    ) -> Dict[str, Any]:
+    def _terminal_update(self, state: CyberState, mission_status: str, rationale: str, specific_goal: str) -> Dict[str, Any]:
         return {
-            "current_agent": "supervisor",
+            **self._agent_update(state),
             "next_agent": "end",
             "mission_status": mission_status,
-            "iteration_count": int(state.get("iteration_count", 0)) + 1,
-            "supervisor_expectations": {
-                "specific_goal": specific_goal,
-                "confidence_score": 1.0,
-            },
+            "supervisor_expectations": {"specific_goal": specific_goal, "confidence_score": 1.0},
             **self.log_action(
                 state,
                 action="route_decision",
@@ -236,80 +150,53 @@ Do not call any tools. You are routing-only.
         }
 
     def _build_context_summary(self, state: CyberState) -> str:
-        from src.utils.validators import has_agent_run, has_service_version_intel
-
         discovered_targets = state.get("discovered_targets", {}) or {}
         web_findings = state.get("web_findings", []) or []
         active_sessions = state.get("active_sessions", {}) or {}
         critical_findings = state.get("critical_findings", []) or []
         agent_log = state.get("agent_log", []) or []
 
-        target_lines: List[str] = []
-        for ip, details in discovered_targets.items():
-            services = details.get("services", {}) if isinstance(details, dict) else {}
-            service_summary = []
-            for port, svc in list(services.items())[:8]:
-                if isinstance(svc, dict):
-                    name = svc.get("service_name", "unknown")
-                    version = svc.get("version", "")
-                    label = f"{port}:{name}"
-                    if version:
-                        label += f" {version}"
-                    service_summary.append(label)
-                else:
-                    service_summary.append(f"{port}:{svc}")
-            svc_block = ", ".join(service_summary) if service_summary else "no services"
-            target_lines.append(f"- {ip} -> {svc_block}")
-        targets_block = "\n".join(target_lines) if target_lines else "- none"
+        targets_block = "\n".join(
+            f"- {ip} -> {self._service_summary(details.get('services', {}) if isinstance(details, dict) else {})}"
+            for ip, details in discovered_targets.items()
+        ) or "- none"
+        recent_block = "\n".join(
+            f"- {entry.get('agent', '?') if isinstance(entry, dict) else getattr(entry, 'agent', '?')}: "
+            f"{entry.get('action', entry.get('decision', '?')) if isinstance(entry, dict) else getattr(entry, 'action', '?')}"
+            for entry in agent_log[-6:]
+        ) or "- none"
+        critical_block = "\n".join(f"- {item}" for item in critical_findings[-6:]) or "- none"
 
-        recent_actions = []
-        for entry in agent_log[-6:]:
-            if isinstance(entry, dict):
-                agent = entry.get("agent", "?")
-                action = entry.get("action", entry.get("decision", "?"))
-            else:
-                agent = getattr(entry, "agent", "?")
-                action = getattr(entry, "action", "?")
-            recent_actions.append(f"- {agent}: {action}")
-        recent_block = "\n".join(recent_actions) if recent_actions else "- none"
-
-        critical_block = "\n".join(f"- {item}" for item in critical_findings[-6:]) if critical_findings else "- none"
-
-        # Derive the current mission phase so the LLM has an unambiguous signal.
-        scout_ran     = has_agent_run(agent_log, "scout")
-        fuzzer_ran    = has_agent_run(agent_log, "fuzzer")
+        scout_ran = has_agent_run(agent_log, "scout")
+        fuzzer_ran = has_agent_run(agent_log, "fuzzer")
         librarian_ran = has_agent_run(agent_log, "librarian")
-        striker_ran   = has_agent_run(agent_log, "striker")
-        resident_ran  = has_agent_run(agent_log, "resident")
-        has_targets   = bool(discovered_targets)
-        has_versions  = has_service_version_intel(discovered_targets)
-        has_web       = bool(web_findings)
-        has_sessions  = bool(active_sessions)
+        striker_ran = has_agent_run(agent_log, "striker")
+        resident_ran = has_agent_run(agent_log, "resident")
+        has_targets = bool(discovered_targets)
+        has_versions = has_service_version_intel(discovered_targets)
+        has_web = bool(web_findings)
+        has_sessions = bool(active_sessions)
 
-        # Sessions take highest priority — check them before anything else.
         if has_sessions and resident_ran:
-            phase = "Phase 6 — COMPLETE: resident finished post-exploitation → route to end"
-        elif has_sessions and not resident_ran:
-            phase = "Phase 5 — POST-EXPLOITATION: active session open, resident has not run → route to resident"
-        elif librarian_ran and not has_sessions:
-            phase = "Phase 4 — EXPLOITATION: intelligence gathered, no active session → route to striker"
-        elif (has_web or has_targets) and not librarian_ran:
-            phase = "Phase 3 — INTELLIGENCE: targets/web found, librarian has not run → route to librarian"
+            phase = "Phase 6 - COMPLETE: resident finished post-exploitation -> route to end"
+        elif has_sessions:
+            phase = "Phase 5 - POST-EXPLOITATION: active session open -> route to resident"
+        elif librarian_ran:
+            phase = "Phase 4 - EXPLOITATION: intelligence gathered, no active session -> route to striker"
         elif has_targets and has_web and not fuzzer_ran:
-            phase = "Phase 2 — WEB ENUMERATION: web service present, fuzzer has not run → route to fuzzer"
+            phase = "Phase 2 - WEB ENUMERATION: web service present -> route to fuzzer"
+        elif has_web or has_targets:
+            phase = "Phase 3 - INTELLIGENCE: targets/web found, librarian has not run -> route to librarian"
         elif not has_targets:
-            phase = "Phase 1 — RECONNAISSANCE: no targets discovered yet → route to scout"
+            phase = "Phase 1 - RECONNAISSANCE: no targets discovered yet -> route to scout"
         else:
-            phase = "Phase unknown — use recent actions and state to decide"
+            phase = "Phase unknown - use recent actions and state to decide"
 
         phase_flags = (
-            f"  targets_found={has_targets}  versions_known={has_versions}"
-            f"  web_found={has_web}  active_sessions={len(active_sessions)}\n"
-            f"  scout_ran={scout_ran}  fuzzer_ran={fuzzer_ran}"
-            f"  librarian_ran={librarian_ran}  striker_ran={striker_ran}"
-            f"  resident_ran={resident_ran}"
+            f"targets_found={has_targets} versions_known={has_versions} web_found={has_web} active_sessions={len(active_sessions)}\n"
+            f"scout_ran={scout_ran} fuzzer_ran={fuzzer_ran} librarian_ran={librarian_ran} "
+            f"striker_ran={striker_ran} resident_ran={resident_ran}"
         )
-
         return (
             f"Mission goal: {state.get('mission_goal', '(unknown)')}\n"
             f"Mission status: {state.get('mission_status', 'active')}\n"
@@ -320,8 +207,21 @@ Do not call any tools. You are routing-only.
             f"Active sessions count: {len(active_sessions)}\n"
             f"Critical findings:\n{critical_block}\n\n"
             f"Recent actions:\n{recent_block}\n\n"
-            f"MISSION PHASE:\n  {phase}\n{phase_flags}\n"
+            f"MISSION PHASE:\n{phase}\n{phase_flags}\n"
         )
+
+    @staticmethod
+    def _service_summary(services: Dict[str, Any]) -> str:
+        items = []
+        for port, service in list((services or {}).items())[:8]:
+            if isinstance(service, dict):
+                label = f"{port}:{service.get('service_name', 'unknown')}"
+                if service.get("version"):
+                    label += f" {service['version']}"
+            else:
+                label = f"{port}:{service}"
+            items.append(label)
+        return ", ".join(items) if items else "no services"
 
     def _parse_decision(self, raw_content: str) -> SupervisorDecision:
         payload = extract_json_payload(raw_content)
@@ -335,125 +235,81 @@ Do not call any tools. You are routing-only.
         discovered_targets = state.get("discovered_targets", {}) or {}
         active_sessions = state.get("active_sessions", {}) or {}
         web_findings = state.get("web_findings", []) or []
-
         if active_sessions and has_agent_run(state.get("agent_log", []) or [], "resident"):
-            next_agent = "end"
-            specific_goal = "Mission objective satisfied after post-exploitation review."
+            next_agent, goal = "end", "Mission objective satisfied after post-exploitation review."
         elif active_sessions:
-            next_agent = "resident"
-            specific_goal = "Enumerate and stabilize active sessions."
+            next_agent, goal = "resident", "Enumerate and stabilize active sessions."
         elif not discovered_targets:
-            next_agent = "scout"
-            specific_goal = "Discover targets and fingerprint exposed services."
+            next_agent, goal = "scout", "Discover targets and fingerprint exposed services."
         elif web_findings and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
-            next_agent = "librarian"
-            specific_goal = "Research exploit paths from discovered findings."
+            next_agent, goal = "librarian", "Research exploit paths from discovered findings."
         elif web_findings:
-            next_agent = "striker"
-            specific_goal = "Attempt exploitation using researched vectors."
+            next_agent, goal = "striker", "Attempt exploitation using researched vectors."
         else:
-            next_agent = "fuzzer"
-            specific_goal = "Enumerate web attack surface for discovered hosts."
-
+            next_agent, goal = "fuzzer", "Enumerate web attack surface for discovered hosts."
         return SupervisorDecision(
             next_agent=next_agent,
             rationale=f"Fallback routing due to LLM error: {reason}",
-            specific_goal=specific_goal,
+            specific_goal=goal,
             confidence_score=0.35,
         )
 
-    def _apply_guardrails(
-        self,
-        state: CyberState,
-        decision: SupervisorDecision,
-    ) -> Tuple[SupervisorDecision, str]:
+    def _apply_guardrails(self, state: CyberState, decision: SupervisorDecision) -> Tuple[SupervisorDecision, str]:
+        next_agent = decision.next_agent.strip().lower()
         reason = ""
-        normalized_agent = decision.next_agent.strip().lower()
-
-        if normalized_agent not in VALID_NEXT_AGENTS:
-            normalized_agent = "scout" if not state.get("discovered_targets") else "librarian"
+        if next_agent not in VALID_NEXT_AGENTS:
+            next_agent = "scout" if not state.get("discovered_targets") else "librarian"
             reason = "invalid-next-agent-corrected"
-
-        librarian_has_run = has_agent_run(state.get("agent_log", []) or [], "librarian")
-        has_versions = has_service_version_intel(state.get("discovered_targets", {}) or {})
-        if normalized_agent == "striker" and has_versions and not librarian_has_run:
-            normalized_agent = "librarian"
+        if next_agent == "striker" and has_service_version_intel(state.get("discovered_targets", {}) or {}) and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
+            next_agent = "librarian"
             reason = "forced-librarian-before-striker"
-
-        if self._striker_failed_recently(state):
-            if normalized_agent not in {"librarian", "fuzzer", "end"}:
-                recent_agents = list_recent_agent_names(state.get("agent_log", []) or [], n=4)
-                normalized_agent = "fuzzer" if recent_agents and recent_agents[-1] == "librarian" else "librarian"
-                reason = "striker-failure-backtrack"
-
-        return (
-            SupervisorDecision(
-                next_agent=normalized_agent,
-                rationale=decision.rationale,
-                specific_goal=decision.specific_goal,
-                confidence_score=decision.confidence_score,
-            ),
-            reason,
-        )
+        if self._striker_failed_recently(state) and next_agent not in {"librarian", "fuzzer", "end"}:
+            recent_agents = list_recent_agent_names(state.get("agent_log", []) or [], n=4)
+            next_agent = "fuzzer" if recent_agents and recent_agents[-1] == "librarian" else "librarian"
+            reason = "striker-failure-backtrack"
+        return SupervisorDecision(
+            next_agent=next_agent,
+            rationale=decision.rationale,
+            specific_goal=decision.specific_goal,
+            confidence_score=decision.confidence_score,
+        ), reason
 
     def _sanitize_history(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        safe: List[Dict[str, Any]] = []
-        for message in messages or []:
-            if not isinstance(message, dict):
-                continue
-            role = str(message.get("role", "")).strip().lower()
-            if role not in {"user", "assistant"}:
-                continue
-            item: Dict[str, Any] = {
-                "role": role,
-                "content": str(message.get("content", "")),
-            }
-            safe.append(item)
-        return safe
+        return [
+            {"role": role, "content": str(message.get("content", ""))}
+            for message in (messages or [])
+            if isinstance(message, dict)
+            for role in [str(message.get("role", "")).strip().lower()]
+            if role in {"user", "assistant"}
+        ]
 
     def _striker_failed_recently(self, state: CyberState) -> bool:
-        exploited_services = state.get("exploited_services", []) or []
-        for record in reversed(exploited_services):
-            if not isinstance(record, dict):
-                continue
-            status = str(record.get("status", "")).strip().lower()
-            if not status:
-                continue
-            return status not in {"success", "succeeded", "opened"}
-
-        # Fallback heuristic: striker was last worker and no active session opened.
-        recent_agents = [a for a in list_recent_agent_names(state.get("agent_log", []) or [], n=5) if a != "supervisor"]
-        if recent_agents and recent_agents[-1] == "striker" and not (state.get("active_sessions", {}) or {}):
-            return True
-        return False
+        for record in reversed(state.get("exploited_services", []) or []):
+            if isinstance(record, dict):
+                status = str(record.get("status", "")).strip().lower()
+                if status:
+                    return status not in {"success", "succeeded", "opened"}
+        recent_agents = [agent for agent in list_recent_agent_names(state.get("agent_log", []) or [], n=5) if agent != self.name]
+        return bool(recent_agents and recent_agents[-1] == "striker" and not (state.get("active_sessions", {}) or {}))
 
     def _derive_terminal_outcome(self, state: CyberState, specific_goal: str) -> Tuple[str, str]:
         mission_status = str(state.get("mission_status", "active")).strip().lower()
         if mission_status in {"success", "failed", "wait_for_human"}:
             return mission_status, specific_goal or "N/A"
-
         mission_goal = str(state.get("mission_goal", "")).lower()
         active_sessions = state.get("active_sessions", {}) or {}
         critical_findings = [str(item).lower() for item in (state.get("critical_findings", []) or [])]
         resident_has_run = has_agent_run(state.get("agent_log", []) or [], "resident")
-
         if active_sessions and resident_has_run:
             return "success", specific_goal or "Resident validated post-exploitation success."
-
-        if active_sessions and any(
-            term in mission_goal
-            for term in ("exploit", "initial access", "session", "shell", "meterpreter", "foothold")
-        ):
+        if active_sessions and any(term in mission_goal for term in ("exploit", "initial access", "session", "shell", "meterpreter", "foothold")):
             return "success", specific_goal or "Initial access objective satisfied."
-
         if any("session " in finding or "root privileges" in finding for finding in critical_findings):
             return "success", specific_goal or "Critical mission objective reached."
-
         return "wait_for_human", specific_goal or "Wait for operator confirmation before closing mission."
 
 
 async def supervisor_node(state: CyberState) -> Dict[str, Any]:
-    """LangGraph node wrapper for the Supervisor agent."""
     agent = SupervisorAgent()
     updates = await agent.call_llm(state)
     persist_state_update(state, updates)

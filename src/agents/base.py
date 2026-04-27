@@ -1,71 +1,120 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, Iterable, Optional
+
+from src.config import RuntimeConfig
 from src.state.cyber_state import CyberState
-from src.state.models import AgentLogEntry, AgentError
+from src.state.models import AgentError, AgentLogEntry
 from src.skills.skills import Skill
+from src.utils.agent_runtime import BaseToolPolicy, run_chat_completion, run_tool_worker, try_resolve_openrouter_runtime
 
 
 class BaseAgent(ABC):
-    """Abstract base class for all specialized agents.
-
-    All agent implementations must inherit from this class and implement
-    the required abstract methods.
-    """
+    """Shared lifecycle helpers for all specialist agents."""
 
     def __init__(self, name: str, role: str):
         self.name = name
         self.role = role
-        self.skills: list[Skill] = []  # Registered markdown skills for the agent
-        self._db = None  # Lazy initialization
-        self._mcp = None  # Lazy initialization
+        self.skills: list[Skill] = []
+        self._client = None
+        self._model = ""
+        self._client_error: str | None = None
 
     @property
     @abstractmethod
     def system_prompt(self) -> str:
-        """Return the agent's system prompt defining its personality and goals."""
         pass
 
     @abstractmethod
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
-        """Core reasoning loop - must be implemented by each agent.
-
-        Args:
-            state: The current CyberState containing all mission data.
-
-        Returns:
-            Dict with state updates to be merged into the shared state.
-        """
         pass
 
     def register_skill(self, skill: Skill) -> None:
-        """Attach a reusable markdown skill to this agent."""
         self.skills.append(skill)
 
     def _render_skills_for_state(self, state: CyberState) -> str:
-        """Return concatenated skill texts for the current agent."""
         chunks = [skill.render() for skill in self.skills]
-        if not chunks:
-            return ""
-        return "\n\n".join(chunks)
+        return "\n\n".join(chunks) if chunks else ""
 
-    @property
-    def db(self):
-        """Lazy load database manager. load postgres database manager."""
-        
-        # if self._db is None:
-        #     from database.manager import DatabaseManager
-        #     self._db = DatabaseManager()
-        # return self._db
-        pass
+    def _init_runtime(
+        self,
+        *,
+        config: RuntimeConfig,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> None:
+        runtime, self._client_error = try_resolve_openrouter_runtime(
+            config=config,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+        )
+        if runtime is not None:
+            self._client = runtime.client
+            self._model = runtime.model
 
-    @property
-    def mcp(self):
-        """Lazy load MCP client."""
-        if self._mcp is None:
-            from mcp.client import MCPClient
-            self._mcp = MCPClient()
-        return self._mcp
+    def _agent_update(self, state: CyberState, **updates: Any) -> Dict[str, Any]:
+        return {"current_agent": self.name, "iteration_count": int(state.get("iteration_count", 0)) + 1, **updates}
+
+    def _error_update(
+        self,
+        state: CyberState,
+        *,
+        error_type: str,
+        message: str,
+        recoverable: bool = True,
+        **updates: Any,
+    ) -> Dict[str, Any]:
+        return self._agent_update(state, **updates, **self.log_error(state, error_type=error_type, error=message, recoverable=recoverable))
+
+    def _llm_unavailable_update(
+        self,
+        state: CyberState,
+        *,
+        message: str | None = None,
+        **updates: Any,
+    ) -> Dict[str, Any]:
+        return self._error_update(state, error_type="LLMConfigError", message=message or self._client_error or "OPENROUTER_API_KEY is not configured.", recoverable=False, **updates)
+
+    async def _run_chat_agent(
+        self,
+        state: CyberState,
+        *,
+        user_prompt: str,
+        history: Iterable[dict[str, Any]] | None = None,
+        temperature: float = 0.0,
+        error_message: str = "LLM chat completion failed.",
+    ) -> str | Dict[str, Any]:
+        if self._client is None:
+            return self._llm_unavailable_update(state)
+        try:
+            return await run_chat_completion(client=self._client, model=self._model, system_prompt=self.system_prompt, user_prompt=user_prompt, history=history, temperature=temperature)
+        except Exception as exc:
+            return self._error_update(state, error_type="LLMError", message=f"{error_message} {exc}", recoverable=False)
+
+    async def _run_tool_agent(
+        self,
+        state: CyberState,
+        *,
+        user_prompt: str,
+        allowed_tools: Iterable[str],
+        extractor: Callable[[list[dict[str, Any]], CyberState], Dict[str, Any]],
+        required_tools: Iterable[str] | None = None,
+        policy: BaseToolPolicy | None = None,
+        max_rounds: int = 8,
+        error_message: str = "LLM/tool loop failed.",
+    ) -> Dict[str, Any]:
+        if self._client is None:
+            return self._llm_unavailable_update(state)
+        try:
+            result = await run_tool_worker(client=self._client, model=self._model, system_prompt=self.system_prompt, user_prompt=user_prompt, allowed_tools=allowed_tools, required_tools=required_tools, policy=policy, max_rounds=max_rounds)
+            return extractor(result.messages, state)
+        except Exception as exc:
+            return self._error_update(state, error_type="LLMError", message=f"{error_message} {exc}", recoverable=False)
 
     def log_action(
         self,
@@ -76,27 +125,7 @@ class BaseAgent(ABC):
         decision: Optional[str] = None,
         reasoning: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a log entry for the agent's actions.
-
-        Args:
-            state: Current CyberState (used to append to agent_log).
-            action: The action performed (e.g., "nmap_scan", "run_exploit").
-            target: Optional target IP/hostname.
-            findings: Optional findings data.
-            decision: Optional decision made.
-            reasoning: Optional reasoning for the action.
-
-        Returns:
-            State update dict with the new log entry.
-        """
-        entry = AgentLogEntry(
-            agent=self.name,
-            action=action,
-            target=target,
-            findings=findings,
-            decision=decision,
-            reasoning=reasoning,
-        )
+        entry = AgentLogEntry(agent=self.name, action=action, target=target, findings=findings, decision=decision, reasoning=reasoning)
         return {"agent_log": [entry]}
 
     def log_error(
@@ -106,87 +135,5 @@ class BaseAgent(ABC):
         error: str,
         recoverable: bool = True,
     ) -> Dict[str, Any]:
-        """Log an error encountered during execution.
-
-        Args:
-            state: Current CyberState.
-            error_type: Type/category of error.
-            error: Error message/details.
-            recoverable: Whether the error is recoverable.
-
-        Returns:
-            State update dict with the error entry.
-        """
-        err = AgentError(
-            agent=self.name,
-            error_type=error_type,
-            error=error,
-            recoverable=recoverable,
-        )
+        err = AgentError(agent=self.name, error_type=error_type, error=error, recoverable=recoverable)
         return {"errors": [err]}
-
-    def add_critical_finding(self, state: CyberState, finding: str) -> Dict[str, Any]:
-        """Add a critical finding to the state.
-
-        Args:
-            state: Current CyberState.
-            finding: The critical finding text.
-
-        Returns:
-            State update dict with the critical finding.
-        """
-        return {"critical_findings": [finding]}
-
-    def validate_scope(self, target_ip: str, target_scope: list[str]) -> bool:
-        """Validate that a target is within the authorized scope.
-
-        Args:
-            target_ip: IP address to validate.
-            target_scope: List of allowed CIDR blocks or IPs.
-
-        Returns:
-            True if target is in scope, False otherwise.
-        """
-        from ipaddress import ip_address, ip_network
-
-        try:
-            target = ip_address(target_ip)
-            for cidr in target_scope:
-                if target in ip_network(cidr, strict=False):
-                    return True
-            return False
-        except ValueError:
-            return False
-
-    async def run_with_error_handling(
-        self,
-        state: CyberState,
-        operation_name: str,
-        operation,
-    ) -> Dict[str, Any]:
-        """Run an operation with standardized error handling.
-
-        Args:
-            state: Current CyberState.
-            operation_name: Name of the operation for logging.
-            operation: Async callable to execute.
-
-        Returns:
-            State update dict with results or error.
-        """
-        try:
-            result = await operation()
-            return {
-                **result,
-                **self.log_action(
-                    state,
-                    action=operation_name,
-                    findings=result,
-                ),
-            }
-        except Exception as e:
-            return self.log_error(
-                state,
-                error_type=type(e).__name__,
-                error=str(e),
-            )
