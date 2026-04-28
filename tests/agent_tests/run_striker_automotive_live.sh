@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the striker-only automotive live test inside the agents container.
+# Run the current Striker live planning test inside the agents container.
 
 set -euo pipefail
 
@@ -7,11 +7,12 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 TARGET_HOST="${TARGET_HOST:-automotive-testbed}"
-LIVE_STRIKER_EXECUTE="${LIVE_STRIKER_EXECUTE:-true}"
-LIVE_STRIKER_PORTS="${LIVE_STRIKER_PORTS:-22,80,443,8000,8080,9555,9556,9999}"
-LIVE_STRIKER_SCAN_TYPE="${LIVE_STRIKER_SCAN_TYPE:--sV}"
+LIVE_STRIKER_PORTS="${LIVE_STRIKER_PORTS:-22,80,443,8000,8080,9555,9556}"
 LIVE_STRIKER_EXTRA_ARGS="${LIVE_STRIKER_EXTRA_ARGS:--T4}"
 LIVE_STRIKER_KB_TOP_K="${LIVE_STRIKER_KB_TOP_K:-5}"
+LIVE_STRIKER_ENABLE_CVE="${LIVE_STRIKER_ENABLE_CVE:-true}"
+LIVE_STRIKER_ENABLE_OSINT="${LIVE_STRIKER_ENABLE_OSINT:-false}"
+LIVE_STRIKER_INCLUDE_VALIDATION_API="${LIVE_STRIKER_INCLUDE_VALIDATION_API:-false}"
 
 detect_shared_network() {
     local preferred="vt-saiber-network"
@@ -54,10 +55,10 @@ if ! SHARED_NETWORK="$(detect_shared_network)"; then
 fi
 
 echo "======================================"
-echo "STRIKER AUTOMOTIVE LIVE TEST"
+echo "STRIKER LIVE PLANNING TEST"
 echo "======================================"
 echo "Target: $TARGET_HOST"
-echo "Execute live exploit: $LIVE_STRIKER_EXECUTE"
+echo "Execution mode: planning only"
 echo ""
 
 AGENTS_RUNNING=$(docker ps --filter "name=^vt-saiber-agents$" --filter "status=running" -q)
@@ -117,9 +118,10 @@ docker exec -t \
     -e TARGET_HOST="$TARGET_HOST" \
     -e LIVE_STRIKER_TARGET="$TARGET_HOST" \
     -e LIVE_STRIKER_PORTS="$LIVE_STRIKER_PORTS" \
-    -e LIVE_STRIKER_SCAN_TYPE="$LIVE_STRIKER_SCAN_TYPE" \
     -e LIVE_STRIKER_EXTRA_ARGS="$LIVE_STRIKER_EXTRA_ARGS" \
-    -e LIVE_STRIKER_EXECUTE="$LIVE_STRIKER_EXECUTE" \
     -e LIVE_STRIKER_KB_TOP_K="$LIVE_STRIKER_KB_TOP_K" \
+    -e LIVE_STRIKER_ENABLE_CVE="$LIVE_STRIKER_ENABLE_CVE" \
+    -e LIVE_STRIKER_ENABLE_OSINT="$LIVE_STRIKER_ENABLE_OSINT" \
+    -e LIVE_STRIKER_INCLUDE_VALIDATION_API="$LIVE_STRIKER_INCLUDE_VALIDATION_API" \
     vt-saiber-agents \
-    python3 -u /app/tests/agent_tests/test_striker_automotive_live.py
+    python3 -u /app/tests/agent_tests/test_live_striker.py
