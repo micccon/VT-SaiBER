@@ -21,11 +21,15 @@ class FuzzerAgent(BaseAgent):
     """Enumerates web paths and stores normalized findings."""
 
     def __init__(self):
+        """Initialize the shared runtime for web enumeration."""
+
         super().__init__("fuzzer", "Web Fuzzing Specialist")
         self._init_runtime(config=get_runtime_config())
 
     @property
     def system_prompt(self) -> str:
+        """Prompt that constrains fuzzer to bounded web discovery."""
+
         return (
             "You are the VT-SaiBER fuzzer agent.\n"
             "Use only the provided web enumeration tools.\n"
@@ -35,6 +39,8 @@ class FuzzerAgent(BaseAgent):
         )
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
+        """Enumerate one web target and normalize the resulting findings."""
+
         target = self._pick_web_target(state.get("discovered_targets", {}) or {})
         if target is None:
             return self._error_update(
@@ -48,6 +54,7 @@ class FuzzerAgent(BaseAgent):
         scheme = "https" if port == 443 else "http"
         base_url = f"{scheme}://{ip}:{port}" if port not in {80, 443} else f"{scheme}://{ip}"
 
+        # The shared tool loop handles the model/tool orchestration while this agent only extracts findings.
         findings_update = await self._run_tool_agent(
             state,
             user_prompt=self._build_context(state, base_url),
@@ -60,6 +67,7 @@ class FuzzerAgent(BaseAgent):
             return findings_update
         findings = findings_update.get("web_findings", [])
         if not findings:
+            # Keep the pipeline moving with a minimal fallback when a live scan returns no normalized results.
             findings = [{
                 "url": f"{base_url}/",
                 "path": "/",
@@ -91,12 +99,16 @@ class FuzzerAgent(BaseAgent):
         }
 
     def _pick_web_target(self, discovered_targets: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Choose the first discovered HTTP(S)-like target to enumerate."""
+
         for ip, port, name in iter_target_services(discovered_targets):
             if name in {"http", "https", "http-proxy"}:
                 return {"ip": ip, "port": int(port), "service_name": name}
         return None
 
     def _build_context(self, state: CyberState, base_url: str) -> str:
+        """Build the per-target fuzzing context passed to the model."""
+
         existing = state.get("web_findings", []) or []
         return (
             f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
@@ -106,6 +118,8 @@ class FuzzerAgent(BaseAgent):
         )
 
     def _extract_updates(self, messages: List[Dict[str, Any]], base_url: str) -> List[Dict[str, Any]]:
+        """Normalize tool outputs from gobuster- and nikto-style scans."""
+
         findings: List[Dict[str, Any]] = []
 
         for message, data in iter_tool_messages(messages):
@@ -133,6 +147,8 @@ class FuzzerAgent(BaseAgent):
         return dedupe_web_findings(findings)[:100]
 
     def _scan_policy(self) -> Dict[str, Any]:
+        """Expose the fixed scan policy so it can be logged with findings."""
+
         return {
             "methods": ["GET", "HEAD"],
             "max_depth": MAX_RECURSION_DEPTH,

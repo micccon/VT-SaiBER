@@ -14,14 +14,12 @@ from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
 from src.state.cyber_state import CyberState
 from src.utils.agent_runtime import (
-    BaseToolPolicy,
-    RuntimeTool,
-    ToolInterception,
     collect_reasoning_chunks,
     iter_tool_messages,
 )
 from src.utils.approval import require_manual_approval
 from src.utils.parsers import metasploit_module_key, normalize_tool_result
+from src.utils.tools import BaseToolPolicy, RuntimeTool, ToolInterception
 
 
 STRIKER_ALLOWED_TOOLS = {
@@ -79,6 +77,8 @@ METASPLOIT_DEFAULT_SERVICES = {
 
 
 def dedupe_terms(values: List[str]) -> List[str]:
+    """Preserve order while removing empty or duplicate string values."""
+
     seen = set()
     deduped: List[str] = []
     for value in values:
@@ -90,6 +90,8 @@ def dedupe_terms(values: List[str]) -> List[str]:
 
 
 def parse_services(target_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize discovered target services into a predictable list for scoring and prompt rendering."""
+
     services = target_data.get("services", {}) or {}
     parsed: List[Dict[str, Any]] = []
     for port_key, service in services.items():
@@ -117,12 +119,16 @@ def parse_services(target_data: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def extract_target_from_execution_args(kwargs: Dict[str, Any]) -> str:
+    """Resolve the target host from Metasploit-style execution arguments."""
+
     options = kwargs.get("options", {}) if isinstance(kwargs.get("options"), dict) else {}
     target = options.get("RHOSTS") or options.get("RHOST") or options.get("TARGET")
     return str(target or "unknown")
 
 
 def execution_signature(tool_name: str, kwargs: Dict[str, Any]) -> tuple[str, str, str, str]:
+    """Build a detailed execution signature used for per-path tracking."""
+
     options = kwargs.get("options", {}) if isinstance(kwargs.get("options"), dict) else {}
     return (
         tool_name,
@@ -133,6 +139,8 @@ def execution_signature(tool_name: str, kwargs: Dict[str, Any]) -> tuple[str, st
 
 
 def execution_retry_key(tool_name: str, kwargs: Dict[str, Any]) -> tuple[str, str, str]:
+    """Build the coarse retry key used to block repeated failed paths."""
+
     return (
         tool_name,
         str(kwargs.get("module_name", "") or "").strip().lower(),
@@ -141,6 +149,8 @@ def execution_retry_key(tool_name: str, kwargs: Dict[str, Any]) -> tuple[str, st
 
 
 def normalize_option_map(raw: Any) -> Dict[str, Any]:
+    """Accept either dict or comma-separated option strings and normalize them to a dict."""
+
     if isinstance(raw, dict):
         return dict(raw)
     if not isinstance(raw, str):
@@ -154,6 +164,8 @@ def normalize_option_map(raw: Any) -> Dict[str, Any]:
 
 
 def decode_tool_payload(raw: Any) -> Any:
+    """Decode a tool payload that might already be parsed or still be a JSON string."""
+
     if isinstance(raw, (dict, list)):
         return raw
     if isinstance(raw, str) and raw.strip():
@@ -165,6 +177,8 @@ def decode_tool_payload(raw: Any) -> Any:
 
 
 def is_invalid_callback_host(value: str) -> bool:
+    """Reject loopback or empty callback hosts for reverse payloads."""
+
     host = str(value or "").strip().lower()
     if not host or host == "localhost":
         return True
@@ -176,6 +190,8 @@ def is_invalid_callback_host(value: str) -> bool:
 
 
 def build_striker_context(state: CyberState) -> str:
+    """Build the full exploitation context block shown to striker."""
+
     return (
         f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
         f"TARGET INTELLIGENCE:\n{_format_targets(state)}\n\n"
@@ -191,6 +207,8 @@ def _build_striker_context(state: CyberState) -> str:
 
 
 def _format_targets(state: CyberState) -> str:
+    """Render discovered targets and services into compact prompt text."""
+
     lines: List[str] = []
     for target, target_data in (state.get("discovered_targets", {}) or {}).items():
         lines.append(f"- TARGET {target}")
@@ -207,6 +225,8 @@ def _format_targets(state: CyberState) -> str:
 
 
 def _format_web_findings(state: CyberState) -> str:
+    """Render only the most relevant web findings for exploitation decisions."""
+
     lines = []
     for finding in (state.get("web_findings", []) or [])[:10]:
         if not isinstance(finding, dict):
@@ -219,6 +239,8 @@ def _format_web_findings(state: CyberState) -> str:
 
 
 def _format_research_hints(state: CyberState) -> str:
+    """Render cached research and OSINT hints into compact prompt text."""
+
     hints: List[str] = []
     for key, value in list((state.get("research_cache", {}) or {}).items())[:6]:
         hints.append(f"- Research ({key}): {value}")
@@ -233,6 +255,8 @@ def _format_research_hints(state: CyberState) -> str:
 
 
 def _format_prior_attempts(state: CyberState) -> str:
+    """Render recent exploitation history so striker can avoid repeating failures."""
+
     attempts: List[str] = []
     for item in (state.get("exploited_services", []) or [])[-8:]:
         if isinstance(item, dict):
@@ -248,6 +272,8 @@ def _format_prior_attempts(state: CyberState) -> str:
 
 
 def _rank_candidates(state: CyberState) -> List[Dict[str, Any]]:
+    """Rank a small set of candidate exploitation paths from current evidence."""
+
     discovered_targets = state.get("discovered_targets", {}) or {}
     research_cache = state.get("research_cache", {}) or {}
     intelligence_findings = state.get("intelligence_findings", []) or []
@@ -255,6 +281,7 @@ def _rank_candidates(state: CyberState) -> List[Dict[str, Any]]:
     prior_attempts = state.get("exploited_services", []) or []
     candidates: List[Dict[str, Any]] = []
 
+    # Candidate scoring is intentionally simple: service/version evidence plus research/OSINT hints.
     for target, target_data in discovered_targets.items():
         for service in parse_services(target_data):
             intel = _collect_service_intel(research_cache, intelligence_findings, service["name"], service["version"].lower())
@@ -290,6 +317,8 @@ def _rank_candidates(state: CyberState) -> List[Dict[str, Any]]:
 
 
 def _format_candidates(candidates: List[Dict[str, Any]]) -> str:
+    """Render ranked candidate paths for the system prompt."""
+
     if not candidates:
         return "- none"
     lines = []
@@ -308,6 +337,8 @@ def _collect_service_intel(
     service_name: str,
     version: str,
 ) -> Dict[str, Any]:
+    """Collect research and OSINT indicators that strengthen a service-specific path."""
+
     indicators = {"metasploit", "msf", "exploit/"}
     has_research = has_version_research = has_osint = has_version_osint = suggests_metasploit = False
     cves: List[str] = []
@@ -341,6 +372,8 @@ def _collect_service_intel(
 
 
 def _attempt_matches_service(service_name: str, attempt: Dict[str, Any]) -> bool:
+    """Approximate whether a prior attempt corresponds to the same service family."""
+
     module = str(attempt.get("module", "")).lower()
     if service_name.startswith("http"):
         return any(token in module for token in {"http", "apache", "tomcat", "nginx", "web"})
@@ -388,11 +421,15 @@ def validate_execution_request(tool_name: str, kwargs: Dict[str, Any]) -> Option
 
 class StrikerToolPolicy(BaseToolPolicy):
     def __init__(self, *, require_confirmation: bool, max_attempts: int):
+        """Track search/execution budgets and enforce approval plus retry guardrails."""
+
         self.guard = ToolGuardState()
         self.require_confirmation = require_confirmation
         self.max_attempts = max_attempts
 
     async def before_call(self, tool: RuntimeTool, arguments: dict[str, Any]) -> ToolInterception | None:
+        """Block unsafe or wasteful actions before the tool executes."""
+
         for guard in (self._guard_search_budget, self._guard_kali_execution, self._guard_msf_execution):
             blocked = guard(tool.name, arguments)
             if blocked is not None:
@@ -400,6 +437,8 @@ class StrikerToolPolicy(BaseToolPolicy):
         return None
 
     async def after_call(self, tool: RuntimeTool, arguments: dict[str, Any], raw_result: Any) -> Any:
+        """Remember module options and failed paths after tool execution."""
+
         if tool.name == "msf_get_module_options":
             self._remember_module_options(arguments, raw_result)
         else:
@@ -407,6 +446,8 @@ class StrikerToolPolicy(BaseToolPolicy):
         return raw_result
 
     def _guard_search_budget(self, tool_name: str, call_kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Prevent repeated or excessive Metasploit search calls."""
+
         if tool_name not in SEARCH_TOOL_NAMES:
             return None
         search_term = str(call_kwargs.get("search_term", "")).strip().lower()
@@ -419,6 +460,8 @@ class StrikerToolPolicy(BaseToolPolicy):
         return None
 
     def _guard_kali_execution(self, tool_name: str, call_kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Require approval for the higher-impact attackbox actions."""
+
         if tool_name not in KALI_APPROVAL_TOOLS:
             return None
         approved = require_manual_approval(
@@ -430,6 +473,8 @@ class StrikerToolPolicy(BaseToolPolicy):
         return None if approved else {"status": "aborted", "message": "Execution blocked pending manual approval.", "tool": tool_name}
 
     def _remember_module_options(self, call_kwargs: Dict[str, Any], response: Any) -> None:
+        """Cache the valid option names for a module after msf_get_module_options."""
+
         result = normalize_tool_result(response)
         module_key = metasploit_module_key(call_kwargs.get("module_type"), call_kwargs.get("module_name"))
         if not module_key or result.get("status") != "success":
@@ -440,6 +485,8 @@ class StrikerToolPolicy(BaseToolPolicy):
             self.guard.module_valid_options[module_key] = valid_names
 
     def _guard_msf_execution(self, tool_name: str, call_kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Enforce option inspection, retry controls, and approval before Metasploit execution."""
+
         if tool_name not in EXECUTION_TOOL_NAMES:
             return None
         module_type = "exploit" if tool_name == "msf_run_exploit" else "auxiliary"
@@ -481,6 +528,8 @@ class StrikerToolPolicy(BaseToolPolicy):
         return None
 
     def _record_msf_execution_result(self, tool_name: str, call_kwargs: Dict[str, Any], response: Any) -> None:
+        """Record failed execution paths so the model has to pivot meaningfully."""
+
         if tool_name not in EXECUTION_TOOL_NAMES:
             return
         result = normalize_tool_result(response)
@@ -508,6 +557,8 @@ def extract_striker_updates(
     base_update: dict[str, Any],
     log_action_payload: dict[str, Any],
 ) -> Dict[str, Any]:
+    """Interpret tool-loop messages into striker-specific state updates."""
+
     discovered_targets = state.get("discovered_targets", {}) or {}
     default_target = next(iter(discovered_targets.keys()), "unknown")
     last_execution: Dict[str, Any] = {}
@@ -521,6 +572,7 @@ def extract_striker_updates(
     saw_tool_activity = False
     collected_artifacts: List[Dict[str, Any]] = []
 
+    # Walk every tool result once and collect execution, session, artifact, and reasoning evidence.
     for message, normalized in iter_tool_messages(messages):
         saw_tool_activity = True
         data = normalized or decode_tool_payload(message.get("content"))
@@ -580,6 +632,7 @@ def extract_striker_updates(
             if str(data.get("message", "") or "").strip():
                 stop_reason = str(data.get("message", "") or "").strip()
 
+        # Session validation is authoritative; module success without a session is not enough.
         if name == "msf_list_sessions" and data.get("status") == "success" and isinstance(data.get("sessions"), dict):
             verified_sessions = data.get("sessions", {})
 
@@ -628,6 +681,7 @@ def extract_striker_updates(
     updates["agent_log"][0].findings = findings or None
 
     if last_execution:
+        # Persist the concrete attempt so supervisor and future striker runs can reason over it.
         updates["exploited_services"] = [*state.get("exploited_services", []), last_execution]
         updates["exploit_attempts"] = [
             {
@@ -662,6 +716,8 @@ class StrikerAgent(BaseAgent):
     ALLOWED_TOOLS = STRIKER_ALLOWED_TOOLS
 
     def __init__(self):
+        """Initialize striker with shared runtime and execution guardrails."""
+
         super().__init__("striker", "Unified Exploitation Agent")
         config = get_runtime_config()
         self.require_confirmation = STRIKER_REQUIRE_CONFIRMATION
@@ -676,6 +732,8 @@ class StrikerAgent(BaseAgent):
 
     @property
     def system_prompt(self) -> str:
+        """Prompt that encodes striker doctrine and hard execution rules."""
+
         return f"""You are the VT-SaiBER striker exploitation specialist.
 Use only the provided MCP tools and the mission context.
 
@@ -727,6 +785,8 @@ Option selection:
 Finish with a concise summary of what was attempted, why each path was chosen, and whether access or validation succeeded."""
 
     def _extract_updates(self, messages: List[Dict[str, Any]], state: CyberState, context: str) -> Dict[str, Any]:
+        """Delegate to the shared striker result extractor with standard logging fields."""
+
         return extract_striker_updates(
             messages,
             state,
@@ -743,6 +803,8 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         )
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
+        """Run the shared tool loop for bounded exploitation and session acquisition."""
+
         if not (state.get("discovered_targets", {}) or {}):
             return self._error_update(
                 state,
@@ -753,6 +815,7 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
         context = build_striker_context(state)
 
         def extract_updates(messages: List[Dict[str, Any]], current_state: CyberState) -> Dict[str, Any]:
+            # Keep parsing failures isolated so the graph gets a structured error instead of crashing.
             if not messages:
                 return self._error_update(
                     current_state,
@@ -781,6 +844,8 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
 
 
 async def striker_node(state: CyberState) -> Dict[str, Any]:
+    """LangGraph node wrapper for striker."""
+
     updates = await StrikerAgent().call_llm(state)
     persist_state_update(state, updates)
     return updates

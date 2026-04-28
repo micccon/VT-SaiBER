@@ -12,7 +12,7 @@ from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional, Set
 
 from mcp import ClientSession
-from src.utils.agent_runtime.models import RuntimeTool
+from src.utils.tools.models import RuntimeTool
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,8 @@ class MCPToolBridge:
     """
 
     def __init__(self) -> None:
+        """Initialize connection state and the local runtime tool cache."""
+
         self.exit_stack = AsyncExitStack()
         self.session: ClientSession | None = None
         self.owner_loop: asyncio.AbstractEventLoop | None = None
@@ -54,12 +56,15 @@ class MCPToolBridge:
         self._tool_cache: Dict[str, RuntimeTool] = {}
 
     async def connect(self, url: str) -> None:
+        """Connect to the attackbox MCP server and cache its tool inventory."""
+
         if not url:
             raise ValueError("ATTACKBOX_MCP_URL is empty")
 
         candidate = url.strip().rstrip("/")
         logger.info("Connecting to attackbox MCP at %s", candidate)
 
+        # The MCP SDK has changed transport names across versions, so we resolve it dynamically.
         transport_client = _load_streamable_http_client()
         transport = await self.exit_stack.enter_async_context(transport_client(candidate))
 
@@ -75,11 +80,14 @@ class MCPToolBridge:
         await self.session.initialize()
 
         tools_result = await self.session.list_tools()
+        # Convert MCP tool definitions once so the agent runtime sees a stable, framework-neutral shape.
         self.all_tools = [self._mcp_to_runtime_tool(tool_def) for tool_def in tools_result.tools]
         self._tool_cache = {tool.name: tool for tool in self.all_tools}
         logger.info("Attackbox MCP connected with %d tools", len(self.all_tools))
 
     def _mcp_to_runtime_tool(self, mcp_tool: Any) -> RuntimeTool:
+        """Convert one MCP tool definition into the RuntimeTool shape used by agents."""
+
         input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
         defaults: Dict[str, Any] = {}
         for prop_name, prop_schema in (input_schema.get("properties", {}) or {}).items():
@@ -90,6 +98,7 @@ class MCPToolBridge:
             if self.session is None:
                 raise RuntimeError("Attackbox MCP session is not connected")
 
+            # Fill in MCP-advertised defaults so agent calls can stay minimal.
             cleaned_kwargs: Dict[str, Any] = {}
             for key, value in kwargs.items():
                 if value is None:
@@ -111,6 +120,8 @@ class MCPToolBridge:
         )
 
     def _serialize_result(self, result: Any) -> str:
+        """Prefer structured MCP content, then fall back to text blocks."""
+
         structured = getattr(result, "structuredContent", None)
         if structured is not None:
             return json.dumps(structured, indent=2, default=str)
@@ -133,12 +144,16 @@ class MCPToolBridge:
         return "{}"
 
     def get_tools_for_agent(self, allowed_tools: Optional[Set[str]] = None) -> List[RuntimeTool]:
+        """Return the subset of cached tools allowed for the requesting agent."""
+
         if allowed_tools is None:
             logger.warning("get_tools_for_agent called with no allowlist; returning no tools")
             return []
         return [tool for tool in self.all_tools if tool.name in allowed_tools]
 
     async def disconnect(self) -> None:
+        """Close the MCP session and clear local caches."""
+
         if self.closed:
             return
         try:
@@ -155,6 +170,8 @@ _bridge: MCPToolBridge | None = None
 
 
 async def get_mcp_bridge() -> MCPToolBridge:
+    """Return the process-global bridge, recreating it when the event loop changes."""
+
     global _bridge
     current_loop = asyncio.get_running_loop()
     if _bridge is not None:
@@ -173,6 +190,8 @@ async def get_mcp_bridge() -> MCPToolBridge:
 
 
 async def reset_mcp_bridge() -> None:
+    """Drop and disconnect the process-global bridge instance."""
+
     global _bridge
     bridge = _bridge
     _bridge = None

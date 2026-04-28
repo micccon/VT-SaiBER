@@ -37,7 +37,7 @@ There is no runtime `kali_` / `msf_` prefix synthesis anymore.
 
 Agent access is controlled by explicit allowlists:
 - `supervisor` and `librarian` are non-executing
-- `scout`, `fuzzer`, `striker`, and `resident` receive filtered subsets through the shared worker harness
+- `scout`, `fuzzer`, `striker`, and `resident` receive filtered subsets through the shared OpenAI-SDK runtime
 
 ## 4. Current Tool Inventory
 
@@ -66,7 +66,14 @@ Guardrail stack:
 1. Router-level mission/scope/iteration controls (`src/graph/router.py`)
 2. Agent-specific allowlists in the worker harness
 3. Striker approval and execution guards in `src/agents/striker.py`
-4. Server-side command/tool validation in `src/mcp/attackbox_server.py`
+4. Resident approval guards for post-session objective work in `src/agents/resident.py`
+5. Server-side command/tool validation in `src/mcp/attackbox_server.py`
+
+Resident-specific guardrails:
+- Read-only `msf_session_command` triage can run automatically.
+- `system_execute_command` is approval-gated for Resident.
+- Mutating `msf_session_command`, sensitive `msf_run_post`, and `msf_terminate_session` are approval-gated for Resident.
+- Resident is intentionally narrower than Striker and does not receive the broader exploitation surface.
 
 ## 7. Practical Add/Change Workflow
 

@@ -26,6 +26,7 @@ def require_manual_approval(
     in_stream = input_stream or sys.stdin
     out_stream = output_stream or sys.stdout
 
+    # Default-deny when no interactive operator is present so high-impact actions cannot auto-run in CI or services.
     if in_stream is None or not getattr(in_stream, "isatty", lambda: False)():
         print(
             "[Approval] Execution blocked: manual approval required, "
@@ -40,5 +41,6 @@ def require_manual_approval(
     print(f"[Approval] Target: {target or 'unknown'}", file=out_stream)
     print("Approve execution? [y/N]: ", end="", file=out_stream, flush=True)
 
+    # Keep approval semantics intentionally conservative: only explicit yes values pass.
     decision = in_stream.readline().strip().lower()
     return decision in {"y", "yes"}

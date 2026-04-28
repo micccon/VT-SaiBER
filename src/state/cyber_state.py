@@ -4,16 +4,22 @@ from typing import Any, Annotated, Dict, List, Optional, TypedDict
 
 
 def _merge_lists(left: Optional[List[Any]], right: Optional[List[Any]]) -> List[Any]:
+    """LangGraph reducer for append-only list state."""
+
     return list(left or []) + list(right or [])
 
 
 def _merge_dicts(left: Optional[Dict[str, Any]], right: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """LangGraph reducer for shallow dictionary state updates."""
+
     merged = dict(left or {})
     merged.update(dict(right or {}))
     return merged
 
 
 class CyberState(TypedDict):
+    """Shared mission state carried through the LangGraph workflow."""
+
     # Graph Control
     current_agent: str                     # Which agent just ran
     next_agent: Optional[str]              # Supervisor's decision

@@ -69,6 +69,7 @@ def initialize_msf_client() -> MsfRpcClient:
     Raises exceptions on failure.
     """
     global _msf_client_instance
+    # Reuse the global client once initialized so the rest of the server shares one RPC session.
     if _msf_client_instance is not None:
         return _msf_client_instance
 
@@ -117,6 +118,7 @@ async def check_msf_connection() -> Dict[str, Any]:
     Returns connection status information for debugging.
     """
     try:
+        # Health checks use a lightweight core.version call instead of a heavier module/session operation.
         client = get_msf_client()
         logger.debug(f"Testing MSF connection with {RPC_CALL_TIMEOUT}s timeout...")
         version_info = await asyncio.wait_for(
@@ -171,7 +173,7 @@ async def get_msf_console() -> MsfConsole:
     console_id_str: Optional[str] = None
     try:
         logger.debug("Creating temporary MSF console...")
-        # Create console object directly
+        # Create a short-lived console object directly for commands that need the text console path.
         console_object = await asyncio.to_thread(lambda: client.consoles.console())
 
         # Get ID using .cid attribute
@@ -457,6 +459,8 @@ async def _execute_module_rpc(
     module_options: Dict[str, Any],
     payload_spec: Optional[Union[str, Dict[str, Any]]] = None # Payload name or {name: ..., options: ...}
 ) -> Dict[str, Any]:
+    """Execute a module through the RPC API and normalize the common result shape."""
+
     """
     Helper to execute an exploit, auxiliary, or post module as a background job via RPC.
     Includes polling logic for exploit sessions.
@@ -1418,6 +1422,8 @@ async def run_auxiliary_module(
 
 @mcp.tool(name="list_active_sessions")
 async def list_active_sessions() -> Dict[str, Any]:
+    """Return the current Metasploit session inventory in normalized form."""
+
     """
     List active Metasploit sessions with their details.
     """
@@ -1454,6 +1460,8 @@ async def send_session_command(
     command: str,
     timeout_seconds: int = SESSION_COMMAND_TIMEOUT,
 ) -> Dict[str, Any]:
+    """Send a command to a Meterpreter or shell session and normalize the response."""
+
     """
     Send a command to an active Metasploit session (Meterpreter or Shell) and get output.
     Uses session.run_with_output for Meterpreter, and a prompt-aware loop for shells.
@@ -1696,6 +1704,8 @@ async def start_listener(
     additional_options: Optional[Union[Dict[str, Any], str]] = None,
     exit_on_session: bool = False # Option to keep listener running
 ) -> Dict[str, Any]:
+    """Start an exploit/multi/handler job through the shared RPC executor."""
+
     """
     Start a new Metasploit handler (exploit/multi/handler) as a background job.
 

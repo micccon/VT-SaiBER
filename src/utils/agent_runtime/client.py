@@ -22,6 +22,8 @@ DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 
 @dataclass(frozen=True)
 class OpenRouterRuntime:
+    """Resolved async client plus model name for agent execution."""
+
     client: AsyncOpenAI
     model: str
 
@@ -32,6 +34,8 @@ def build_openrouter_client(
     base_url: str | None = None,
     timeout_seconds: int | None = None,
 ):
+    """Build the shared AsyncOpenAI client pointed at OpenRouter."""
+
     if AsyncOpenAI is None:
         raise RuntimeError("openai is not installed")
 
@@ -42,6 +46,7 @@ def build_openrouter_client(
     resolved_base_url = (base_url or os.getenv("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)).strip()
     resolved_base_url = resolved_base_url or DEFAULT_OPENROUTER_BASE_URL
 
+    # Keep the client constructor shape centralized so agents only pass config, not raw SDK plumbing.
     kwargs = {
         "api_key": resolved_api_key,
         "base_url": resolved_base_url,
@@ -60,6 +65,8 @@ def resolve_openrouter_runtime(
     base_url: str | None = None,
     timeout_seconds: int | None = None,
 ) -> OpenRouterRuntime:
+    """Resolve model and client settings from config plus optional overrides."""
+
     runtime_config = config or get_runtime_config()
     resolved_model = (
         model
@@ -84,6 +91,8 @@ def try_resolve_openrouter_runtime(
     base_url: str | None = None,
     timeout_seconds: int | None = None,
 ) -> tuple[OpenRouterRuntime | None, str | None]:
+    """Best-effort runtime resolution that returns an error string instead of raising."""
+
     try:
         return (
             resolve_openrouter_runtime(
@@ -108,8 +117,11 @@ async def run_chat_completion(
     history: Iterable[dict[str, Any]] | None = None,
     temperature: float = 0.0,
 ) -> str:
+    """Run a plain chat-completion turn and return only the assistant text."""
+
     from src.utils.agent_runtime.transcript import extract_message_text
 
+    # Non-tool agents all flow through the same message shape to keep the runtime uniform.
     response = await client.chat.completions.create(
         model=model,
         messages=[

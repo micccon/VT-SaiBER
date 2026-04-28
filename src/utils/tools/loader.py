@@ -1,16 +1,13 @@
-"""
-Framework-neutral attackbox tool loading, schema conversion, and execution helpers.
-"""
+"""Framework-neutral attackbox tool loading, schema conversion, and execution helpers."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.mcp.mcp_tool_bridge import get_mcp_bridge
-from src.utils.agent_runtime.models import RuntimeTool
 from src.utils.parsers import normalize_tool_result
+from src.utils.tools.models import RuntimeTool
 
 
 class RuntimeToolError(RuntimeError):
@@ -18,6 +15,8 @@ class RuntimeToolError(RuntimeError):
 
 
 def _clean_json_schema(value: Any) -> Any:
+    """Strip noisy schema fields and make OpenAI function schemas stricter by default."""
+
     if isinstance(value, dict):
         cleaned: Dict[str, Any] = {}
         for key, item in value.items():
@@ -35,11 +34,15 @@ def _clean_json_schema(value: Any) -> Any:
 
 
 async def load_filtered_tools(allowed_tools: Iterable[str]) -> List[RuntimeTool]:
+    """Load the current MCP tool inventory and apply the agent allowlist."""
+
     bridge = await get_mcp_bridge()
     return bridge.get_tools_for_agent(set(allowed_tools))
 
 
 def find_tool(tools: Iterable[RuntimeTool], *names: str) -> Optional[RuntimeTool]:
+    """Find the first tool whose name matches one of the provided candidates."""
+
     candidates = {name for name in names if name}
     for tool in tools:
         if tool.name in candidates:
@@ -48,12 +51,16 @@ def find_tool(tools: Iterable[RuntimeTool], *names: str) -> Optional[RuntimeTool
 
 
 async def invoke_tool(tool: RuntimeTool, **kwargs: Any) -> Any:
+    """Invoke the underlying MCP-backed executor for a runtime tool."""
+
     if tool.executor is None:
         raise RuntimeToolError(f"Tool {tool.name} has no callable executor")
     return await tool.executor(**kwargs)
 
 
 async def call_tool(tool: RuntimeTool, **kwargs: Any) -> Dict[str, Any]:
+    """Invoke a tool and force the result into the normalized dict payload shape."""
+
     raw = await invoke_tool(tool, **kwargs)
     normalized = normalize_tool_payload(raw, tool_name=tool.name, invocation=kwargs)
     if isinstance(normalized, dict):
@@ -62,10 +69,14 @@ async def call_tool(tool: RuntimeTool, **kwargs: Any) -> Dict[str, Any]:
 
 
 def tool_names(tools: Iterable[RuntimeTool]) -> set[str]:
+    """Return the set of tool names in the iterable."""
+
     return {tool.name for tool in tools}
 
 
 def build_openai_tools(tools: Iterable[RuntimeTool]) -> List[Dict[str, Any]]:
+    """Convert runtime tools into OpenAI-compatible tool definitions."""
+
     return [
         {
             "type": "function",
@@ -80,6 +91,8 @@ def build_openai_tools(tools: Iterable[RuntimeTool]) -> List[Dict[str, Any]]:
 
 
 def parse_tool_arguments(raw_arguments: str | None) -> Dict[str, Any]:
+    """Decode tool-call arguments from the model into a JSON object."""
+
     candidate = str(raw_arguments or "").strip()
     if not candidate:
         return {}
@@ -91,6 +104,8 @@ def parse_tool_arguments(raw_arguments: str | None) -> Dict[str, Any]:
 
 
 def normalize_tool_payload(raw: Any, *, tool_name: str, invocation: dict[str, Any]) -> dict[str, Any] | Any:
+    """Normalize varied tool outputs into a shared transcript-friendly payload."""
+
     normalized = normalize_tool_result(raw)
     if normalized:
         normalized.setdefault("invocation", invocation)
@@ -142,6 +157,8 @@ def normalize_tool_payload(raw: Any, *, tool_name: str, invocation: dict[str, An
 
 
 def serialize_tool_result(payload: Any) -> str:
+    """Serialize a normalized tool result back into the model conversation."""
+
     if isinstance(payload, str):
         return payload
     return json.dumps(payload, indent=2, default=str)

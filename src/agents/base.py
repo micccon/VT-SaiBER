@@ -6,7 +6,8 @@ from typing import Any, Callable, Dict, Iterable, Optional
 from src.config import RuntimeConfig
 from src.state.cyber_state import CyberState
 from src.state.models import AgentError, AgentLogEntry
-from src.utils.agent_runtime import BaseToolPolicy, run_chat_completion, run_tool_worker, try_resolve_openrouter_runtime
+from src.utils.agent_runtime import run_chat_completion, try_resolve_openrouter_runtime
+from src.utils.tools import BaseToolPolicy, run_tool_worker
 
 
 class BaseAgent(ABC):
@@ -22,10 +23,12 @@ class BaseAgent(ABC):
     @property
     @abstractmethod
     def system_prompt(self) -> str:
+        """Return the agent's stable system prompt."""
         pass
 
     @abstractmethod
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
+        """Run the agent against the current CyberState and return state updates."""
         pass
 
     def _init_runtime(
@@ -37,6 +40,8 @@ class BaseAgent(ABC):
         base_url: str | None = None,
         timeout_seconds: int | None = None,
     ) -> None:
+        """Resolve the shared OpenRouter runtime once for the agent instance."""
+
         runtime, self._client_error = try_resolve_openrouter_runtime(
             config=config,
             model=model,
@@ -49,6 +54,8 @@ class BaseAgent(ABC):
             self._model = runtime.model
 
     def _agent_update(self, state: CyberState, **updates: Any) -> Dict[str, Any]:
+        """Apply the standard current_agent and iteration_count bookkeeping."""
+
         return {"current_agent": self.name, "iteration_count": int(state.get("iteration_count", 0)) + 1, **updates}
 
     def _error_update(
@@ -60,6 +67,8 @@ class BaseAgent(ABC):
         recoverable: bool = True,
         **updates: Any,
     ) -> Dict[str, Any]:
+        """Build a standardized agent error update with optional extra fields."""
+
         return self._agent_update(state, **updates, **self.log_error(state, error_type=error_type, error=message, recoverable=recoverable))
 
     def _llm_unavailable_update(
@@ -69,6 +78,8 @@ class BaseAgent(ABC):
         message: str | None = None,
         **updates: Any,
     ) -> Dict[str, Any]:
+        """Return a non-recoverable configuration error when the LLM runtime is unavailable."""
+
         return self._error_update(state, error_type="LLMConfigError", message=message or self._client_error or "OPENROUTER_API_KEY is not configured.", recoverable=False, **updates)
 
     async def _run_chat_agent(
@@ -80,9 +91,12 @@ class BaseAgent(ABC):
         temperature: float = 0.0,
         error_message: str = "LLM chat completion failed.",
     ) -> str | Dict[str, Any]:
+        """Run a plain chat-completion turn for agents that do not need tools."""
+
         if self._client is None:
             return self._llm_unavailable_update(state)
         try:
+            # Shared chat helper keeps all non-tool agents on the same OpenAI SDK path.
             return await run_chat_completion(client=self._client, model=self._model, system_prompt=self.system_prompt, user_prompt=user_prompt, history=history, temperature=temperature)
         except Exception as exc:
             return self._error_update(state, error_type="LLMError", message=f"{error_message} {exc}", recoverable=False)
@@ -99,9 +113,12 @@ class BaseAgent(ABC):
         max_rounds: int = 8,
         error_message: str = "LLM/tool loop failed.",
     ) -> Dict[str, Any]:
+        """Run the shared tool loop and let the caller convert tool messages into state updates."""
+
         if self._client is None:
             return self._llm_unavailable_update(state)
         try:
+            # Tool execution is centralized so each agent only has to supply prompt, tool allowlist, and extractor logic.
             result = await run_tool_worker(client=self._client, model=self._model, system_prompt=self.system_prompt, user_prompt=user_prompt, allowed_tools=allowed_tools, required_tools=required_tools, policy=policy, max_rounds=max_rounds)
             return extractor(result.messages, state)
         except Exception as exc:
@@ -116,6 +133,8 @@ class BaseAgent(ABC):
         decision: Optional[str] = None,
         reasoning: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Create a structured execution log entry."""
+
         entry = AgentLogEntry(agent=self.name, action=action, target=target, findings=findings, decision=decision, reasoning=reasoning)
         return {"agent_log": [entry]}
 
@@ -126,5 +145,7 @@ class BaseAgent(ABC):
         error: str,
         recoverable: bool = True,
     ) -> Dict[str, Any]:
+        """Create a structured agent error entry."""
+
         err = AgentError(agent=self.name, error_type=error_type, error=error, recoverable=recoverable)
         return {"errors": [err]}

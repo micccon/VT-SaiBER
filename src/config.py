@@ -11,6 +11,8 @@ from typing import Optional
 
 
 def _env_bool(name: str, default: bool) -> bool:
+    """Read a boolean environment flag with a safe default."""
+
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -18,6 +20,8 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _env_int(name: str, default: int) -> int:
+    """Read an integer environment variable without raising on bad input."""
+
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -28,6 +32,8 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _build_database_url() -> Optional[str]:
+    """Build DATABASE_URL directly or from DB_* parts when present."""
+
     database_url = os.getenv("DATABASE_URL")
     if database_url:
         return database_url
@@ -45,16 +51,23 @@ def _build_database_url() -> Optional[str]:
 
 @dataclass(frozen=True)
 class RuntimeConfig:
+    """Resolved runtime configuration shared across the orchestration stack."""
+
+    # OpenRouter/OpenAI client settings.
     openrouter_api_key: str
     openrouter_base_url: str
     supervisor_model: str
     supervisor_timeout_seconds: int
     supervisor_reasoning_enabled: bool
     supervisor_max_reasoning_messages: int
+
+    # Graph and checkpointing controls.
     max_iterations: int
     checkpoint_enabled: bool
     checkpoint_database_url: Optional[str]
     default_thread_prefix: str
+
+    # RAG tuning knobs used by librarian and persistence helpers.
     rag_kb_top_k: int
     rag_kb_fetch_k: int
     rag_findings_top_k: int
@@ -71,7 +84,10 @@ class RuntimeConfig:
 
 @lru_cache(maxsize=1)
 def get_runtime_config() -> RuntimeConfig:
+    """Resolve and cache the active runtime configuration for the process."""
+
     return RuntimeConfig(
+        # Keep model/backend configuration centralized so every agent shares the same defaults.
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         supervisor_model=(os.getenv("SUPERVISOR_MODEL") or os.getenv("LLM_MODEL") or "minimax/minimax-m2.5:free").strip(),

@@ -33,6 +33,8 @@ def extract_json_payload(text: str) -> Dict[str, Any]:
 
 
 def _extract_first_object(text: str) -> Any:
+    """Extract the first balanced JSON object from free-form text."""
+
     start = text.find("{")
     if start < 0:
         raise ValueError("No JSON object found")
@@ -54,6 +56,7 @@ def to_jsonable(value: Any) -> Any:
     Convert Pydantic or dataclass-like objects into plain JSONable structures.
     """
     if hasattr(value, "model_dump"):
+        # Pydantic models are common throughout the state and tool layers.
         return value.model_dump()
     if isinstance(value, list):
         return [to_jsonable(item) for item in value]
@@ -70,6 +73,7 @@ def normalize_tool_result(raw: Any) -> Dict[str, Any]:
     payload = raw
 
     if isinstance(payload, str):
+        # Tools frequently return JSON strings, but some return prose with an embedded object.
         candidate = payload.strip()
         if not candidate:
             return {}

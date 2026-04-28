@@ -21,6 +21,8 @@ VALID_NEXT_AGENTS = {"scout", "fuzzer", "librarian", "striker", "resident", "end
 
 class SupervisorAgent(BaseAgent):
     def __init__(self):
+        """Initialize the router agent and its shared OpenRouter runtime."""
+
         super().__init__("supervisor", "Mission Coordinator")
         self.config = get_runtime_config()
         if self.config.openrouter_api_key:
@@ -36,6 +38,8 @@ class SupervisorAgent(BaseAgent):
 
     @property
     def system_prompt(self) -> str:
+        """Prompt that constrains the supervisor to routing-only JSON decisions."""
+
         return (
             "You are the VT-SaiBER Supervisor. Route the mission to the best specialist worker.\n\n"
             "Roles:\n"
@@ -43,7 +47,7 @@ class SupervisorAgent(BaseAgent):
             "- fuzzer: web directories, endpoints, API path discovery\n"
             "- librarian: CVE research, exploit-path analysis, OSINT\n"
             "- striker: exploitation, gaining shells or sessions\n"
-            "- resident: session enumeration, privilege escalation, post-exploitation\n"
+            "- resident: session-backed objective completion after access already exists\n"
             "- end: mission complete or awaiting human review\n\n"
             'Return ONLY JSON: {"next_agent":"scout|fuzzer|librarian|striker|resident|end","rationale":"...","specific_goal":"...","confidence_score":0.0}\n\n'
             "Routing rules:\n"
@@ -51,13 +55,17 @@ class SupervisorAgent(BaseAgent):
             "2. Prefer the pipeline scout -> fuzzer -> librarian -> striker -> resident -> end.\n"
             "3. Never pick striker before librarian. Never pick resident without active sessions.\n"
             "4. After a failed exploit, pick librarian or fuzzer instead of striker.\n"
-            "5. When ambiguous, follow the MISSION PHASE recommendation.\n"
+            "5. Only route to end when the mission is complete or human approval is required.\n"
+            "6. When ambiguous, follow the MISSION PHASE recommendation.\n"
             "Do not call tools."
         )
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
+        """Route the mission to the next worker or end state."""
+
         iteration_count = int(state.get("iteration_count", 0))
         mission_status = str(state.get("mission_status", "active")).lower()
+        # Respect terminal mission states before trying to route again.
         if mission_status in {"success", "failed", "wait_for_human"}:
             return self._terminal_update(state, mission_status, f"Mission already in terminal state: {mission_status}", "N/A")
         if iteration_count > self.config.max_iterations:
@@ -68,6 +76,7 @@ class SupervisorAgent(BaseAgent):
                 "Wait for human guidance",
             )
         if not validate_all_targets_in_scope(state):
+            # Supervisor is the last safe place to stop the graph before an out-of-scope action happens.
             update = self._terminal_update(state, "failed", "Out-of-scope target detected. Mission aborted for safety.", "N/A")
             update["errors"] = [{
                 "agent": self.name,
@@ -78,17 +87,28 @@ class SupervisorAgent(BaseAgent):
             return update
 
         agent_log = state.get("agent_log", []) or []
-        if (state.get("active_sessions") or {}) and has_agent_run(agent_log, "resident"):
+        resident_outcome = self._latest_resident_outcome(state)
+        resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
+        # Resident objective completion or approval gating is authoritative for closing the mission.
+        if resident_status == "completed":
             return self._terminal_update(
                 state,
                 "success",
-                "Active session confirmed and post-exploitation completed by resident.",
-                "Mission objectives satisfied.",
+                "Resident reported objective completion on a live session.",
+                resident_outcome.get("objective") or "Mission objectives satisfied.",
+            )
+        if resident_status == "needs_approval":
+            return self._terminal_update(
+                state,
+                "wait_for_human",
+                "Resident reported that the next meaningful action requires human approval.",
+                resident_outcome.get("objective") or "Await human approval for resident action.",
             )
 
         context = self._build_context_summary(state)
         history = self._sanitize_history(state.get("supervisor_messages", []))
         try:
+            # The LLM gets a compact mission snapshot and returns a strict JSON routing decision.
             content = await self._run_chat_agent(
                 state,
                 user_prompt=context,
@@ -101,10 +121,12 @@ class SupervisorAgent(BaseAgent):
             decision = self._parse_decision(content)
             assistant_payload = {"role": "assistant", "content": content}
         except Exception as exc:
+            # If the model path fails, fall back to deterministic routing so the graph still moves safely.
             logger.warning("Supervisor LLM fallback engaged: %s", exc)
             decision = self._fallback_decision(state, str(exc))
             assistant_payload = {"role": "assistant", "content": json.dumps(decision.model_dump())}
 
+        # Guardrails can rewrite unsafe or out-of-order decisions without losing the model's rationale.
         decision, guardrail_reason = self._apply_guardrails(state, decision)
         reasoning = decision.rationale if not guardrail_reason else f"{decision.rationale} | Guardrail: {guardrail_reason}"
         history = [*history, {"role": "user", "content": context}, assistant_payload]
@@ -135,6 +157,8 @@ class SupervisorAgent(BaseAgent):
         }
 
     def _terminal_update(self, state: CyberState, mission_status: str, rationale: str, specific_goal: str) -> Dict[str, Any]:
+        """Build the standard terminal-state supervisor update."""
+
         return {
             **self._agent_update(state),
             "next_agent": "end",
@@ -150,11 +174,16 @@ class SupervisorAgent(BaseAgent):
         }
 
     def _build_context_summary(self, state: CyberState) -> str:
+        """Summarize the mission state into a routing-friendly text block."""
+
         discovered_targets = state.get("discovered_targets", {}) or {}
         web_findings = state.get("web_findings", []) or []
         active_sessions = state.get("active_sessions", {}) or {}
         critical_findings = state.get("critical_findings", []) or []
         agent_log = state.get("agent_log", []) or []
+        resident_outcome = self._latest_resident_outcome(state)
+        resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
+        resident_objective = str(resident_outcome.get("objective", "") or "").strip()
 
         targets_block = "\n".join(
             f"- {ip} -> {self._service_summary(details.get('services', {}) if isinstance(details, dict) else {})}"
@@ -177,10 +206,16 @@ class SupervisorAgent(BaseAgent):
         has_web = bool(web_findings)
         has_sessions = bool(active_sessions)
 
-        if has_sessions and resident_ran:
-            phase = "Phase 6 - COMPLETE: resident finished post-exploitation -> route to end"
+        # The phase hint keeps the routing prompt simple while still nudging the pipeline order.
+        if resident_status == "completed":
+            phase = "Phase 6 - COMPLETE: resident validated objective completion -> route to end"
+        elif resident_status == "needs_approval":
+            phase = "Phase 6 - HUMAN APPROVAL: resident identified the next high-impact step -> route to end"
         elif has_sessions:
-            phase = "Phase 5 - POST-EXPLOITATION: active session open -> route to resident"
+            if resident_status in {"blocked", "failed"}:
+                phase = "Phase 5 - SESSION OBJECTIVE BLOCKED: active session remains but resident needs a new path -> route to resident or librarian"
+            else:
+                phase = "Phase 5 - SESSION OBJECTIVE EXECUTION: active session open -> route to resident"
         elif librarian_ran:
             phase = "Phase 4 - EXPLOITATION: intelligence gathered, no active session -> route to striker"
         elif has_targets and has_web and not fuzzer_ran:
@@ -205,6 +240,8 @@ class SupervisorAgent(BaseAgent):
             f"Discovered targets:\n{targets_block}\n\n"
             f"Web findings count: {len(web_findings)}\n"
             f"Active sessions count: {len(active_sessions)}\n"
+            f"Resident objective status: {resident_status or 'none'}\n"
+            f"Resident objective: {resident_objective or '(none)'}\n"
             f"Critical findings:\n{critical_block}\n\n"
             f"Recent actions:\n{recent_block}\n\n"
             f"MISSION PHASE:\n{phase}\n{phase_flags}\n"
@@ -212,6 +249,8 @@ class SupervisorAgent(BaseAgent):
 
     @staticmethod
     def _service_summary(services: Dict[str, Any]) -> str:
+        """Render a short per-target service summary for the supervisor prompt."""
+
         items = []
         for port, service in list((services or {}).items())[:8]:
             if isinstance(service, dict):
@@ -224,6 +263,8 @@ class SupervisorAgent(BaseAgent):
         return ", ".join(items) if items else "no services"
 
     def _parse_decision(self, raw_content: str) -> SupervisorDecision:
+        """Parse and normalize the model's JSON routing decision."""
+
         payload = extract_json_payload(raw_content)
         if "confidence" in payload and "confidence_score" not in payload:
             payload["confidence_score"] = payload["confidence"]
@@ -232,13 +273,23 @@ class SupervisorAgent(BaseAgent):
         return SupervisorDecision.model_validate(payload)
 
     def _fallback_decision(self, state: CyberState, reason: str) -> SupervisorDecision:
+        """Use deterministic routing when the chat-completion path fails."""
+
         discovered_targets = state.get("discovered_targets", {}) or {}
         active_sessions = state.get("active_sessions", {}) or {}
         web_findings = state.get("web_findings", []) or []
-        if active_sessions and has_agent_run(state.get("agent_log", []) or [], "resident"):
-            next_agent, goal = "end", "Mission objective satisfied after post-exploitation review."
+        resident_outcome = self._latest_resident_outcome(state)
+        resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
+        resident_objective = resident_outcome.get("objective") or state.get("supervisor_expectations", {}).get("specific_goal") or state.get("mission_goal")
+        if resident_status == "completed":
+            next_agent, goal = "end", str(resident_objective or "Mission objective satisfied.")
+        elif resident_status == "needs_approval":
+            next_agent, goal = "end", str(resident_objective or "Await human approval for resident action.")
         elif active_sessions:
-            next_agent, goal = "resident", "Enumerate and stabilize active sessions."
+            if resident_status in {"blocked", "failed"} and not ((state.get("research_cache") or {}) or (state.get("intelligence_findings") or [])):
+                next_agent, goal = "librarian", f"Research a new path to accomplish the session-backed objective: {resident_objective}"
+            else:
+                next_agent, goal = "resident", str(resident_objective or "Advance the current mission objective using the live session.")
         elif not discovered_targets:
             next_agent, goal = "scout", "Discover targets and fingerprint exposed services."
         elif web_findings and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
@@ -255,11 +306,31 @@ class SupervisorAgent(BaseAgent):
         )
 
     def _apply_guardrails(self, state: CyberState, decision: SupervisorDecision) -> Tuple[SupervisorDecision, str]:
+        """Rewrite unsafe, invalid, or out-of-order routing decisions."""
+
         next_agent = decision.next_agent.strip().lower()
         reason = ""
+        resident_outcome = self._latest_resident_outcome(state)
+        resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
+        resident_objective = str(
+            resident_outcome.get("objective")
+            or state.get("supervisor_expectations", {}).get("specific_goal")
+            or state.get("mission_goal")
+            or ""
+        ).strip()
         if next_agent not in VALID_NEXT_AGENTS:
             next_agent = "scout" if not state.get("discovered_targets") else "librarian"
             reason = "invalid-next-agent-corrected"
+        if next_agent == "resident" and not (state.get("active_sessions") or {}):
+            next_agent = "striker" if has_agent_run(state.get("agent_log", []) or [], "librarian") else "librarian"
+            reason = "resident-without-session-corrected"
+        if next_agent == "end" and (state.get("active_sessions") or {}) and resident_status not in {"completed", "needs_approval"}:
+            if resident_status in {"blocked", "failed"} and not ((state.get("research_cache") or {}) or (state.get("intelligence_findings") or [])):
+                next_agent = "librarian"
+                reason = "resident-needs-new-intel"
+            else:
+                next_agent = "resident"
+                reason = "resident-not-finished"
         if next_agent == "striker" and has_service_version_intel(state.get("discovered_targets", {}) or {}) and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
             next_agent = "librarian"
             reason = "forced-librarian-before-striker"
@@ -270,11 +341,13 @@ class SupervisorAgent(BaseAgent):
         return SupervisorDecision(
             next_agent=next_agent,
             rationale=decision.rationale,
-            specific_goal=decision.specific_goal,
+            specific_goal=resident_objective if next_agent == "resident" and resident_objective else decision.specific_goal,
             confidence_score=decision.confidence_score,
         ), reason
 
     def _sanitize_history(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Keep only clean user/assistant messages in supervisor history."""
+
         return [
             {"role": role, "content": str(message.get("content", ""))}
             for message in (messages or [])
@@ -284,6 +357,8 @@ class SupervisorAgent(BaseAgent):
         ]
 
     def _striker_failed_recently(self, state: CyberState) -> bool:
+        """Detect whether the most recent exploitation path failed and needs backtracking."""
+
         for record in reversed(state.get("exploited_services", []) or []):
             if isinstance(record, dict):
                 status = str(record.get("status", "")).strip().lower()
@@ -292,24 +367,46 @@ class SupervisorAgent(BaseAgent):
         recent_agents = [agent for agent in list_recent_agent_names(state.get("agent_log", []) or [], n=5) if agent != self.name]
         return bool(recent_agents and recent_agents[-1] == "striker" and not (state.get("active_sessions", {}) or {}))
 
+    def _latest_resident_outcome(self, state: CyberState) -> Dict[str, Any]:
+        """Read the most recent resident objective status from validations or agent logs."""
+
+        for validation in reversed(state.get("validations", []) or []):
+            if isinstance(validation, dict) and validation.get("type") == "resident_objective":
+                return dict(validation)
+        for entry in reversed(state.get("agent_log", []) or []):
+            if not isinstance(entry, dict):
+                if getattr(entry, "agent", "") != "resident":
+                    continue
+                findings = getattr(entry, "findings", None)
+                if isinstance(findings, dict) and findings.get("objective_status"):
+                    return dict(findings)
+                continue
+            if str(entry.get("agent", "")).strip().lower() != "resident":
+                continue
+            findings = entry.get("findings")
+            if isinstance(findings, dict) and findings.get("objective_status"):
+                return dict(findings)
+        return {}
+
     def _derive_terminal_outcome(self, state: CyberState, specific_goal: str) -> Tuple[str, str]:
+        """Translate a route-to-end decision into a concrete terminal mission status."""
+
         mission_status = str(state.get("mission_status", "active")).strip().lower()
         if mission_status in {"success", "failed", "wait_for_human"}:
             return mission_status, specific_goal or "N/A"
-        mission_goal = str(state.get("mission_goal", "")).lower()
-        active_sessions = state.get("active_sessions", {}) or {}
-        critical_findings = [str(item).lower() for item in (state.get("critical_findings", []) or [])]
-        resident_has_run = has_agent_run(state.get("agent_log", []) or [], "resident")
-        if active_sessions and resident_has_run:
-            return "success", specific_goal or "Resident validated post-exploitation success."
-        if active_sessions and any(term in mission_goal for term in ("exploit", "initial access", "session", "shell", "meterpreter", "foothold")):
-            return "success", specific_goal or "Initial access objective satisfied."
-        if any("session " in finding or "root privileges" in finding for finding in critical_findings):
-            return "success", specific_goal or "Critical mission objective reached."
+        resident_outcome = self._latest_resident_outcome(state)
+        resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
+        resident_objective = str(resident_outcome.get("objective", "") or specific_goal or "").strip()
+        if resident_status == "completed":
+            return "success", resident_objective or "Resident completed the session-backed objective."
+        if resident_status == "needs_approval":
+            return "wait_for_human", resident_objective or "Resident requires approval for the next step."
         return "wait_for_human", specific_goal or "Wait for operator confirmation before closing mission."
 
 
 async def supervisor_node(state: CyberState) -> Dict[str, Any]:
+    """LangGraph node wrapper for the supervisor."""
+
     agent = SupervisorAgent()
     updates = await agent.call_llm(state)
     persist_state_update(state, updates)

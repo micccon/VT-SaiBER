@@ -1,15 +1,12 @@
-"""
-Shared OpenRouter-backed tool loop for executable agents.
-"""
+"""Shared OpenRouter-backed tool loop for executable agents."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable, List
 
-from src.utils.agent_runtime.models import RuntimeTool
-from src.utils.agent_runtime.policy import BaseToolPolicy, ToolInterception
-from src.utils.agent_runtime.tools import (
+from src.utils.agent_runtime.transcript import extract_message_text, make_assistant_message, make_tool_message
+from src.utils.tools.loader import (
     build_openai_tools,
     find_tool,
     invoke_tool,
@@ -19,15 +16,14 @@ from src.utils.agent_runtime.tools import (
     serialize_tool_result,
     tool_names,
 )
-from src.utils.agent_runtime.transcript import (
-    extract_message_text,
-    make_assistant_message,
-    make_tool_message,
-)
+from src.utils.tools.models import RuntimeTool
+from src.utils.tools.policy import BaseToolPolicy, ToolInterception
 
 
 @dataclass
 class ToolLoopResult:
+    """Transcript plus final text returned by the shared tool loop."""
+
     messages: List[dict[str, Any]]
     final_text: str
     rounds: int
@@ -45,6 +41,8 @@ async def run_tool_worker(
     max_rounds: int = 8,
     temperature: float = 0.0,
 ) -> ToolLoopResult:
+    """Load allowed MCP tools, validate requirements, and run the shared tool loop."""
+
     tools = await load_filtered_tools(allowed_tools)
     if not tools:
         raise RuntimeError("No allowed tools were available from the MCP bridge")
@@ -76,6 +74,8 @@ async def run_agent_tool_loop(
     max_rounds: int = 8,
     temperature: float = 0.0,
 ) -> ToolLoopResult:
+    """Drive the OpenAI tool-calling loop for executable agents."""
+
     tool_list = list(tools)
     tool_policy = policy or BaseToolPolicy()
     tool_definitions = build_openai_tools(tool_list)
@@ -86,6 +86,7 @@ async def run_agent_tool_loop(
     ]
     transcript: List[dict[str, Any]] = []
 
+    # Each round asks the model what to do next, then executes any requested tools and feeds results back.
     for round_number in range(1, max_rounds + 1):
         response = await client.chat.completions.create(
             model=model,
@@ -134,6 +135,7 @@ async def run_agent_tool_loop(
         conversation.append(assistant_payload)
 
         if not tool_calls:
+            # No more tool calls means the assistant has reached its final answer for this turn.
             return ToolLoopResult(messages=transcript, final_text=assistant_text, rounds=round_number)
 
         for tool_call in tool_calls:
@@ -169,6 +171,7 @@ async def run_agent_tool_loop(
                 })
                 continue
 
+            # Policies can block or replace execution for approval gates, retry limits, or guardrails.
             intercepted = await tool_policy.before_call(tool, call_arguments)
             if isinstance(intercepted, ToolInterception):
                 tool_result = normalize_tool_payload(

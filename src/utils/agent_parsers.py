@@ -12,6 +12,8 @@ from src.state.models import ServiceInfo
 
 
 def extract_tool_output_text(raw_output: Any) -> str:
+    """Best-effort extraction of human-readable text from varied tool payload shapes."""
+
     payload = raw_output
     if isinstance(payload, str):
         try:
@@ -37,6 +39,8 @@ def extract_tool_output_text(raw_output: Any) -> str:
 
 
 def parse_service_records(services: List[Dict[str, Any]]) -> Dict[int, ServiceInfo]:
+    """Convert normalized service dicts into ServiceInfo objects keyed by port."""
+
     parsed: Dict[int, ServiceInfo] = {}
     for service in services:
         if not isinstance(service, dict):
@@ -55,6 +59,8 @@ def parse_service_records(services: List[Dict[str, Any]]) -> Dict[int, ServiceIn
 
 
 def parse_host_discovery_output(raw_output: Any, *, max_hosts: int = 5) -> List[str]:
+    """Extract discovered hosts from Nmap-style host discovery output."""
+
     text = extract_tool_output_text(raw_output)
     if not text:
         return []
@@ -75,6 +81,8 @@ def parse_host_discovery_output(raw_output: Any, *, max_hosts: int = 5) -> List[
 
 
 def parse_nmap_output(raw_output: Any) -> Dict[int, ServiceInfo]:
+    """Parse raw nmap service output into ServiceInfo objects."""
+
     text = extract_tool_output_text(raw_output)
     services: Dict[int, ServiceInfo] = {}
     if not text:
@@ -97,6 +105,8 @@ def parse_nmap_output(raw_output: Any) -> Dict[int, ServiceInfo]:
 
 
 def iter_target_services(discovered_targets: Dict[str, Dict[str, Any]]) -> Iterable[tuple[str, int, str]]:
+    """Yield simple (ip, port, service_name) tuples from discovered_targets."""
+
     for ip, target_data in discovered_targets.items():
         if not isinstance(target_data, dict):
             continue
@@ -118,6 +128,8 @@ def parse_gobuster_output(
     soft_404_statuses: set[int],
     scan_policy: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
+    """Normalize gobuster output into bounded web findings."""
+
     text = extract_tool_output_text(raw_output)
     findings: List[Dict[str, Any]] = []
     line_regex = re.compile(r"^(/[^ ]*)\s+\(Status:\s*(\d{3})\)", re.IGNORECASE)
@@ -159,6 +171,8 @@ def parse_nikto_output(
     max_depth: int,
     scan_policy: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
+    """Normalize Nikto output into the shared web finding shape."""
+
     text = extract_tool_output_text(raw_output)
     findings: List[Dict[str, Any]] = []
     line_regex = re.compile(r"^\+\s+(/[^:\s]*).*?:\s*(.+)$")
@@ -189,6 +203,8 @@ def parse_nikto_output(
 
 
 def dedupe_web_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove duplicate web findings while preserving order."""
+
     deduped: List[Dict[str, Any]] = []
     seen = set()
     for finding in findings:

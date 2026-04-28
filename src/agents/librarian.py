@@ -17,6 +17,8 @@ from src.utils.parsers import extract_json_payload
 
 class LibrarianAgent(BaseAgent):
     def __init__(self, rag_orchestrator: Optional[Any] = None):
+        """Initialize shared runtime plus optional RAG/OSINT helpers."""
+
         super().__init__("librarian", "Research and Intelligence Specialist")
         cfg = get_runtime_config()
         self._init_runtime(
@@ -35,16 +37,23 @@ class LibrarianAgent(BaseAgent):
 
     @property
     def system_prompt(self) -> str:
+        """Stable research-oriented system prompt."""
+
         return LibrarianPrompts.SYSTEM_PROMPT
 
     def _build_research_query(self, state: CyberState) -> str:
+        """Turn current mission telemetry into a focused research query."""
+
         return self._telemetry_processor.build_research_query(state)
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
+        """Produce a cached intelligence brief for the current mission state."""
+
         query = self._build_research_query(state)
         cache_key = self._cache_key(query)
         research_cache = dict(state.get("research_cache", {}) or {})
         cached = research_cache.get(cache_key)
+        # Cache brief synthesis so the workflow can revisit the same question cheaply.
         brief = IntelligenceBrief.model_validate(cached) if cached else await self._build_brief(query)
         if not cached:
             research_cache[cache_key] = brief.model_dump()
@@ -68,6 +77,8 @@ class LibrarianAgent(BaseAgent):
         }
 
     def _build_rag(self) -> Any:
+        """Best-effort RAG orchestrator bootstrap."""
+
         try:
             from src.database.rag.rag_engine import RAGOrchestrator
 
@@ -76,6 +87,8 @@ class LibrarianAgent(BaseAgent):
             return None
 
     def _build_osint_client(self) -> Any:
+        """Best-effort OSINT client bootstrap."""
+
         try:
             from src.database.librarian.osint_client import OSINTClient
 
@@ -84,11 +97,15 @@ class LibrarianAgent(BaseAgent):
             return None
 
     async def _build_brief(self, query: str) -> IntelligenceBrief:
+        """Retrieve local context first, then fall back to OSINT when confidence is low."""
+
         rag_results = await self._retrieve_from_kb(query)
         osint_results = [] if self._is_rag_confident(rag_results) else await self._retrieve_osint(query)
         return await self._research_brief(query, rag_results, osint_results)
 
     async def _retrieve_from_kb(self, query: str) -> List[Dict[str, Any]]:
+        """Fetch candidate knowledge-base passages for the query."""
+
         if self._rag is None:
             return []
         try:
@@ -98,6 +115,8 @@ class LibrarianAgent(BaseAgent):
             return []
 
     def _is_rag_confident(self, rag_results: List[Dict[str, Any]]) -> bool:
+        """Decide whether local RAG evidence is strong enough to skip OSINT."""
+
         if len(rag_results or []) < self._min_docs:
             return False
         scores = [
@@ -110,6 +129,8 @@ class LibrarianAgent(BaseAgent):
         return bool(scores) and max(scores) >= self._min_score
 
     async def _retrieve_osint(self, query: str) -> List[Dict[str, Any]]:
+        """Fetch OSINT results when local retrieval is weak."""
+
         if self._osint_client is None:
             return []
         return await self._osint_client.search(query)
@@ -120,6 +141,8 @@ class LibrarianAgent(BaseAgent):
         rag_results: Optional[List[Dict[str, Any]]] = None,
         osint_results: Optional[List[Dict[str, Any]]] = None,
     ) -> IntelligenceBrief:
+        """Ask the model to synthesize retrieved material into a structured brief."""
+
         rag_results = rag_results or []
         osint_results = osint_results or []
         if self._client is None:
@@ -133,6 +156,7 @@ class LibrarianAgent(BaseAgent):
             )
 
         try:
+            # Librarian uses a plain chat turn and validates the structured JSON into IntelligenceBrief.
             content = await self._run_chat_agent(
                 state={},
                 user_prompt=LibrarianPrompts.build_user_content(query, rag_results, osint_results),
@@ -159,6 +183,8 @@ class LibrarianAgent(BaseAgent):
             )
 
     def _finding_from_brief(self, brief: IntelligenceBrief) -> Dict[str, Any]:
+        """Convert the brief into the normalized intelligence_finding shape used by the workflow."""
+
         return {
             "source": "librarian",
             "description": brief.summary,
@@ -173,10 +199,14 @@ class LibrarianAgent(BaseAgent):
         }
 
     def _cache_key(self, query: str) -> str:
+        """Generate a stable cache key for a research query."""
+
         return f"research_{hashlib.sha1(query.encode()).hexdigest()[:10]}"
 
     @staticmethod
     def _normalize_citations(raw: Any) -> List[str]:
+        """Normalize citation payloads to simple printable strings."""
+
         citations: List[str] = []
         for item in list(raw or []):
             if isinstance(item, str):
@@ -193,6 +223,8 @@ class LibrarianAgent(BaseAgent):
 
 
 async def librarian_node(state: CyberState) -> Dict[str, Any]:
+    """LangGraph node wrapper for the librarian."""
+
     agent = LibrarianAgent()
     updates = await agent.call_llm(state)
     persist_state_update(state, updates)

@@ -32,6 +32,8 @@ mcp = FastMCP("vt-saiber-attackbox", host=ATTACKBOX_HOST, port=ATTACKBOX_PORT)
 
 
 def _timestamp() -> str:
+    """Generate a stable UTC timestamp for artifact filenames."""
+
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
@@ -44,6 +46,8 @@ def _envelope(
     raw: Any = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Wrap tool results in the normalized payload shape expected by the agents."""
+
     return {
         "status": status,
         "summary": summary,
@@ -55,6 +59,8 @@ def _envelope(
 
 
 def _artifact(tool_name: str, suffix: str, content: str) -> Optional[Dict[str, Any]]:
+    """Persist tool output to disk and return a file artifact reference."""
+
     if not content:
         return None
     safe_tool = tool_name.replace("/", "_")
@@ -68,6 +74,8 @@ def _artifact(tool_name: str, suffix: str, content: str) -> Optional[Dict[str, A
 
 
 def _which_any(*names: str) -> Optional[str]:
+    """Return the first installed executable from the provided candidate names."""
+
     for name in names:
         found = shutil.which(name)
         if found:
@@ -82,6 +90,8 @@ def _run_shell_command(
     timeout: int = DEFAULT_TIMEOUT,
     cwd: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Execute a shell command on the attackbox and normalize its output."""
+
     completed = subprocess.run(
         command,
         shell=True,
@@ -92,6 +102,7 @@ def _run_shell_command(
     )
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
+    # Most attackbox tools are simple command wrappers, so we always capture combined stdout/stderr as an artifact.
     artifact = _artifact(tool_name, ".log", "\n".join(part for part in [stdout, stderr] if part).strip())
     status = "success" if completed.returncode == 0 else "error"
     summary = f"{tool_name} completed with exit code {completed.returncode}"
@@ -111,6 +122,8 @@ def _run_shell_command(
 
 
 def _parse_nmap_hosts(output: str) -> List[str]:
+    """Extract discovered hosts from nmap host-discovery output."""
+
     hosts: List[str] = []
     for line in output.splitlines():
         line = line.strip()
@@ -122,6 +135,8 @@ def _parse_nmap_hosts(output: str) -> List[str]:
 
 
 def _parse_nmap_services(output: str) -> List[Dict[str, Any]]:
+    """Extract open-service records from nmap service-scan output."""
+
     findings: List[Dict[str, Any]] = []
     for line in output.splitlines():
         line = line.strip()
@@ -146,6 +161,8 @@ def _parse_nmap_services(output: str) -> List[Dict[str, Any]]:
 
 
 def _parse_gobuster(output: str) -> List[Dict[str, Any]]:
+    """Extract path/status pairs from gobuster output."""
+
     findings: List[Dict[str, Any]] = []
     for line in output.splitlines():
         line = line.strip()
@@ -168,6 +185,8 @@ def _normalize_msf_payload(
     payload: Any,
     invocation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Wrap varied Metasploit RPC results in the shared attackbox envelope."""
+
     if isinstance(payload, list):
         return _envelope(
             status="success",
@@ -207,6 +226,8 @@ def _normalize_msf_payload(
 
 
 def _build_http_url(url_or_host: str, port: Optional[int] = None, scheme: str = "http") -> str:
+    """Normalize host-or-URL inputs into a usable HTTP URL."""
+
     candidate = str(url_or_host or "").strip()
     if candidate.startswith("http://") or candidate.startswith("https://"):
         return candidate
@@ -217,6 +238,8 @@ def _build_http_url(url_or_host: str, port: Optional[int] = None, scheme: str = 
 
 @mcp.tool(name="recon_host_discovery")
 async def recon_host_discovery(targets: str, additional_args: str = "") -> Dict[str, Any]:
+    """Run host discovery and return discovered hosts in normalized evidence."""
+
     command = f"nmap -sn {shlex.quote(targets)} {additional_args}".strip()
     result = await asyncio.to_thread(_run_shell_command, "recon_host_discovery", command)
     hosts = _parse_nmap_hosts(str(result["raw"].get("stdout", "")))
@@ -231,6 +254,8 @@ async def recon_port_scan(
     ports: str = "1-1024",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """Run a basic nmap port scan and normalize open-service evidence."""
+
     command = f"nmap -Pn -p {shlex.quote(ports)} {additional_args} {shlex.quote(target)}".strip()
     result = await asyncio.to_thread(_run_shell_command, "recon_port_scan", command)
     services = _parse_nmap_services(str(result["raw"].get("stdout", "")))
@@ -245,6 +270,8 @@ async def recon_service_probe(
     ports: str = "1-1024",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """Run nmap version probing and normalize service/version evidence."""
+
     command = f"nmap -Pn -sV -p {shlex.quote(ports)} {additional_args} {shlex.quote(target)}".strip()
     result = await asyncio.to_thread(_run_shell_command, "recon_service_probe", command)
     services = _parse_nmap_services(str(result["raw"].get("stdout", "")))
@@ -309,6 +336,8 @@ async def web_content_enum(
     wordlist: str = "/usr/share/wordlists/dirb/common.txt",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """Run gobuster directory enumeration against a target URL."""
+
     gobuster = _which_any("gobuster")
     if not gobuster:
         return _envelope(status="error", summary="gobuster is not installed", metadata={"tool": "web_content_enum"})
@@ -359,6 +388,8 @@ async def web_waf_detect(url: str, additional_args: str = "") -> Dict[str, Any]:
 
 @mcp.tool(name="web_nikto_scan")
 async def web_nikto_scan(target: str, additional_args: str = "") -> Dict[str, Any]:
+    """Run a Nikto scan and return the raw command envelope."""
+
     command = f"nikto -h {shlex.quote(target)} {additional_args}".strip()
     return await asyncio.to_thread(_run_shell_command, "web_nikto_scan", command)
 
@@ -669,6 +700,8 @@ async def access_smb_enum(target: str, additional_args: str = "") -> Dict[str, A
 
 @mcp.tool(name="msf_search_modules")
 async def msf_search_modules(search_term: str, module_type: str = "all") -> Dict[str, Any]:
+    """Search the local Metasploit module inventory without executing anything."""
+
     client = metasploit_rpc.get_msf_client()
     requested = str(module_type or "all").strip().lower()
     module_sources = [
@@ -731,6 +764,8 @@ async def msf_run_exploit(
     payload_name: str = "",
     payload_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Execute a Metasploit exploit via the shared RPC wrapper."""
+
     payload = await metasploit_rpc.run_exploit(
         module_name=module_name,
         options=options or {},
@@ -751,6 +786,8 @@ async def msf_run_exploit(
 
 @mcp.tool(name="msf_run_auxiliary")
 async def msf_run_auxiliary(module_name: str, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Execute a Metasploit auxiliary module via the shared RPC wrapper."""
+
     payload = await metasploit_rpc.run_auxiliary_module(module_name=module_name, options=options or {})
     return _normalize_msf_payload(
         "msf_run_auxiliary",
@@ -761,6 +798,8 @@ async def msf_run_auxiliary(module_name: str, options: Optional[Dict[str, Any]] 
 
 @mcp.tool(name="msf_run_post")
 async def msf_run_post(module_name: str, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Execute a Metasploit post module via the shared RPC wrapper."""
+
     payload = await metasploit_rpc.run_post_module(module_name=module_name, options=options or {})
     return _normalize_msf_payload(
         "msf_run_post",
@@ -771,12 +810,16 @@ async def msf_run_post(module_name: str, options: Optional[Dict[str, Any]] = Non
 
 @mcp.tool(name="msf_list_sessions")
 async def msf_list_sessions() -> Dict[str, Any]:
+    """Return the normalized live-session inventory from Metasploit."""
+
     payload = await metasploit_rpc.list_active_sessions()
     return _normalize_msf_payload("msf_list_sessions", payload, {})
 
 
 @mcp.tool(name="msf_session_command")
 async def msf_session_command(session_id: int, command: str) -> Dict[str, Any]:
+    """Run a command inside a validated Metasploit session."""
+
     payload = await metasploit_rpc.send_session_command(session_id=session_id, command=command)
     return _normalize_msf_payload("msf_session_command", payload, {"session_id": session_id, "command": command})
 
@@ -811,16 +854,22 @@ async def msf_start_listener(
 
 @mcp.tool(name="msf_terminate_session")
 async def msf_terminate_session(session_id: int) -> Dict[str, Any]:
+    """Terminate a live Metasploit session through the RPC wrapper."""
+
     payload = await metasploit_rpc.terminate_session(session_id=session_id)
     return _normalize_msf_payload("msf_terminate_session", payload, {"session_id": session_id})
 
 
 @mcp.tool(name="system_execute_command")
 async def system_execute_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+    """Run a precise shell command on the attackbox host itself."""
+
     return await asyncio.to_thread(_run_shell_command, "system_execute_command", command, timeout=timeout)
 
 
 def main() -> None:
+    """Process entrypoint for the unified attackbox MCP server."""
+
     try:
         metasploit_rpc.initialize_msf_client()
     except Exception as exc:

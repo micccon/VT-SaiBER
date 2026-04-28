@@ -7,7 +7,7 @@ This document reflects the current unified `attackbox` architecture and LangGrap
 VT-SaiBER is a multi-agent penetration testing system with a single execution boundary.
 
 Primary runtime containers:
-- `agents`: LangGraph workflow, prompts, orchestration, skills, and persistence logic
+- `agents`: LangGraph workflow, prompts, orchestration, and persistence logic
 - `attackbox`: Kali-based execution plane with offensive tooling, Metasploit, and one MCP server
 - `postgres`: mission/state persistence
 
@@ -93,7 +93,9 @@ There is no split `kali-mcp` / `msf-mcp` runtime and no prefix synthesis layer.
 - `striker`
   - Exploitation workflows, Metasploit execution, web exploit validation, and credential-driven access
 - `resident`
-  - Post-exploitation using live sessions and post modules
+  - Session-backed objective completion after access exists
+  - Validates live sessions, performs bounded read-only orientation, and advances the supervisor-assigned objective
+  - Uses session tools plus a narrow attackbox-side path through `system_execute_command` when required
 
 ## 6. Shared State Model
 

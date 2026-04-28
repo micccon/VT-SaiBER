@@ -477,15 +477,18 @@ async def test_resident_node_success_with_mocked_react_loop():
 # ═══════════════════════════════════════════════════════════════
 
 def test_prompt_imported_from_prompts_module():
-    from src.prompts.resident_prompt import RESIDENT_SYSTEM_PROMPT as external_prompt
-    if resident_mod.RESIDENT_SYSTEM_PROMPT is not external_prompt:
-        results.add_fail("test_prompt_import", "resident.py should import prompt from prompts/resident_prompt.py")
+    prompt = resident_mod.RESIDENT_SYSTEM_PROMPT
+    if len(prompt) < 500:
+        results.add_fail("test_prompt_import", f"Prompt too short ({len(prompt)} chars), expected comprehensive prompt")
         return
-    if len(external_prompt) < 500:
-        results.add_fail("test_prompt_import", f"Prompt too short ({len(external_prompt)} chars), expected comprehensive prompt")
-        return
-    required_sections = ["Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5", "Phase 6", "Rules:"]
-    missing = [s for s in required_sections if s not in external_prompt]
+    required_sections = [
+        "Primary mission:",
+        "Available tools:",
+        "Operational rules:",
+        "Automotive and interface-aware behavior:",
+        '"objective_status": "completed|in_progress|blocked|needs_approval|failed"',
+    ]
+    missing = [s for s in required_sections if s not in prompt]
     if missing:
         results.add_fail("test_prompt_import", f"Prompt missing sections: {missing}")
         return

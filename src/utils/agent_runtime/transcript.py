@@ -11,6 +11,8 @@ from src.utils.parsers import normalize_tool_result
 
 
 def extract_message_text(message: Any) -> str:
+    """Extract assistant/user text from SDK objects or plain transcript dicts."""
+
     content = message
     if isinstance(message, dict):
         content = message.get("content", "")
@@ -38,6 +40,8 @@ def extract_message_text(message: Any) -> str:
 
 
 def make_assistant_message(content: str, tool_calls: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Build the normalized transcript shape for an assistant message."""
+
     payload: dict[str, Any] = {
         "role": "assistant",
         "content": content or "",
@@ -48,6 +52,8 @@ def make_assistant_message(content: str, tool_calls: list[dict[str, Any]] | None
 
 
 def make_tool_message(name: str, tool_call_id: str, content: Any) -> dict[str, Any]:
+    """Build the normalized transcript shape for a tool result message."""
+
     return {
         "role": "tool",
         "name": name,
@@ -57,6 +63,8 @@ def make_tool_message(name: str, tool_call_id: str, content: Any) -> dict[str, A
 
 
 def collect_reasoning_chunks(messages: Iterable[Any]) -> list[str]:
+    """Collect non-tool message text for logging and reasoning summaries."""
+
     chunks: list[str] = []
     for message in messages:
         if isinstance(message, dict) and message.get("role") == "tool":
@@ -68,6 +76,8 @@ def collect_reasoning_chunks(messages: Iterable[Any]) -> list[str]:
 
 
 def iter_tool_messages(messages: Iterable[Any]) -> Iterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """Yield tool transcript messages alongside normalized payload dictionaries."""
+
     for message in messages:
         if not isinstance(message, dict) or message.get("role") != "tool":
             continue

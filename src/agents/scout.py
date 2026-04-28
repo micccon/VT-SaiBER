@@ -20,11 +20,15 @@ class ScoutAgent(BaseAgent):
     """Discovers targets/ports/services and writes structured target intel."""
 
     def __init__(self):
+        """Initialize the shared runtime for reconnaissance."""
+
         super().__init__("scout", "Network Reconnaissance Specialist")
         self._init_runtime(config=get_runtime_config())
 
     @property
     def system_prompt(self) -> str:
+        """Prompt that keeps scout constrained to in-scope recon work."""
+
         return (
             "You are the VT-SaiBER scout agent.\n"
             "Use only the provided recon tools.\n"
@@ -37,6 +41,8 @@ class ScoutAgent(BaseAgent):
         )
 
     async def call_llm(self, state: CyberState) -> Dict[str, Any]:
+        """Run the shared tool loop for host discovery and service probing."""
+
         target_scope = state.get("target_scope", [])
         if not target_scope:
             return self._error_update(
@@ -54,6 +60,8 @@ class ScoutAgent(BaseAgent):
         )
 
     def _build_context(self, state: CyberState) -> str:
+        """Build a compact recon objective for the model."""
+
         discovered_targets = list((state.get("discovered_targets", {}) or {}).keys())
         target_scope = state.get("target_scope", []) or []
         return (
@@ -64,6 +72,8 @@ class ScoutAgent(BaseAgent):
         )
 
     def _extract_updates(self, messages: List[Dict[str, Any]], state: CyberState) -> Dict[str, Any]:
+        """Convert recon tool messages into structured discovered_targets updates."""
+
         target_scope = state.get("target_scope", []) or []
         discovered_targets: Dict[str, Dict[str, Any]] = {}
         discovered_hosts: List[str] = []
@@ -73,6 +83,7 @@ class ScoutAgent(BaseAgent):
             invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
 
             if name == "recon_host_discovery":
+                # Host discovery can come back either as normalized evidence or raw parser-friendly output.
                 evidence = data.get("evidence", {}) if isinstance(data, dict) else {}
                 if isinstance(evidence, dict) and isinstance(evidence.get("hosts"), list):
                     for host in evidence["hosts"]:
@@ -88,6 +99,7 @@ class ScoutAgent(BaseAgent):
             if name not in {"recon_service_probe", "recon_port_scan"}:
                 continue
 
+            # Only persist service data for validated in-scope targets.
             target = str(invocation.get("target") or "").strip()
             if not target or not target_in_scope(target, target_scope):
                 continue
@@ -96,6 +108,7 @@ class ScoutAgent(BaseAgent):
             services = evidence.get("services", []) if isinstance(evidence, dict) else []
             parsed = parse_service_records(services)
             if not parsed:
+                # Fall back to raw nmap-style parsing when the tool did not return normalized services.
                 parsed = parse_nmap_output(data)
             if not parsed:
                 continue
@@ -109,6 +122,7 @@ class ScoutAgent(BaseAgent):
             discovered_targets[target] = discovered_target.model_dump()
 
         if not discovered_targets:
+            # If scout only found live hosts, still preserve them so the pipeline can continue.
             for host in discovered_hosts[:MAX_SCOUT_TARGETS]:
                 discovered_targets[host] = DiscoveredTarget(
                     ip_address=host,

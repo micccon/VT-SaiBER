@@ -211,9 +211,9 @@ class IntelligenceBrief(BaseModel):
 
 ---
 
-## Resident Agent (Post-Exploitation)
+## Resident Agent (Session-Backed Objective Worker)
 
-Resident handles post-exploitation for active sessions and is part of the current graph execution path.
+Resident owns the mission after a live session exists. It is not just a generic enumerator. It validates sessions, consumes the Supervisor's immediate objective, and uses the session to advance or complete that objective in bounded steps.
 
 ```python
 class SessionAudit(BaseModel):
@@ -227,12 +227,35 @@ class SessionAudit(BaseModel):
 
 ### Responsibilities
 
-* Internal network discovery
-* Privilege escalation analysis
-* Persistence engineering
-* Change logging and cleanup
+* Validate live sessions before acting
+* Consume `supervisor_expectations.specific_goal` as the immediate objective
+* Perform minimal read-only orientation needed for the objective
+* Execute one bounded session-side or attackbox-side step at a time
+* Report objective status as `completed`, `in_progress`, `blocked`, `needs_approval`, or `failed`
+* Enrich session records with validated context and evidence
 
----
+### Tool Reach
+
+Resident is deliberately narrower than Striker. Its working surface is:
+
+* `msf_list_sessions`
+* `msf_session_command`
+* `msf_run_post`
+* `msf_search_modules`
+* `msf_terminate_session`
+* `system_execute_command`
+
+`system_execute_command` is included only so Resident can finish host-side objectives that a live session alone cannot complete, such as bounded interface interaction or a precise validation step on the attackbox host.
+
+### Approval Model
+
+* Read-only `msf_session_command` triage is allowed automatically.
+* Any `system_execute_command` requires approval.
+* Mutating `msf_session_command` actions require approval.
+* Sensitive or state-changing `msf_run_post` actions require approval.
+* `msf_terminate_session` requires approval.
+
+--- 
 
 ## Chain of Command
 
@@ -240,5 +263,5 @@ class SessionAudit(BaseModel):
 2. Web Fuzzer finds the entry point
 3. Librarian retrieves exploit intelligence
 4. Striker gains initial access
-5. Resident performs post-exploitation on active sessions
-6. Supervisor decides next loop or mission end
+5. Resident uses the live session to complete the immediate mission objective
+6. Supervisor decides whether the objective is complete, needs human approval, or requires another loop
