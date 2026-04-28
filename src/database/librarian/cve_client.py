@@ -166,15 +166,25 @@ class CVEClient:
         """Try keyword variants until enough unique CVE evidence is found."""
 
         evidences_by_id: Dict[str, ResearchEvidence] = {}
+        last_error: Exception | None = None
         for keyword in keywords:
-            for evidence in await self._fetch_by_keyword(
-                keyword,
-                max_results=max_results,
-                kev_entries=kev_entries,
-            ):
+            try:
+                matches = await self._fetch_by_keyword(
+                    keyword,
+                    max_results=max_results,
+                    kev_entries=kev_entries,
+                )
+            except httpx.HTTPError as exc:
+                # Some NVD keyword variants are noisier than others. Keep trying the
+                # compact product/version windows before treating the lookup as failed.
+                last_error = exc
+                continue
+            for evidence in matches:
                 evidences_by_id.setdefault(evidence.identifier, evidence)
             if len(evidences_by_id) >= max_results:
                 break
+        if not evidences_by_id and last_error is not None:
+            raise last_error
         return sorted(
             evidences_by_id.values(),
             key=lambda item: float(item.score or 0.0),

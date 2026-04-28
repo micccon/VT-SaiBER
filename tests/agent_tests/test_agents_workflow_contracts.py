@@ -23,8 +23,6 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
-
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -36,7 +34,8 @@ from src.agents.resident import _extract_resident_updates, resident_node
 from src.agents.scout import ScoutAgent
 from src.agents.supervisor import SupervisorAgent, supervisor_node
 from src.config import get_runtime_config
-from src.state.models import ServiceInfo, SupervisorDecision
+from src.state.models import SupervisorDecision
+from src.utils.agent_runtime import make_tool_message
 
 _requires_api_key = pytest.mark.skipif(
     not os.getenv("OPENROUTER_API_KEY", "").strip(),
@@ -46,6 +45,10 @@ _requires_api_key = pytest.mark.skipif(
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _tool_message(name: str, content: Dict[str, Any], tool_call_id: str = "call-1") -> Dict[str, Any]:
+    return make_tool_message(name, tool_call_id, content)
 
 
 def _base_state() -> Dict[str, Any]:
@@ -87,33 +90,46 @@ def _base_state() -> Dict[str, Any]:
 def test_scout_scans_direct_host_scope(monkeypatch):
     agent = ScoutAgent()
     state = _base_state()
+    messages = [
+        _tool_message(
+            "recon_service_probe",
+            {
+                "status": "success",
+                "invocation": {"target": "192.168.1.10"},
+                "evidence": {
+                    "services": [
+                        {"port": 22, "protocol": "tcp", "service_name": "ssh", "version": "OpenSSH 9.0"}
+                    ]
+                },
+            },
+        )
+    ]
 
-    async def fake_discover_services(target):
-        assert target == "192.168.1.10"
-        return {22: ServiceInfo(port=22, service_name="ssh", version="OpenSSH 9.0")}
-
-    monkeypatch.setattr(agent, "_discover_services", fake_discover_services)
-    out = _run(agent.call_llm(state))
+    out = agent._extract_updates(messages, state)
 
     assert "192.168.1.10" in out["discovered_targets"]
     assert "192.168.1.0/24" not in out["discovered_targets"]
+    services = out["discovered_targets"]["192.168.1.10"]["services"]
+    service_22 = services.get("22") or services.get(22)
+    assert service_22["service_name"] == "ssh"
 
 
 def test_scout_discovers_hosts_from_cidr_scope(monkeypatch):
     agent = ScoutAgent()
     state = _base_state()
     state["target_scope"] = ["192.168.1.0/24"]
+    messages = [
+        _tool_message(
+            "recon_host_discovery",
+            {
+                "status": "success",
+                "invocation": {"targets": "192.168.1.0/24"},
+                "evidence": {"hosts": ["192.168.1.20", "192.168.1.30", "10.0.0.5"]},
+            },
+        )
+    ]
 
-    async def fake_discover_hosts(scope_entry):
-        assert scope_entry == "192.168.1.0/24"
-        return ["192.168.1.20", "192.168.1.30"]
-
-    async def fake_discover_services(target):
-        return {80: ServiceInfo(port=80, service_name="http", version=f"Apache for {target}")}
-
-    monkeypatch.setattr(agent, "_discover_hosts", fake_discover_hosts)
-    monkeypatch.setattr(agent, "_discover_services", fake_discover_services)
-    out = _run(agent.call_llm(state))
+    out = agent._extract_updates(messages, state)
 
     assert sorted(out["discovered_targets"].keys()) == ["192.168.1.20", "192.168.1.30"]
 
@@ -176,11 +192,19 @@ def test_supervisor_backtracks_after_failed_striker():
 
 
 def test_supervisor_terminal_success_shortcut():
-    """Active sessions + resident in log triggers end-state without an LLM call."""
+    """A completed resident objective triggers end-state without an LLM call."""
     agent = SupervisorAgent()
     state = _base_state()
     state["active_sessions"] = {"192.168.1.10": {"session_id": 7}}
-    state["agent_log"] = [{"agent": "resident", "action": "post_exploitation"}]
+    state["validations"] = [
+        {
+            "type": "resident_objective",
+            "status": "completed",
+            "objective_status": "completed",
+            "objective": "Validate shell access",
+            "session_id": 7,
+        }
+    ]
 
     out = _run(agent.call_llm(state))
 
@@ -213,7 +237,10 @@ def test_fuzzer_parses_gobuster_findings():
 /too/deep/path/here (Status: 200) [Size: 10]
 /missing (Status: 404) [Size: 10]"""
 
-    findings = agent._parse_gobuster_output(gobuster_raw, "http://example.com")
+    findings = agent._extract_updates(
+        [_tool_message("web_content_enum", {"status": "success", "output": gobuster_raw})],
+        "http://example.com",
+    )
 
     assert any(f["path"] == "/admin" for f in findings)
     assert any(f["path"] == "/api/v1/users" and f["is_api_endpoint"] for f in findings)
@@ -227,7 +254,10 @@ def test_fuzzer_parses_nikto_findings():
 + /server-status: Apache server-status page found
 + /config.php: Exposed configuration file"""
 
-    findings = agent._parse_nikto_output(nikto_raw, "http://example.com")
+    findings = agent._extract_updates(
+        [_tool_message("web_nikto_scan", {"status": "success", "output": nikto_raw})],
+        "http://example.com",
+    )
 
     assert any(f["path"] == "/config.php" for f in findings)
     assert any(f["path"] == "/server-status" for f in findings)
@@ -246,28 +276,37 @@ def test_resident_keeps_session_findings_separate():
     }
 
     messages = [
-        AIMessage(
-            content="tool calls",
-            tool_calls=[
-                {"id": "call-1", "name": "msf_session_command", "args": {"session_id": 1, "command": "whoami"}},
-                {"id": "call-2", "name": "msf_session_command", "args": {"session_id": 2, "command": "id"}},
-                {"id": "call-3", "name": "msf_run_post", "args": {"session_id": 2, "module_name": "post/linux/gather/enum_system"}},
-            ],
+        _tool_message(
+            "msf_list_sessions",
+            {"status": "success", "sessions": {"1": {"type": "shell"}, "2": {"type": "shell"}}},
+            "call-0",
         ),
-        ToolMessage(
-            tool_call_id="call-1",
-            name="msf_session_command",
-            content='{"status":"success","output":"alice\\n"}',
+        _tool_message(
+            "msf_session_command",
+            {
+                "status": "success",
+                "output": "alice\n",
+                "invocation": {"session_id": 1, "command": "whoami"},
+            },
+            "call-1",
         ),
-        ToolMessage(
-            tool_call_id="call-2",
-            name="msf_session_command",
-            content='{"status":"success","output":"uid=0(root) gid=0(root) groups=0(root)"}',
+        _tool_message(
+            "msf_session_command",
+            {
+                "status": "success",
+                "output": "uid=0(root) gid=0(root) groups=0(root)",
+                "invocation": {"session_id": 2, "command": "id"},
+            },
+            "call-2",
         ),
-        ToolMessage(
-            tool_call_id="call-3",
-            name="msf_run_post",
-            content='{"status":"success","module":"post/linux/gather/enum_system","options":{"SESSION":2}}',
+        _tool_message(
+            "msf_run_post",
+            {
+                "status": "success",
+                "module": "post/linux/gather/enum_system",
+                "invocation": {"module_name": "post/linux/gather/enum_system", "options": {"SESSION": 2}},
+            },
+            "call-3",
         ),
     ]
 
@@ -338,17 +377,15 @@ def test_striker_search_only_run_still_records_findings():
     }
     context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
     messages = [
-        ToolMessage(
-            tool_call_id="c1",
-            name="msf_search_modules",
-            content=json.dumps(
-                {
-                    "status": "success",
-                    "result": ["multi/http/werkzeug_debug_rce"],
-                    "invocation": {"search_term": "werkzeug"},
-                }
-            ),
-        ),
+        _tool_message(
+            "msf_search_modules",
+            {
+                "status": "success",
+                "result": ["multi/http/werkzeug_debug_rce"],
+                "invocation": {"search_term": "werkzeug"},
+            },
+            "c1",
+        )
     ]
 
     out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
@@ -369,20 +406,18 @@ def test_striker_aborted_execution_records_selected_module():
     }
     context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
     messages = [
-        ToolMessage(
-            tool_call_id="c1",
-            name="msf_run_exploit",
-            content=json.dumps(
-                {
-                    "status": "aborted",
-                    "message": "Execution blocked pending manual approval.",
-                    "invocation": {
-                        "module_name": "multi/http/werkzeug_debug_rce",
-                        "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
-                    },
-                }
-            ),
-        ),
+        _tool_message(
+            "msf_run_exploit",
+            {
+                "status": "aborted",
+                "message": "Execution blocked pending manual approval.",
+                "invocation": {
+                    "module_name": "multi/http/werkzeug_debug_rce",
+                    "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
+                },
+            },
+            "c1",
+        )
     ]
 
     out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
@@ -398,6 +433,7 @@ def test_striker_aborted_execution_records_selected_module():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live
 @_requires_api_key
 def test_supervisor_live_routes_to_scout_with_no_targets():
     """Real LLM: without any discovered targets, supervisor must send scout first."""
@@ -419,6 +455,7 @@ def test_supervisor_live_routes_to_scout_with_no_targets():
     print(f"[live] confidence: {out['supervisor_expectations'].get('confidence_score')}")
 
 
+@pytest.mark.live
 @_requires_api_key
 def test_librarian_live_produces_structured_brief():
     """Real LLM: librarian must return a populated research_cache and intelligence_findings."""
@@ -450,6 +487,7 @@ def test_librarian_live_produces_structured_brief():
     print(f"[live] citations           : {cache_entry.get('citations', [])}")
 
 
+@pytest.mark.live
 @_requires_api_key
 def test_librarian_live_llm_path_taken_when_api_key_present():
     """With a valid API key the librarian must use the LLM path, not the no-client fallback."""

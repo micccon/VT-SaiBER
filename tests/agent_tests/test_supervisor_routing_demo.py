@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -208,11 +210,19 @@ def test_supervisor_guardrail_backtracks_after_failed_striker():
 
 
 def test_supervisor_terminal_success_shortcut():
-    """With sessions + resident already run, supervisor shortcuts to end without LLM."""
+    """Completed resident objective shortcuts to end without LLM."""
     agent = SupervisorAgent()
     state = build_scenario_state("Gain access", TARGET_IP, "bare")
     state["active_sessions"] = {"192.168.1.10": {"session_id": 7}}
-    state["agent_log"] = [{"agent": "resident", "action": "post_exploitation"}]
+    state["validations"] = [
+        {
+            "type": "resident_objective",
+            "status": "completed",
+            "objective_status": "completed",
+            "objective": "Validate shell access",
+            "session_id": 7,
+        }
+    ]
 
     out = asyncio.run(agent.call_llm(state))
 
@@ -225,6 +235,7 @@ def test_supervisor_terminal_success_shortcut():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live
 def test_supervisor_live_routes_bare_state_to_scout():
     """Real LLM: with no targets discovered, supervisor must route to scout."""
     get_runtime_config.cache_clear()
@@ -247,6 +258,7 @@ def test_supervisor_live_routes_bare_state_to_scout():
     print(f"[live] confidence: {out['supervisor_expectations'].get('confidence_score')}")
 
 
+@pytest.mark.live
 def test_supervisor_live_never_routes_to_striker_before_librarian():
     """Real LLM: guardrail + LLM combined — striker must not be returned before librarian runs."""
     get_runtime_config.cache_clear()
@@ -268,6 +280,7 @@ def test_supervisor_live_never_routes_to_striker_before_librarian():
     print(f"[live] goal: {out.get('supervisor_expectations', {}).get('specific_goal')}")
 
 
+@pytest.mark.live
 def test_supervisor_live_session_state_returns_valid_response():
     """
     Real LLM: with an active session, supervisor must return a complete, valid response.
@@ -299,6 +312,7 @@ def test_supervisor_live_session_state_returns_valid_response():
     print(f"[live] confidence: {out['supervisor_expectations'].get('confidence_score')}")
 
 
+@pytest.mark.live
 def test_supervisor_live_full_routing_cycle():
     """Real LLM end-to-end: supervisor routes → real librarian runs → state is enriched."""
     get_runtime_config.cache_clear()

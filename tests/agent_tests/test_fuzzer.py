@@ -13,13 +13,19 @@ import asyncio
 import json
 import sys
 import traceback
+from types import SimpleNamespace
 
 sys.path.insert(0, "/app")
 
-import src.agents.fuzzer as fuzzer_mod
-from src.agents.fuzzer import FuzzerAgent, fuzzer_node
+import src.agents.base as base_mod
+from src.agents.fuzzer import (
+    FuzzerAgent,
+    MAX_RECURSION_DEPTH,
+    SOFT_404_STATUSES,
+    fuzzer_node,
+)
 from src.main import build_initial_state
-from langchain_core.tools import StructuredTool
+from src.utils.agent_parsers import parse_gobuster_output
 
 
 class Results:
@@ -50,6 +56,25 @@ class Results:
 
 
 results = Results()
+
+
+def _scan_policy():
+    return {
+        "methods": ["GET", "HEAD"],
+        "max_depth": MAX_RECURSION_DEPTH,
+        "request_throttle_ms": 200,
+        "soft_404_detection": True,
+    }
+
+
+def _parse_gobuster(raw, base_url):
+    return parse_gobuster_output(
+        raw,
+        base_url=base_url,
+        max_depth=MAX_RECURSION_DEPTH,
+        soft_404_statuses=SOFT_404_STATUSES,
+        scan_policy=_scan_policy(),
+    )
 
 
 class PatchContext:
@@ -166,7 +191,7 @@ def test_parse_gobuster_standard():
             "/health (Status: 200) [Size: 12]\n"
         )
     })
-    findings = agent._parse_gobuster_output(raw, "http://10.0.0.1:8000")
+    findings = _parse_gobuster(raw, "http://10.0.0.1:8000")
     if len(findings) != 4:
         results.add_fail("test_parse_standard", f"Expected 4 findings, got {len(findings)}")
         return
@@ -187,7 +212,7 @@ def test_parse_gobuster_standard():
 def test_parse_gobuster_empty():
     agent = FuzzerAgent()
     raw = json.dumps({"output": "No results found\n"})
-    findings = agent._parse_gobuster_output(raw, "http://10.0.0.1")
+    findings = _parse_gobuster(raw, "http://10.0.0.1")
     if findings:
         results.add_fail("test_parse_empty", f"Expected 0 findings, got {len(findings)}")
         return
@@ -199,7 +224,7 @@ def test_parse_gobuster_nested_output():
     raw = json.dumps({
         "result": {"output": "/secret (Status: 403) [Size: 0]\n"}
     })
-    findings = agent._parse_gobuster_output(raw, "http://10.0.0.1")
+    findings = _parse_gobuster(raw, "http://10.0.0.1")
     if len(findings) != 1:
         results.add_fail("test_parse_nested", f"Expected 1, got {len(findings)}")
         return
@@ -212,9 +237,9 @@ def test_parse_gobuster_nested_output():
 def test_parse_gobuster_raw_string():
     agent = FuzzerAgent()
     raw = "/backup (Status: 200) [Size: 9999]\n/test (Status: 404) [Size: 0]"
-    findings = agent._parse_gobuster_output(raw, "http://10.0.0.1")
-    if len(findings) != 2:
-        results.add_fail("test_parse_raw_string", f"Expected 2, got {len(findings)}")
+    findings = _parse_gobuster(raw, "http://10.0.0.1")
+    if len(findings) != 1:
+        results.add_fail("test_parse_raw_string", f"Expected 1 after soft-404 filtering, got {len(findings)}")
         return
     results.add_pass("test_parse_raw_string")
 
@@ -223,7 +248,7 @@ def test_parse_gobuster_max_100():
     agent = FuzzerAgent()
     lines = "\n".join(f"/path{i} (Status: 200) [Size: {i}]" for i in range(150))
     raw = json.dumps({"output": lines})
-    findings = agent._parse_gobuster_output(raw, "http://10.0.0.1")
+    findings = _parse_gobuster(raw, "http://10.0.0.1")
     if len(findings) > 100:
         results.add_fail("test_max_100", f"Should cap at 100, got {len(findings)}")
         return
@@ -269,14 +294,18 @@ async def test_fuzzer_no_targets():
 # TEST: MCP fallback
 # ═══════════════════════════════════════════════════════════════
 
-async def test_fuzzer_fallback_on_bridge_failure():
-    """Fuzzer should return fallback finding when MCP unavailable."""
+async def test_fuzzer_fallback_on_empty_tool_results():
+    """Fuzzer should return fallback finding when the tool loop yields no paths."""
     patches = PatchContext()
     try:
-        async def failing_bridge():
-            raise ConnectionError("MCP down")
+        def fake_runtime(**kwargs):
+            return SimpleNamespace(client=object(), model="test-model"), None
 
-        patches.set(fuzzer_mod, "get_mcp_bridge", failing_bridge)
+        async def empty_tool_worker(**kwargs):
+            return SimpleNamespace(messages=[])
+
+        patches.set(base_mod, "try_resolve_openrouter_runtime", fake_runtime)
+        patches.set(base_mod, "run_tool_worker", empty_tool_worker)
         state = build_initial_state("Test", ["10.0.0.1"], "fz-003")
         state["discovered_targets"] = {
             "10.0.0.1": {
@@ -300,29 +329,28 @@ async def test_fuzzer_fallback_on_bridge_failure():
 
 
 async def test_fuzzer_success_with_mock():
-    """Fuzzer with mocked gobuster produces correct findings."""
+    """Fuzzer with mocked shared tool worker produces correct findings."""
     patches = PatchContext()
     try:
-        async def fake_gobuster(**kwargs):
-            return json.dumps({
-                "output": "/admin (Status: 200) [Size: 100]\n/api (Status: 301) [Size: 0]\n"
-            })
+        def fake_runtime(**kwargs):
+            return SimpleNamespace(client=object(), model="test-model"), None
 
-        gobuster_tool = StructuredTool.from_function(
-            func=lambda **kw: "{}",
-            coroutine=fake_gobuster,
-            name="kali_gobuster_scan",
-            description="Mock gobuster",
-        )
+        async def mock_tool_worker(**kwargs):
+            return SimpleNamespace(
+                messages=[
+                    {
+                        "role": "tool",
+                        "name": "web_content_enum",
+                        "tool_call_id": "call-1",
+                        "content": {
+                            "output": "/admin (Status: 200) [Size: 100]\n/api (Status: 301) [Size: 0]\n"
+                        },
+                    }
+                ]
+            )
 
-        class MockBridge:
-            def get_tools_for_agent(self, allowed):
-                return [gobuster_tool]
-
-        async def mock_bridge():
-            return MockBridge()
-
-        patches.set(fuzzer_mod, "get_mcp_bridge", mock_bridge)
+        patches.set(base_mod, "try_resolve_openrouter_runtime", fake_runtime)
+        patches.set(base_mod, "run_tool_worker", mock_tool_worker)
         state = build_initial_state("Test", ["10.0.0.1"], "fz-004")
         state["discovered_targets"] = {
             "10.0.0.1": {
@@ -375,7 +403,7 @@ async def main():
     await test_fuzzer_no_targets()
 
     # Fallback/MCP
-    await test_fuzzer_fallback_on_bridge_failure()
+    await test_fuzzer_fallback_on_empty_tool_results()
     await test_fuzzer_success_with_mock()
 
     ok = results.summary()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tests.db_tests.live_helpers import (
-    make_librarian_with_empty_sources,
+    make_librarian_with_empty_kb_live_osint,
     _first_agent_log_findings,
     print_librarian_output,
     require_tavily,
@@ -35,8 +35,7 @@ async def test_live_osint_client_returns_results() -> None:
 async def test_live_librarian_uses_osint_pipeline() -> None:
     step("Running librarian with empty KB/CVE so the live OSINT path is forced")
     require_tavily()
-    agent = make_librarian_with_empty_sources()
-    agent._osint_client = None
+    agent = make_librarian_with_empty_kb_live_osint()
 
     out = await agent.call_llm(state("How do I use enum4linux against samba shares?"))
     cache_entry = next(iter(out["research_cache"].values()))

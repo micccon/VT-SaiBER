@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Optional
 
@@ -18,28 +19,45 @@ from src.state.models import IntelligenceBrief, RetrievalSourceTrace, RetrievalT
 from src.utils.parsers import extract_json_payload
 
 
+_DEFAULT_CLIENT = object()
+CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
+
+
 class LibrarianAgent(BaseAgent):
-    def __init__(self, rag_orchestrator: Optional[Any] = None):
+    def __init__(
+        self,
+        rag_orchestrator: Optional[Any] = None,
+        *,
+        osint_client: Any = _DEFAULT_CLIENT,
+        cve_client: Any = _DEFAULT_CLIENT,
+        llm_client: Any = _DEFAULT_CLIENT,
+    ):
         """Initialize shared runtime plus lazy retrieval helpers."""
 
         super().__init__("librarian", "Research and Intelligence Specialist")
         cfg = get_runtime_config()
-        self._init_runtime(
-            config=cfg,
-            model=cfg.openrouter_model,
-            api_key=cfg.openrouter_api_key,
-            base_url=cfg.openrouter_base_url,
-            timeout_seconds=cfg.supervisor_timeout_seconds,
-        )
-        self._llm = self._client
+        if llm_client is _DEFAULT_CLIENT:
+            self._init_runtime(
+                config=cfg,
+                model=cfg.openrouter_model,
+                api_key=cfg.openrouter_api_key,
+                base_url=cfg.openrouter_base_url,
+                timeout_seconds=cfg.supervisor_timeout_seconds,
+            )
+            self._llm = self._client
+        else:
+            self._client = llm_client
+            self._llm = llm_client
         self._rag_top_k = cfg.rag_kb_top_k
         self._findings_top_k = cfg.rag_findings_top_k
         self._min_docs = cfg.rag_min_docs
         self._min_score = cfg.rag_min_score
         self._telemetry_processor = TelemetryProcessor()
         self._rag = rag_orchestrator
-        self._osint_client: Any | None = None
-        self._cve_client: Any | None = None
+        self._osint_client: Any | None = None if osint_client is _DEFAULT_CLIENT else osint_client
+        self._cve_client: Any | None = None if cve_client is _DEFAULT_CLIENT else cve_client
+        self._osint_client_explicit = osint_client is not _DEFAULT_CLIENT
+        self._cve_client_explicit = cve_client is not _DEFAULT_CLIENT
 
     @property
     def system_prompt(self) -> str:
@@ -105,7 +123,7 @@ class LibrarianAgent(BaseAgent):
     def _get_osint_client(self) -> Any:
         """Lazily initialize OSINT search only when the retrieval pipeline needs it."""
 
-        if self._osint_client is not None:
+        if self._osint_client_explicit or self._osint_client is not None:
             return self._osint_client
         try:
             from src.database.librarian.osint_client import OSINTClient
@@ -118,7 +136,7 @@ class LibrarianAgent(BaseAgent):
     def _get_cve_client(self) -> Any:
         """Lazily initialize official CVE/KEV lookup only when version clues warrant it."""
 
-        if self._cve_client is not None:
+        if self._cve_client_explicit or self._cve_client is not None:
             return self._cve_client
         try:
             from src.database.librarian.cve_client import CVEClient
@@ -145,7 +163,13 @@ class LibrarianAgent(BaseAgent):
         # CVE lookup is skipped when internal evidence is already strong enough.
         cve_results: List[ResearchEvidence] = []
         if self._should_lookup_cves(query, query_inputs, kb_results, findings_results):
-            cve_results = await self._retrieve_cves(query, query_inputs, status)
+            cve_results = await self._retrieve_cves(
+                query,
+                query_inputs,
+                status,
+                kb_results,
+                findings_results,
+            )
         else:
             status.mark("cve", "skipped")
 
@@ -155,6 +179,18 @@ class LibrarianAgent(BaseAgent):
             osint_results = await self._retrieve_osint(query, status)
         else:
             status.mark("osint", "skipped")
+
+        if not cve_results and osint_results:
+            # OSINT often returns explicit CVE IDs in titles, snippets, or official URLs.
+            # Feed those back into the official CVE client for an exact structured lookup.
+            cve_results = await self._retrieve_cves_from_osint(
+                query,
+                query_inputs,
+                status,
+                kb_results,
+                findings_results,
+                osint_results,
+            )
 
         brief = await self._research_brief(
             query=query,
@@ -233,6 +269,8 @@ class LibrarianAgent(BaseAgent):
         query: str,
         query_inputs: Dict[str, Any],
         status: LibrarianDependencyStatus,
+        kb_results: List[Dict[str, Any]],
+        findings_results: List[Dict[str, Any]],
     ) -> List[ResearchEvidence]:
         """Query NVD and KEV using discovered service/version clues."""
 
@@ -258,19 +296,105 @@ class LibrarianAgent(BaseAgent):
             if clue:
                 service_clues.append(clue)
 
+        known_cves = self._known_cves_for_lookup(query_inputs, kb_results, findings_results)
+
         try:
             results = await client.search(
                 query=query,
                 service_clues=service_clues,
-                known_cves=query_inputs.get("cve_candidates", []) or [],
+                known_cves=known_cves,
                 max_results=5,
             )
             status.mark("cve", "ready" if results else "empty")
+            if results:
+                self._clear_degraded_reason(status, "cve_lookup_failed")
             return results
         except Exception:
             status.mark("cve", "unavailable")
             status.add_reason("cve_lookup_failed")
             return []
+
+    async def _retrieve_cves_from_osint(
+        self,
+        query: str,
+        query_inputs: Dict[str, Any],
+        status: LibrarianDependencyStatus,
+        kb_results: List[Dict[str, Any]],
+        findings_results: List[Dict[str, Any]],
+        osint_results: List[Dict[str, Any]],
+    ) -> List[ResearchEvidence]:
+        """Retry official CVE lookup using explicit CVE IDs discovered in OSINT evidence."""
+
+        osint_cves = self._extract_cves_from_evidence(osint_results)
+        if not osint_cves:
+            return []
+
+        enriched_inputs = dict(query_inputs)
+        enriched_inputs["cve_candidates"] = sorted(
+            {
+                *[
+                    str(candidate).strip().upper()
+                    for candidate in query_inputs.get("cve_candidates", []) or []
+                    if CVE_RE.fullmatch(str(candidate or "").strip())
+                ],
+                *osint_cves,
+            }
+        )
+        return await self._retrieve_cves(
+            query,
+            enriched_inputs,
+            status,
+            kb_results,
+            findings_results,
+        )
+
+    def _known_cves_for_lookup(
+        self,
+        query_inputs: Dict[str, Any],
+        kb_results: List[Dict[str, Any]],
+        findings_results: List[Dict[str, Any]],
+    ) -> List[str]:
+        """Collect explicit CVE IDs from state, KB snippets, findings, and metadata."""
+
+        found = {
+            str(candidate).strip().upper()
+            for candidate in query_inputs.get("cve_candidates", []) or []
+            if CVE_RE.fullmatch(str(candidate or "").strip())
+        }
+        found.update(self._extract_cves_from_evidence(kb_results, findings_results))
+        return sorted(found)
+
+    def _extract_cves_from_evidence(self, *collections: List[Any]) -> set[str]:
+        """Extract explicit CVE IDs from retrieved evidence without product-specific mappings."""
+
+        found: set[str] = set()
+
+        def visit(value: Any) -> None:
+            if value is None:
+                return
+            if isinstance(value, str):
+                found.update(match.upper() for match in CVE_RE.findall(value))
+                return
+            if isinstance(value, dict):
+                for nested in value.values():
+                    visit(nested)
+                return
+            if isinstance(value, list):
+                for nested in value:
+                    visit(nested)
+                return
+            if is_dataclass(value) or hasattr(value, "model_dump"):
+                visit(self._normalize_item(value))
+
+        for collection in collections:
+            visit(collection)
+        return found
+
+    @staticmethod
+    def _clear_degraded_reason(status: LibrarianDependencyStatus, reason: str) -> None:
+        """Remove a transient degraded reason after a later retry succeeds."""
+
+        status.degraded_reasons = [item for item in status.degraded_reasons if item != reason]
 
     async def _retrieve_osint(
         self,
@@ -473,6 +597,8 @@ class LibrarianAgent(BaseAgent):
             self._apply_confidence_guard(payload)
             return IntelligenceBrief.model_validate(payload)
         except Exception:
+            status.mark("llm", "degraded")
+            status.add_reason("llm_synthesis_failed")
             return self._fallback_brief(query, kb_results, findings_results, cve_results, osint_results, status)
 
     async def _run_synthesis(self, user_prompt: str) -> str:

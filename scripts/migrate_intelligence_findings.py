@@ -7,8 +7,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
+
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -139,7 +143,8 @@ def migrate() -> int:
 
 
 def main() -> int:
-    load_dotenv()
+    if load_dotenv is not None:
+        load_dotenv(ROOT / ".env")
     _resolve_db_host_for_local_run()
     updated = migrate()
     print(f"Normalized {updated} intelligence_brief finding rows.")

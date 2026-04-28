@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
-from langchain_core.tools import StructuredTool
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -36,12 +35,22 @@ if str(ROOT) not in sys.path:
 
 import src.agents.striker as striker_module
 from src.agents.fuzzer import FUZZER_ALLOWED_TOOLS, FuzzerAgent
-from src.agents.scout import ScoutAgent
 from src.database.manager import get_target_info
 from src.database.persistence import persist_state_update
-from src.database.rag.rag_engine import RAGOrchestrator
 from src.mcp.mcp_tool_bridge import get_mcp_bridge, reset_mcp_bridge
 from src.state.cyber_state import CyberState
+from src.utils.agent_parsers import (
+    dedupe_web_findings,
+    extract_tool_output_text,
+    parse_gobuster_output,
+    parse_nikto_output,
+    parse_nmap_output,
+    parse_service_records,
+)
+from src.utils.tools import RuntimeTool
+
+
+pytestmark = pytest.mark.live
 
 
 LIVE_TARGET = (
@@ -146,7 +155,7 @@ def _safe_json(value: Any) -> Any:
     return value
 
 
-def _wrap_tool_with_trace(tool: StructuredTool) -> StructuredTool:
+def _wrap_tool_with_trace(tool: RuntimeTool) -> RuntimeTool:
     async def traced_coroutine(**kwargs):
         call_id = len(TRACE_EVENTS) + 1
         event = {
@@ -159,12 +168,7 @@ def _wrap_tool_with_trace(tool: StructuredTool) -> StructuredTool:
         _trace("TOOL_START", {"id": call_id, "tool": tool.name, "args": kwargs})
         started = asyncio.get_running_loop().time()
         try:
-            if tool.coroutine is not None:
-                result = await tool.coroutine(**kwargs)
-            elif tool.func is not None:
-                result = tool.func(**kwargs)
-            else:
-                raise RuntimeError(f"Tool {tool.name} has no callable handler")
+            result = await tool.executor(**kwargs)
 
             elapsed = asyncio.get_running_loop().time() - started
             event["status"] = "ok"
@@ -198,12 +202,12 @@ def _wrap_tool_with_trace(tool: StructuredTool) -> StructuredTool:
             )
             raise
 
-    return StructuredTool(
+    return RuntimeTool(
         name=tool.name,
         description=tool.description,
-        args_schema=tool.args_schema,
-        func=tool.func,
-        coroutine=traced_coroutine,
+        input_schema=tool.input_schema,
+        executor=traced_coroutine,
+        defaults=tool.defaults,
     )
 
 
@@ -273,19 +277,18 @@ async def _scan_target_into_state(
     if nmap_tool is None:
         raise RuntimeError("Live attackbox recon_service_probe tool is unavailable")
 
-    raw_scan = await nmap_tool.coroutine(
+    raw_scan = await nmap_tool.executor(
         target=target,
         ports=LIVE_NMAP_PORTS,
         additional_args=LIVE_NMAP_EXTRA_ARGS,
     )
     _step("Finished attackbox service probe; parsing discovered services")
 
-    scout = ScoutAgent()
     parsed = json.loads(raw_scan) if isinstance(raw_scan, str) else raw_scan
     service_records = (((parsed or {}).get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
-    services = scout._parse_service_records(service_records) or scout._parse_nmap_output(raw_scan)
+    services = parse_service_records(service_records) or parse_nmap_output(raw_scan)
     if not services:
-        text = scout._extract_text_payload(raw_scan) or str(raw_scan)
+        text = extract_tool_output_text(raw_scan) or str(raw_scan)
         raise RuntimeError(f"No open services were parsed from attackbox service probe output for {target}.\n{text}")
 
     state = _base_state(target, mission_id)
@@ -300,7 +303,7 @@ async def _scan_target_into_state(
         }
     }
     _step(f"Built discovered_targets with ports: {state['discovered_targets'][target]['ports']}")
-    return state, scout._extract_text_payload(raw_scan) or str(raw_scan)
+    return state, extract_tool_output_text(raw_scan) or str(raw_scan)
 
 
 def _pick_web_base_url(discovered_targets: Dict[str, Dict[str, Any]]) -> Optional[str]:
@@ -329,37 +332,42 @@ async def _collect_web_findings(discovered_targets: Dict[str, Dict[str, Any]]) -
     findings: List[Dict[str, Any]] = []
     raw: Dict[str, str] = {}
 
-    gobuster_tool = tools.get("gobuster_scan")
+    gobuster_tool = tools.get("web_content_enum")
     if gobuster_tool is not None:
-        _step("Calling Kali gobuster_scan")
-        gobuster_raw = await gobuster_tool.coroutine(
+        _step("Calling attackbox web_content_enum")
+        gobuster_raw = await gobuster_tool.executor(
             url=base_url,
-            mode="dir",
             wordlist="/usr/share/wordlists/dirb/common.txt",
             additional_args="--delay 200ms",
         )
-        raw["gobuster_scan"] = fuzzer._extract_text_payload(gobuster_raw)
-        findings.extend(fuzzer._parse_gobuster_output(gobuster_raw, base_url))
+        raw["web_content_enum"] = extract_tool_output_text(gobuster_raw)
+        findings.extend(
+            parse_gobuster_output(
+                gobuster_raw,
+                base_url=base_url,
+                max_depth=3,
+                soft_404_statuses={404},
+                scan_policy=fuzzer._scan_policy(),
+            )
+        )
 
-    nikto_tool = tools.get("nikto_scan")
+    nikto_tool = tools.get("web_nikto_scan")
     if nikto_tool is not None:
-        _step("Calling Kali nikto_scan")
-        nikto_raw = await nikto_tool.coroutine(target=base_url, additional_args="")
-        raw["nikto_scan"] = fuzzer._extract_text_payload(nikto_raw)
-        findings.extend(fuzzer._parse_nikto_output(nikto_raw, base_url))
-
-    deduped: List[Dict[str, Any]] = []
-    seen = set()
-    for finding in findings:
-        key = (finding.get("path"), finding.get("status_code"), finding.get("rationale"))
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(finding)
+        _step("Calling attackbox web_nikto_scan")
+        nikto_raw = await nikto_tool.executor(target=base_url, additional_args="")
+        raw["web_nikto_scan"] = extract_tool_output_text(nikto_raw)
+        findings.extend(
+            parse_nikto_output(
+                nikto_raw,
+                base_url=base_url,
+                max_depth=3,
+                scan_policy=fuzzer._scan_policy(),
+            )
+        )
 
     return {
         "base_url": base_url,
-        "findings": deduped[:100],
+        "findings": dedupe_web_findings(findings)[:100],
         "raw": raw,
     }
 
@@ -408,6 +416,8 @@ def _summarize_rag(results: Dict[str, Any]) -> Dict[str, str]:
 
 async def _query_research(mission_id: str, target: str, query: str) -> Dict[str, Any]:
     _step(f"Running RAG lookup for query: {query[:120]}")
+    from src.database.rag.rag_engine import RAGOrchestrator
+
     rag = RAGOrchestrator()
     return await rag.retrieve(
         query=query,
@@ -440,7 +450,7 @@ async def _execute_live_flow(
     mission_id: str,
 ) -> tuple[CyberState, str, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     if not await _live_prereqs_ready():
-        raise RuntimeError("Live Kali/MSF MCP bridge or required tools are unavailable")
+        raise RuntimeError("Live attackbox MCP bridge or required tools are unavailable")
 
     bridge, original_get_tools = await _enable_tool_tracing()
 
@@ -460,10 +470,10 @@ async def _execute_live_flow(
 
         web_result = await _collect_web_findings(state["discovered_targets"])
         state["web_findings"] = web_result["findings"]
-        if web_result["raw"].get("gobuster_scan"):
-            print(f"[TRACE] GOBUSTER_RAW:\n{web_result['raw']['gobuster_scan'][:12000]}", flush=True)
-        if web_result["raw"].get("nikto_scan"):
-            print(f"[TRACE] NIKTO_RAW:\n{web_result['raw']['nikto_scan'][:12000]}", flush=True)
+        if web_result["raw"].get("web_content_enum"):
+            print(f"[TRACE] WEB_CONTENT_ENUM_RAW:\n{web_result['raw']['web_content_enum'][:12000]}", flush=True)
+        if web_result["raw"].get("web_nikto_scan"):
+            print(f"[TRACE] WEB_NIKTO_RAW:\n{web_result['raw']['web_nikto_scan'][:12000]}", flush=True)
         if state["web_findings"]:
             _step(f"Persisting {len(state['web_findings'])} web findings into the operational database")
             persist_state_update(

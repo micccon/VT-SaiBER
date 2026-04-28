@@ -19,6 +19,7 @@ import pytest
 sys.path.insert(0, "/app")
 
 from src.agents.librarian import LibrarianAgent, librarian_node
+from src.database.librarian.models import ResearchEvidence
 from src.main import build_initial_state
 from src.state.models import IntelligenceBrief
 
@@ -58,6 +59,64 @@ def _base_state(**overrides):
     state = build_initial_state("Exploit target via SSH", ["10.0.0.0/24"], "test-lib-001")
     state.update(overrides)
     return state
+
+
+def _seed_cached_brief(state):
+    agent = LibrarianAgent()
+    query = agent._build_research_query(state)
+    cache_key = agent._cache_key(query)
+    state["research_cache"] = {
+        cache_key: IntelligenceBrief(
+            summary=f"Cached intelligence brief for: {query}",
+            technical_params={"exploit_module": "auxiliary/scanner/ssh/ssh_login"},
+            is_osint_derived=False,
+            confidence=0.72,
+            citations=["local-test-cache"],
+            conflicting_sources=None,
+        ).model_dump()
+    }
+    return state
+
+
+class EmptyRag:
+    async def retrieve(self, query: str, source: str = "both", top_k: int = 5, filters=None):
+        return {"kb_results": [], "findings_results": [], "combined": []}
+
+
+class OSINTWithCVE:
+    def is_configured(self):
+        return True
+
+    async def search(self, query: str, *, max_results=None):
+        return [
+            {
+                "title": "NVD record for CVE-2011-2523",
+                "url": "https://nvd.nist.gov/vuln/detail/CVE-2011-2523",
+                "snippet": "Official reference mentions CVE-2011-2523 for vsftpd 2.3.4.",
+                "score": 0.9,
+            }
+        ]
+
+
+class FailingBroadThenExactCVE:
+    def __init__(self):
+        self.known_cve_calls = []
+
+    async def search(self, *, query: str, service_clues=None, known_cves=None, max_results: int = 5):
+        self.known_cve_calls.append(list(known_cves or []))
+        if "CVE-2011-2523" not in set(known_cves or []):
+            raise RuntimeError("broad keyword lookup failed")
+        return [
+            ResearchEvidence(
+                source_type="cve",
+                identifier="CVE-2011-2523",
+                title="CVE-2011-2523",
+                reference="https://nvd.nist.gov/vuln/detail/CVE-2011-2523",
+                snippet="vsftpd 2.3.4 backdoor command execution vulnerability.",
+                score=0.88,
+                metadata={"cve": "CVE-2011-2523", "severity": "CRITICAL"},
+            )
+        ]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -195,10 +254,12 @@ async def test_fallback_brief_no_client():
 
 async def test_librarian_node_output_structure():
     """Librarian node should produce research_cache and intelligence_findings."""
-    state = _base_state(
-        discovered_targets={
-            "10.0.0.1": {"services": {"22": {"service_name": "ssh", "version": "OpenSSH 8.2"}}}
-        }
+    state = _seed_cached_brief(
+        _base_state(
+            discovered_targets={
+                "10.0.0.1": {"services": {"22": {"service_name": "ssh", "version": "OpenSSH 8.2"}}}
+            }
+        )
     )
     out = await librarian_node(state)
 
@@ -231,7 +292,7 @@ async def test_librarian_node_output_structure():
 
 async def test_librarian_cache_key_in_output():
     """Research cache should use a hash-based key."""
-    state = _base_state()
+    state = _seed_cached_brief(_base_state())
     out = await librarian_node(state)
     cache = out.get("research_cache", {})
     keys = list(cache.keys())
@@ -245,24 +306,58 @@ async def test_librarian_cache_key_in_output():
 
 
 async def test_librarian_osint_finding_structure():
-    """Intelligence findings should have required fields."""
-    state = _base_state()
+    """Intelligence findings should use the current flat brief-derived shape."""
+    state = _seed_cached_brief(_base_state())
     out = await librarian_node(state)
     osint = out.get("intelligence_findings", [])
     if not osint:
         results.add_fail("test_osint_structure", "No osint findings")
         return
     finding = osint[0]
-    required = ["source", "description", "data"]
+    required = ["source", "description", "confidence", "source_types", "citations", "technical_params"]
     missing = [k for k in required if k not in finding]
     if missing:
         results.add_fail("test_osint_structure", f"Missing fields: {missing}")
         return
-    data = finding.get("data", {})
-    if "confidence" not in data:
-        results.add_fail("test_osint_structure", f"Missing confidence in data: {data.keys()}")
+    if finding.get("source") != "librarian":
+        results.add_fail("test_osint_structure", f"Unexpected source: {finding.get('source')}")
         return
     results.add_pass("test_osint_structure")
+
+
+async def test_librarian_retries_cve_lookup_from_osint_cve_ids():
+    """Explicit CVEs found in OSINT should be verified through the CVE client."""
+
+    cve_client = FailingBroadThenExactCVE()
+    agent = LibrarianAgent(
+        rag_orchestrator=EmptyRag(),
+        osint_client=OSINTWithCVE(),
+        cve_client=cve_client,
+        llm_client=None,
+    )
+    state = _base_state(
+        mission_goal="Research exploit path for vsftpd 2.3.4",
+        discovered_targets={
+            "10.0.0.1": {
+                "services": {
+                    "21": {
+                        "service_name": "ftp",
+                        "version": "vsftpd 2.3.4",
+                        "banner": "vsFTPd 2.3.4",
+                    }
+                }
+            }
+        },
+    )
+
+    out = await agent.call_llm(state)
+    cache_entry = next(iter(out["research_cache"].values()))
+
+    assert "osint" in cache_entry["source_types"]
+    assert "cve" in cache_entry["source_types"]
+    assert "cve_lookup_failed" not in cache_entry["degraded_reasons"]
+    assert cve_client.known_cve_calls[0] == []
+    assert "CVE-2011-2523" in cve_client.known_cve_calls[-1]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -327,6 +422,7 @@ async def main():
     await test_librarian_node_output_structure()
     await test_librarian_cache_key_in_output()
     await test_librarian_osint_finding_structure()
+    await test_librarian_retries_cve_lookup_from_osint_cve_ids()
 
     # Models
     test_intelligence_brief_model()

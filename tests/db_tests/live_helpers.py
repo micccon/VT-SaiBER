@@ -127,32 +127,40 @@ async def run_live_kb_retrieval(query: str, embedding_client: EmbeddingClient, t
 
 
 def make_librarian_with_empty_sources() -> LibrarianAgent:
-    agent = LibrarianAgent(rag_orchestrator=EmptyRag())
-    agent._client = None
-    agent._llm = None
-    agent._osint_client = EmptyOSINTClient()
-    agent._cve_client = EmptyCVEClient()
-    return agent
+    return LibrarianAgent(
+        rag_orchestrator=EmptyRag(),
+        osint_client=EmptyOSINTClient(),
+        cve_client=EmptyCVEClient(),
+        llm_client=None,
+    )
 
 
 def make_librarian_with_empty_sources_live_llm() -> LibrarianAgent:
-    agent = LibrarianAgent(rag_orchestrator=EmptyRag())
-    agent._osint_client = EmptyOSINTClient()
-    agent._cve_client = EmptyCVEClient()
-    return agent
+    return LibrarianAgent(
+        rag_orchestrator=EmptyRag(),
+        osint_client=EmptyOSINTClient(),
+        cve_client=EmptyCVEClient(),
+    )
 
 
 def make_librarian_with_empty_kb_and_osint() -> LibrarianAgent:
-    agent = LibrarianAgent(rag_orchestrator=EmptyRag())
-    agent._client = None
-    agent._llm = None
-    agent._osint_client = EmptyOSINTClient()
-    return agent
+    return LibrarianAgent(
+        rag_orchestrator=EmptyRag(),
+        osint_client=EmptyOSINTClient(),
+        llm_client=None,
+    )
 
 
 def make_librarian_with_empty_kb_live_cve_osint() -> LibrarianAgent:
-    agent = LibrarianAgent(rag_orchestrator=EmptyRag())
-    return agent
+    return LibrarianAgent(rag_orchestrator=EmptyRag())
+
+
+def make_librarian_with_empty_kb_live_osint() -> LibrarianAgent:
+    return LibrarianAgent(
+        rag_orchestrator=EmptyRag(),
+        cve_client=EmptyCVEClient(),
+        llm_client=None,
+    )
 
 
 def make_librarian_with_real_kb_live_external() -> LibrarianAgent:
@@ -160,12 +168,12 @@ def make_librarian_with_real_kb_live_external() -> LibrarianAgent:
 
 
 def make_librarian_with_real_kb_empty_external() -> LibrarianAgent:
-    agent = LibrarianAgent(rag_orchestrator=RAGOrchestrator())
-    agent._client = None
-    agent._llm = None
-    agent._osint_client = EmptyOSINTClient()
-    agent._cve_client = EmptyCVEClient()
-    return agent
+    return LibrarianAgent(
+        rag_orchestrator=RAGOrchestrator(),
+        osint_client=EmptyOSINTClient(),
+        cve_client=EmptyCVEClient(),
+        llm_client=None,
+    )
 
 
 __all__ = [
@@ -179,6 +187,7 @@ __all__ = [
     "make_librarian_with_empty_sources_live_llm",
     "make_librarian_with_empty_kb_and_osint",
     "make_librarian_with_empty_kb_live_cve_osint",
+    "make_librarian_with_empty_kb_live_osint",
     "make_librarian_with_empty_sources",
     "make_librarian_with_real_kb_live_external",
     "make_librarian_with_real_kb_empty_external",

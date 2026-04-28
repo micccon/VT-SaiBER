@@ -16,6 +16,7 @@ Run inside the agents container:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -28,8 +29,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import src.agents.striker as em
-from src.agents.scout import ScoutAgent
 from src.mcp.mcp_tool_bridge import get_mcp_bridge, reset_mcp_bridge
+from src.utils.agent_parsers import extract_tool_output_text, parse_nmap_output, parse_service_records
+
+
+pytestmark = pytest.mark.live
 
 
 LIVE_TARGET = (
@@ -120,18 +124,17 @@ async def _scan_target_into_state(target: str) -> tuple[Dict[str, Any], str]:
     if nmap_tool is None:
         raise RuntimeError("Live attackbox recon_service_probe tool is unavailable")
 
-    raw_scan = await nmap_tool.coroutine(
+    raw_scan = await nmap_tool.executor(
         target=target,
         ports=LIVE_NMAP_PORTS,
         additional_args=LIVE_NMAP_EXTRA_ARGS,
     )
 
-    scout = ScoutAgent()
     parsed = json.loads(raw_scan) if isinstance(raw_scan, str) else raw_scan
     service_records = (((parsed or {}).get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
-    services = scout._parse_service_records(service_records) or scout._parse_nmap_output(raw_scan)
+    services = parse_service_records(service_records) or parse_nmap_output(raw_scan)
     if not services:
-        text = scout._extract_text_payload(raw_scan) or str(raw_scan)
+        text = extract_tool_output_text(raw_scan) or str(raw_scan)
         raise RuntimeError(
             f"No open services were parsed from attackbox service probe output for {target}. Raw output:\n{text}"
         )
@@ -154,7 +157,7 @@ async def _scan_target_into_state(target: str) -> tuple[Dict[str, Any], str]:
             state["intelligence_findings"] = [{"cve": "CVE-2011-2523"}]
             break
 
-    return state, scout._extract_text_payload(raw_scan) or str(raw_scan)
+    return state, extract_tool_output_text(raw_scan) or str(raw_scan)
 
 
 def test_striker_live_scans_into_cyberstate_then_runs_worker(monkeypatch):
