@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
+from src.skills import match_skills, render_skill_matches
 from src.state.cyber_state import CyberState
 from src.utils.agent_runtime import (
     collect_reasoning_chunks,
@@ -192,11 +193,14 @@ def is_invalid_callback_host(value: str) -> bool:
 def build_striker_context(state: CyberState) -> str:
     """Build the full exploitation context block shown to striker."""
 
+    skill_matches = match_skills(state, "striker", limit=2)
+    skills_block = render_skill_matches(skill_matches)
     return (
         f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
         f"TARGET INTELLIGENCE:\n{_format_targets(state)}\n\n"
         f"RELEVANT WEB FINDINGS:\n{_format_web_findings(state)}\n\n"
-        f"RESEARCH / OSINT HINTS:\n{_format_research_hints(state)}\n\n"
+        f"RESEARCH / INTELLIGENCE HINTS:\n{_format_research_hints(state)}\n\n"
+        f"{'RELEVANT SKILLS:\n' + skills_block + '\n\n' if skills_block else ''}"
         f"PRIOR EXPLOIT ATTEMPTS:\n{_format_prior_attempts(state)}\n\n"
         f"CANDIDATE PATHS:\n{_format_candidates(_rank_candidates(state))}\n"
     )
@@ -239,7 +243,7 @@ def _format_web_findings(state: CyberState) -> str:
 
 
 def _format_research_hints(state: CyberState) -> str:
-    """Render cached research and OSINT hints into compact prompt text."""
+    """Render cached research and intelligence hints into compact prompt text."""
 
     hints: List[str] = []
     for key, value in list((state.get("research_cache", {}) or {}).items())[:6]:
@@ -250,7 +254,8 @@ def _format_research_hints(state: CyberState) -> str:
         description = str(finding.get("description", "") or "")
         cve = str(finding.get("cve", "") or "")
         if description or cve:
-            hints.append(f"{'- OSINT [' + cve + ']' if cve else '- OSINT'}: {description}".rstrip())
+            label = "OSINT" if finding.get("is_osint_derived") and finding.get("source_types") == ["osint"] else "Intel"
+            hints.append(f"{'- ' + label + ' [' + cve + ']' if cve else '- ' + label}: {description}".rstrip())
     return "\n".join(hints) if hints else "- none"
 
 
@@ -281,7 +286,7 @@ def _rank_candidates(state: CyberState) -> List[Dict[str, Any]]:
     prior_attempts = state.get("exploited_services", []) or []
     candidates: List[Dict[str, Any]] = []
 
-    # Candidate scoring is intentionally simple: service/version evidence plus research/OSINT hints.
+    # Candidate scoring is intentionally simple: service/version evidence plus research/intelligence hints.
     for target, target_data in discovered_targets.items():
         for service in parse_services(target_data):
             intel = _collect_service_intel(research_cache, intelligence_findings, service["name"], service["version"].lower())
@@ -289,12 +294,12 @@ def _rank_candidates(state: CyberState) -> List[Dict[str, Any]]:
                 continue
             search_terms = [service["name"], service["version"].lower(), *intel["cves"]]
             score = (3 if service["version"] else 0) + (2 if intel["has_research"] else 0) + (2 if intel["has_version_research"] else 0)
-            score += (2 if intel["has_osint"] else 0) + (2 if intel["has_version_osint"] else 0)
+            score += (2 if intel["has_intelligence"] else 0) + (2 if intel["has_version_intelligence"] else 0)
             reasons = ["service version identified"] if service["version"] else []
             if intel["has_research"]:
                 reasons.append("matching research hint found")
-            if intel["has_osint"]:
-                reasons.append("matching OSINT finding found")
+            if intel["has_intelligence"]:
+                reasons.append("matching intelligence finding found")
             if service["name"].startswith("http") and any(isinstance(item, dict) and (item.get("is_interesting") or item.get("status_code") in {200, 301, 302, 403}) for item in web_findings):
                 score += 2
                 reasons.append("interesting web findings present")
@@ -337,10 +342,10 @@ def _collect_service_intel(
     service_name: str,
     version: str,
 ) -> Dict[str, Any]:
-    """Collect research and OSINT indicators that strengthen a service-specific path."""
+    """Collect research and intelligence indicators that strengthen a service-specific path."""
 
     indicators = {"metasploit", "msf", "exploit/"}
-    has_research = has_version_research = has_osint = has_version_osint = suggests_metasploit = False
+    has_research = has_version_research = has_intelligence = has_version_intelligence = suggests_metasploit = False
     cves: List[str] = []
     for key, value in research_cache.items():
         text = f"{key} {value}".lower()
@@ -354,8 +359,8 @@ def _collect_service_intel(
         text = json.dumps(item, default=str).lower()
         if not ((service_name and service_name in text) or (version and version in text)):
             continue
-        has_osint = has_osint or (service_name in text if service_name else False)
-        has_version_osint = has_version_osint or (version in text if version else False)
+        has_intelligence = has_intelligence or (service_name in text if service_name else False)
+        has_version_intelligence = has_version_intelligence or (version in text if version else False)
         if (isinstance(item.get("data"), dict) and item.get("data", {}).get("msf_module")) or any(indicator in text for indicator in indicators):
             suggests_metasploit = True
         cve = str(item.get("cve", "")).strip().lower()
@@ -364,8 +369,8 @@ def _collect_service_intel(
     return {
         "has_research": has_research,
         "has_version_research": has_version_research,
-        "has_osint": has_osint,
-        "has_version_osint": has_version_osint,
+        "has_intelligence": has_intelligence,
+        "has_version_intelligence": has_version_intelligence,
         "suggests_metasploit": suggests_metasploit,
         "cves": dedupe_terms(cves)[:2],
     }
@@ -553,6 +558,7 @@ def extract_striker_updates(
     state: CyberState,
     context: str,
     *,
+    matched_skill_names: List[str] | None,
     current_agent: str,
     base_update: dict[str, Any],
     log_action_payload: dict[str, Any],
@@ -655,6 +661,8 @@ def extract_striker_updates(
         "search_terms": dedupe_terms(search_terms),
         "matched_terms": dedupe_terms(matched_terms),
     }
+    if matched_skill_names:
+        findings["matched_skills"] = dedupe_terms(matched_skill_names)
     if last_execution:
         findings.update(last_execution)
         if selected_module:
@@ -724,7 +732,7 @@ class StrikerAgent(BaseAgent):
         self.max_attempts = MAX_EXPLOIT_ATTEMPTS
         self._init_runtime(
             config=config,
-            model=config.supervisor_model,
+            model=config.openrouter_model,
             api_key=config.openrouter_api_key,
             base_url=config.openrouter_base_url,
             timeout_seconds=config.supervisor_timeout_seconds,
@@ -787,10 +795,12 @@ Finish with a concise summary of what was attempted, why each path was chosen, a
     def _extract_updates(self, messages: List[Dict[str, Any]], state: CyberState, context: str) -> Dict[str, Any]:
         """Delegate to the shared striker result extractor with standard logging fields."""
 
+        matched_skill_names = [match.skill.relative_path for match in match_skills(state, self.name, limit=2)]
         return extract_striker_updates(
             messages,
             state,
             context,
+            matched_skill_names=matched_skill_names,
             current_agent=self.name,
             base_update=self._agent_update(state),
             log_action_payload=self.log_action(

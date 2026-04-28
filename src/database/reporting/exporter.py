@@ -9,15 +9,12 @@ from typing import Any, Dict, Iterable, List
 from dotenv import load_dotenv
 
 from src.config import get_runtime_config
-from src.database.manager import (
-    ensure_runtime_indexes,
-    get_agent_logs_by_mission,
-    get_attack_chain_by_mission,
-    get_findings_by_mission,
-    get_services_by_mission,
-    get_sessions_by_mission,
-    get_targets_by_mission,
-)
+from src.database.activity_repository import get_agent_logs_by_mission
+from src.database.attack_chain_repository import get_attack_chain_by_mission
+from src.database.connection import ensure_runtime_indexes
+from src.database.findings_store import get_findings_by_mission
+from src.database.sessions_repository import get_sessions_by_mission
+from src.database.targets_repository import get_services_by_mission, get_targets_by_mission
 from .attack_graph import (
     build_attack_graph_data,
     maybe_render_svg,
@@ -45,6 +42,9 @@ def export_mission_bundle(mission_id: str, output_dir: str) -> Dict[str, str]:
         "targets_count": len(targets),
         "services_count": len(services),
         "findings_count": len(findings),
+        "intelligence_findings_count": sum(
+            1 for item in findings if str(item.get("finding_type") or "") == "intelligence_brief"
+        ),
         "sessions_count": len(sessions),
         "open_sessions_count": sum(1 for item in sessions if item.get("closed_at") is None),
         "agent_log_count": len(agent_logs),
@@ -143,6 +143,7 @@ def _build_markdown_report(snapshot: Dict[str, Any]) -> str:
         f"- Targets: {summary['targets_count']}",
         f"- Services: {summary['services_count']}",
         f"- Findings: {summary['findings_count']}",
+        f"- Intelligence briefs: {summary['intelligence_findings_count']}",
         f"- Sessions: {summary['sessions_count']} ({summary['open_sessions_count']} open)",
         f"- Attack chain steps: {summary['attack_chain_steps']}",
         "",
@@ -151,10 +152,7 @@ def _build_markdown_report(snapshot: Dict[str, Any]) -> str:
 
     if findings:
         for finding in findings[:20]:
-            lines.append(
-                f"- [{finding.get('severity', 'info')}] {finding.get('title', 'finding')} "
-                f"({finding.get('agent_name', 'agent')})"
-            )
+            lines.append(_format_markdown_finding(finding))
     else:
         lines.append("- None")
 
@@ -192,9 +190,18 @@ def _build_markdown_report(snapshot: Dict[str, Any]) -> str:
 def _build_html_report(snapshot: Dict[str, Any]) -> str:
     summary = snapshot["summary"]
     findings_rows = "".join(
-        f"<tr><td>{finding.get('severity', '')}</td><td>{finding.get('agent_name', '')}</td><td>{finding.get('title', '')}</td></tr>"
+        (
+            "<tr>"
+            f"<td>{finding.get('severity', '')}</td>"
+            f"<td>{finding.get('agent_name', '')}</td>"
+            f"<td>{finding.get('title', '')}</td>"
+            f"<td>{_html_escape(_finding_cve(finding))}</td>"
+            f"<td>{_html_escape(', '.join(_finding_provenance(finding)))}</td>"
+            f"<td>{_html_escape(_finding_confidence(finding))}</td>"
+            "</tr>"
+        )
         for finding in snapshot["findings"][:50]
-    ) or "<tr><td colspan='3'>No findings</td></tr>"
+    ) or "<tr><td colspan='6'>No findings</td></tr>"
     session_rows = "".join(
         f"<tr><td>{session.get('session_id', '')}</td><td>{session.get('target_ip', '')}</td><td>{session.get('exploit_used', '')}</td></tr>"
         for session in snapshot["sessions"]
@@ -216,15 +223,16 @@ def _build_html_report(snapshot: Dict[str, Any]) -> str:
 </head>
 <body>
   <h1>Mission Report: {summary['mission_id']}</h1>
-  <div class="summary">
-    <div class="card"><strong>Targets</strong><br>{summary['targets_count']}</div>
-    <div class="card"><strong>Services</strong><br>{summary['services_count']}</div>
-    <div class="card"><strong>Findings</strong><br>{summary['findings_count']}</div>
-    <div class="card"><strong>Sessions</strong><br>{summary['sessions_count']}</div>
-  </div>
+    <div class="summary">
+      <div class="card"><strong>Targets</strong><br>{summary['targets_count']}</div>
+      <div class="card"><strong>Services</strong><br>{summary['services_count']}</div>
+      <div class="card"><strong>Findings</strong><br>{summary['findings_count']}</div>
+      <div class="card"><strong>Intel Briefs</strong><br>{summary['intelligence_findings_count']}</div>
+      <div class="card"><strong>Sessions</strong><br>{summary['sessions_count']}</div>
+    </div>
   <h2>Findings</h2>
   <table>
-    <thead><tr><th>Severity</th><th>Agent</th><th>Title</th></tr></thead>
+    <thead><tr><th>Severity</th><th>Agent</th><th>Title</th><th>CVE</th><th>Provenance</th><th>Confidence</th></tr></thead>
     <tbody>{findings_rows}</tbody>
   </table>
   <h2>Sessions</h2>
@@ -235,6 +243,71 @@ def _build_html_report(snapshot: Dict[str, Any]) -> str:
 </body>
 </html>
 """
+
+
+def _finding_data(finding: Dict[str, Any]) -> Dict[str, Any]:
+    data = finding.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _finding_cve(finding: Dict[str, Any]) -> str:
+    data = _finding_data(finding)
+    technical_params = data.get("technical_params", {}) if isinstance(data.get("technical_params"), dict) else {}
+    return str(data.get("cve") or technical_params.get("cve") or "").strip()
+
+
+def _finding_provenance(finding: Dict[str, Any]) -> List[str]:
+    data = _finding_data(finding)
+    source_types = data.get("source_types")
+    if isinstance(source_types, list):
+        return [str(item) for item in source_types if str(item).strip()]
+    return []
+
+
+def _finding_confidence(finding: Dict[str, Any]) -> str:
+    data = _finding_data(finding)
+    confidence = data.get("confidence")
+    try:
+        return f"{float(confidence):.2f}" if confidence is not None else ""
+    except (TypeError, ValueError):
+        return ""
+
+
+def _format_markdown_finding(finding: Dict[str, Any]) -> str:
+    severity = finding.get("severity", "info")
+    title = finding.get("title", "finding")
+    agent = finding.get("agent_name", "agent")
+    details: List[str] = []
+
+    cve = _finding_cve(finding)
+    if cve:
+        details.append(f"CVE {cve}")
+
+    provenance = _finding_provenance(finding)
+    if provenance:
+        details.append("source=" + "/".join(provenance))
+
+    confidence = _finding_confidence(finding)
+    if confidence:
+        details.append(f"confidence={confidence}")
+
+    data = _finding_data(finding)
+    degraded = data.get("degraded_reasons")
+    if isinstance(degraded, list) and degraded:
+        details.append("degraded=" + "; ".join(str(item) for item in degraded[:2]))
+
+    suffix = f" | {' | '.join(details)}" if details else ""
+    return f"- [{severity}] {title} ({agent}){suffix}"
+
+
+def _html_escape(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -13,7 +13,10 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any, Callable
 
-import pypdf
+try:
+    import pypdf
+except Exception:
+    pypdf = None
 
 from .embedding import EmbeddingClient
 from .models import Chunk, IngestionResult, SourceFileRecord
@@ -144,12 +147,21 @@ class IndexingPipeline:
             deleted_rows += delete_kb_by_source_path(source_path)
 
         changed_records: List[SourceFileRecord] = []
+        current_embedding = embedding_client.metadata()
         for source_path, record in current_by_path.items():
             indexed = indexed_by_path.get(source_path)
             if indexed is None:
                 changed_records.append(record)
                 continue
             if str(indexed.get("file_hash") or "") != record.file_hash:
+                deleted_rows += delete_kb_by_source_path(source_path)
+                changed_records.append(record)
+                continue
+            if (
+                str(indexed.get("embedding_provider") or "") != str(current_embedding.get("embedding_provider") or "")
+                or str(indexed.get("embedding_model") or "") != str(current_embedding.get("embedding_model") or "")
+                or str(indexed.get("embedding_dimensions") or "") != str(current_embedding.get("embedding_dimensions") or "")
+            ):
                 deleted_rows += delete_kb_by_source_path(source_path)
                 changed_records.append(record)
 
@@ -315,6 +327,8 @@ class IndexingPipeline:
         return os.path.splitext(head)[0].split("_")[0]
 
     def _load_pdf(self, path: str) -> str:
+        if pypdf is None:
+            raise RuntimeError("pypdf is required to index PDF documents")
         reader = pypdf.PdfReader(path)
         pages = []
         for page in reader.pages:
@@ -352,8 +366,10 @@ class IndexingPipeline:
 
         inserted_count = 0
         per_tool: Dict[str, int] = {}
+        embedding_metadata = embedding_client.metadata()
         for chunk, embedding in zip(chunks, embeddings):
             chunk.embedding = embedding
+            chunk.metadata.update(embedding_metadata)
 
             tool = str(chunk.metadata.get("tool", "unknown"))
             per_tool[tool] = per_tool.get(tool, 0) + 1

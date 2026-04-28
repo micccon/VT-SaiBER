@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
 
-from src.database.manager import ensure_runtime_indexes
+from src.database.connection import ensure_runtime_indexes
 
 from .embedding import EmbeddingClient
 from .indexing import IndexingPipeline
@@ -268,11 +268,11 @@ class RAGOrchestrator:
     async def health_check(self) -> Dict[str, Any]:
         try:
             test_embedding = await self.embedding_client.embed_text("test")
-            embedding_ok = len(test_embedding) == 1024
+            embedding_ok = len(test_embedding) == self.embedding_client.dimensions
 
-            from src.database import manager
+            from src.database.connection import test_connection
 
-            db_ok = manager.test_connection() is not None
+            db_ok = test_connection() is not None
 
             return {
                 "status": "healthy" if (embedding_ok and db_ok) else "unhealthy",

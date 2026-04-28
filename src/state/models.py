@@ -97,6 +97,32 @@ class IntelligenceBrief(BaseModel):
     citations: List[str] = Field(default_factory=list)
     # Optional conflicting-source notes when the librarian sees disagreement.
     conflicting_sources: Optional[List[str]] = None
+    # Source classes that materially contributed to the brief.
+    source_types: List[str] = Field(default_factory=list)
+    # Dependency readiness / degraded mode data for observability.
+    source_status: Dict[str, str] = Field(default_factory=dict)
+    degraded_reasons: List[str] = Field(default_factory=list)
+
+
+class RetrievalSourceTrace(BaseModel):
+    """Compact audit summary for one librarian retrieval source."""
+
+    # Dependency status such as ready, empty, skipped, unavailable, or degraded.
+    status: str = "unknown"
+    # Number of evidence items returned by this source.
+    count: int = Field(default=0, ge=0)
+    # Short source-specific references such as doc names, CVE IDs, or URLs.
+    references: List[str] = Field(default_factory=list)
+
+
+class RetrievalTrace(BaseModel):
+    """Grouped librarian retrieval trace stored in the agent log."""
+
+    kb: RetrievalSourceTrace = Field(default_factory=RetrievalSourceTrace)
+    findings: RetrievalSourceTrace = Field(default_factory=RetrievalSourceTrace)
+    cve: RetrievalSourceTrace = Field(default_factory=RetrievalSourceTrace)
+    osint: RetrievalSourceTrace = Field(default_factory=RetrievalSourceTrace)
+    degraded_reasons: List[str] = Field(default_factory=list)
 
 
 class AgentError(BaseModel):

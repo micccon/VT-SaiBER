@@ -464,7 +464,7 @@ tavily_max_results = 5
 
 ### LLM Configuration (in config.py)
 ```python
-supervisor_model = "gpt-4o" or "claude-3.5-sonnet"
+openrouter_model = "gpt-4o" or "claude-3.5-sonnet"
 supervisor_timeout_seconds = 30
 ```
 

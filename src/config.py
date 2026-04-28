@@ -7,7 +7,18 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
+
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None  # type: ignore[assignment]
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if load_dotenv is not None:
+    load_dotenv(_REPO_ROOT / ".env")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -56,7 +67,7 @@ class RuntimeConfig:
     # OpenRouter/OpenAI client settings.
     openrouter_api_key: str
     openrouter_base_url: str
-    supervisor_model: str
+    openrouter_model: str
     supervisor_timeout_seconds: int
     supervisor_reasoning_enabled: bool
     supervisor_max_reasoning_messages: int
@@ -81,16 +92,26 @@ class RuntimeConfig:
 
     tavily_api_key: str | None = None
     tavily_max_results: int = 5
+    embedding_provider: str = "openrouter"
+    embedding_model: str = "openai/text-embedding-3-small"
+    embedding_dimensions: int = 1024
+    embedding_timeout_seconds: int = 60
 
 @lru_cache(maxsize=1)
 def get_runtime_config() -> RuntimeConfig:
     """Resolve and cache the active runtime configuration for the process."""
 
+    # OpenRouter model resolution keeps the new name first while still honoring older envs.
     return RuntimeConfig(
         # Keep model/backend configuration centralized so every agent shares the same defaults.
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
-        supervisor_model=(os.getenv("SUPERVISOR_MODEL") or os.getenv("LLM_MODEL") or "minimax/minimax-m2.5:free").strip(),
+        openrouter_model=(
+            os.getenv("OPENROUTER_MODEL")
+            or os.getenv("SUPERVISOR_MODEL")
+            or os.getenv("LLM_MODEL")
+            or "minimax/minimax-m2.5:free"
+        ).strip(),
         supervisor_timeout_seconds=_env_int("SUPERVISOR_TIMEOUT_SECONDS", 90),
         supervisor_reasoning_enabled=_env_bool("SUPERVISOR_REASONING_ENABLED", True),
         supervisor_max_reasoning_messages=_env_int("SUPERVISOR_MAX_REASONING_MESSAGES", 12),
@@ -110,4 +131,8 @@ def get_runtime_config() -> RuntimeConfig:
         report_export_dir=(os.getenv("REPORT_EXPORT_DIR") or "").strip() or "exports",
         tavily_api_key=(os.getenv("TAVILY_API_KEY") or "").strip() or None,
         tavily_max_results=_env_int("TAVILY_MAX_RESULTS", 5),
+        embedding_provider=(os.getenv("EMBEDDING_PROVIDER") or "openrouter").strip().lower() or "openrouter",
+        embedding_model=(os.getenv("EMBEDDING_MODEL") or "openai/text-embedding-3-small").strip() or "openai/text-embedding-3-small",
+        embedding_dimensions=_env_int("EMBEDDING_DIMENSIONS", 1024),
+        embedding_timeout_seconds=_env_int("EMBEDDING_TIMEOUT_SECONDS", 60),
     )

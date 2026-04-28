@@ -28,7 +28,7 @@ class SupervisorAgent(BaseAgent):
         if self.config.openrouter_api_key:
             self._init_runtime(
                 config=self.config,
-                model=self.config.supervisor_model,
+                model=self.config.openrouter_model,
                 base_url=self.config.openrouter_base_url,
                 api_key=self.config.openrouter_api_key,
                 timeout_seconds=self.config.supervisor_timeout_seconds,
@@ -45,7 +45,7 @@ class SupervisorAgent(BaseAgent):
             "Roles:\n"
             "- scout: host discovery, port scanning, service fingerprinting\n"
             "- fuzzer: web directories, endpoints, API path discovery\n"
-            "- librarian: CVE research, exploit-path analysis, OSINT\n"
+            "- librarian: knowledge-base lookup, historical finding recall, official CVE research, and documentation-guided exploit-path analysis\n"
             "- striker: exploitation, gaining shells or sessions\n"
             "- resident: session-backed objective completion after access already exists\n"
             "- end: mission complete or awaiting human review\n\n"
@@ -57,6 +57,7 @@ class SupervisorAgent(BaseAgent):
             "4. After a failed exploit, pick librarian or fuzzer instead of striker.\n"
             "5. Only route to end when the mission is complete or human approval is required.\n"
             "6. When ambiguous, follow the MISSION PHASE recommendation.\n"
+            "7. For librarian goals that prepare exploitation, say: research exploit path, map product/version to CVEs, and prepare striker with tooling guidance.\n"
             "Do not call tools."
         )
 
@@ -287,13 +288,19 @@ class SupervisorAgent(BaseAgent):
             next_agent, goal = "end", str(resident_objective or "Await human approval for resident action.")
         elif active_sessions:
             if resident_status in {"blocked", "failed"} and not ((state.get("research_cache") or {}) or (state.get("intelligence_findings") or [])):
-                next_agent, goal = "librarian", f"Research a new path to accomplish the session-backed objective: {resident_objective}"
+                next_agent, goal = "librarian", self._build_librarian_goal(
+                    state,
+                    f"Research a new path to accomplish the session-backed objective: {resident_objective}",
+                )
             else:
                 next_agent, goal = "resident", str(resident_objective or "Advance the current mission objective using the live session.")
         elif not discovered_targets:
             next_agent, goal = "scout", "Discover targets and fingerprint exposed services."
         elif web_findings and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
-            next_agent, goal = "librarian", "Research exploit paths from discovered findings."
+            next_agent, goal = "librarian", self._build_librarian_goal(
+                state,
+                "Research exploit paths from discovered findings.",
+            )
         elif web_findings:
             next_agent, goal = "striker", "Attempt exploitation using researched vectors."
         else:
@@ -341,9 +348,62 @@ class SupervisorAgent(BaseAgent):
         return SupervisorDecision(
             next_agent=next_agent,
             rationale=decision.rationale,
-            specific_goal=resident_objective if next_agent == "resident" and resident_objective else decision.specific_goal,
+            specific_goal=self._rewrite_specific_goal(state, next_agent, resident_objective, decision.specific_goal),
             confidence_score=decision.confidence_score,
         ), reason
+
+    def _rewrite_specific_goal(
+        self,
+        state: CyberState,
+        next_agent: str,
+        resident_objective: str,
+        original_goal: str,
+    ) -> str:
+        if next_agent == "resident" and resident_objective:
+            return resident_objective
+        if next_agent == "librarian":
+            return self._build_librarian_goal(state, original_goal)
+        return original_goal
+
+    def _build_librarian_goal(self, state: CyberState, base_goal: str) -> str:
+        services: List[str] = []
+        discovered_targets = state.get("discovered_targets", {}) or {}
+        for ip, details in list(discovered_targets.items())[:3]:
+            service_map = details.get("services", {}) if isinstance(details, dict) else {}
+            for port, service in list((service_map or {}).items())[:6]:
+                if isinstance(service, dict):
+                    label = f"{ip}:{port} {service.get('service_name', 'unknown')}"
+                    version = str(service.get("version") or service.get("service_version") or "").strip()
+                    if version:
+                        label += f" {version}"
+                else:
+                    label = f"{ip}:{port} {service}"
+                services.append(label)
+
+        hints: List[str] = []
+        if services:
+            hints.append("services=" + "; ".join(services[:6]))
+
+        recent_failures: List[str] = []
+        for attempt in (state.get("exploit_attempts", []) or [])[-4:]:
+            if not isinstance(attempt, dict):
+                continue
+            status = str(attempt.get("status") or "").strip().lower()
+            if status and status not in {"success", "succeeded", "opened"}:
+                recent_failures.append(str(attempt.get("summary") or attempt.get("module") or status))
+        if recent_failures:
+            hints.append("recent_failures=" + "; ".join(recent_failures[:3]))
+
+        active_sessions = state.get("active_sessions", {}) or {}
+        if active_sessions:
+            hints.append(f"active_sessions={len(active_sessions)}")
+
+        guidance = (
+            "Research exploit path and prepare striker. Use KB and historical findings first, map exact products/versions to official CVE and KEV data, "
+            "then use targeted external documentation or OSINT for exploit modules, tooling guidance, and practical caveats."
+        )
+        suffix = f" {' | '.join(hints)}" if hints else ""
+        return f"{base_goal} {guidance}{suffix}".strip()
 
     def _sanitize_history(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Keep only clean user/assistant messages in supervisor history."""

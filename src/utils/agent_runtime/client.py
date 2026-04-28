@@ -70,7 +70,7 @@ def resolve_openrouter_runtime(
     runtime_config = config or get_runtime_config()
     resolved_model = (
         model
-        or runtime_config.supervisor_model
+        or runtime_config.openrouter_model
         or os.getenv("LLM_MODEL", DEFAULT_MODEL)
     ).strip()
     resolved_model = resolved_model or DEFAULT_MODEL

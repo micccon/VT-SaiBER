@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List
 from src.agents.base import BaseAgent
 from src.config import get_runtime_config
 from src.database.persistence import persist_state_update
+from src.skills import match_skills, render_skill_matches
 from src.state.cyber_state import CyberState
 from src.state.models import AgentLogEntry
 from src.utils.agent_parsers import extract_tool_output_text
@@ -165,6 +166,8 @@ def _build_resident_context(state: CyberState) -> str:
     discovered_targets = state.get("discovered_targets", {}) or {}
     research_cache = state.get("research_cache", {}) or {}
     intelligence_findings = state.get("intelligence_findings", []) or []
+    skill_matches = match_skills(state, "resident", limit=2)
+    skills_block = render_skill_matches(skill_matches)
 
     session_lines: List[str] = []
     for target, info in active_sessions.items():
@@ -204,16 +207,18 @@ def _build_resident_context(state: CyberState) -> str:
             description = str(finding.get("description", "") or "").strip()
             if cve or description:
                 prefix = f"[{cve}] " if cve else ""
-                research_lines.append(f"  OSINT: {prefix}{description[:180]}")
+                label = "OSINT" if finding.get("is_osint_derived") and finding.get("source_types") == ["osint"] else "Intel"
+                research_lines.append(f"  {label}: {prefix}{description[:180]}")
         else:
-            research_lines.append(f"  OSINT: {str(finding)[:180]}")
+            research_lines.append(f"  Intel: {str(finding)[:180]}")
 
     return (
         f"MISSION GOAL: {mission_goal}\n"
         f"IMMEDIATE OBJECTIVE: {objective}\n\n"
         f"ACTIVE SESSIONS:\n{_compact_lines(session_lines)}\n\n"
         f"TARGET CONTEXT:\n{_compact_lines(target_lines)}\n\n"
-        f"RESEARCH & OSINT INTELLIGENCE:\n{_compact_lines(research_lines)}\n\n"
+        f"RESEARCH & INTELLIGENCE:\n{_compact_lines(research_lines)}\n\n"
+        f"{'RELEVANT SKILLS:\n' + skills_block + '\n\n' if skills_block else ''}"
         "Work toward the immediate objective with one bounded next step. "
         "Validate sessions first, minimize noisy enumeration, and stop cleanly when approval is required."
     )
@@ -271,7 +276,11 @@ def _extract_summary_payload(messages: List[dict[str, Any]]) -> Dict[str, Any]:
     return {}
 
 
-def _extract_resident_updates(messages: List[dict[str, Any]], state: CyberState) -> Dict[str, Any]:
+def _extract_resident_updates(
+    messages: List[dict[str, Any]],
+    state: CyberState,
+    matched_skill_names: List[str] | None = None,
+) -> Dict[str, Any]:
     """Convert resident tool activity into objective-tracking state updates."""
 
     objective = _resolve_objective(state)
@@ -414,6 +423,8 @@ def _extract_resident_updates(messages: List[dict[str, Any]], state: CyberState)
         "live_session_count": len(live_session_ids),
         "session_validation_performed": saw_session_validation,
     }
+    if matched_skill_names:
+        findings["matched_skills"] = list(dict.fromkeys(matched_skill_names))
 
     validation = {
         "type": "resident_objective",
@@ -572,13 +583,18 @@ class ResidentAgent(BaseAgent):
                 message="No active sessions - run Striker first",
                 recoverable=True,
             )
+        matched_skill_names = [match.skill.relative_path for match in match_skills(state, self.name, limit=2)]
         return await self._run_tool_agent(
             state,
             user_prompt=_build_resident_context(state),
             allowed_tools=self.ALLOWED_TOOLS,
             required_tools={"msf_list_sessions", "msf_session_command"},
             policy=ResidentToolPolicy(require_confirmation=self.require_confirmation),
-            extractor=_extract_resident_updates,
+            extractor=lambda messages, current_state: _extract_resident_updates(
+                messages,
+                current_state,
+                matched_skill_names=matched_skill_names,
+            ),
             max_rounds=6,
             error_message="Resident LLM/tool loop failed.",
         )
