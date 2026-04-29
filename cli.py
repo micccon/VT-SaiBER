@@ -172,7 +172,15 @@ def run_setup_wizard(config: Config) -> bool:
 
     try:
         result = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", config.ssh_target, "echo connected"],
+            [
+                "ssh",
+                "-o", "ConnectTimeout=5",
+                "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=accept-new",
+                "-o", "PubkeyAuthentication=yes",
+                config.ssh_target,
+                "echo connected",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -181,12 +189,15 @@ def run_setup_wizard(config: Config) -> bool:
             print_success("SSH connection successful!")
         else:
             print_error("SSH connection failed.")
-            print("\n  Make sure:")
-            print("    1. Your VM is running")
-            print("    2. You can SSH manually:")
+            if result.stderr:
+                print(f"  Error: {result.stderr.strip()}")
+            print("\n  Troubleshooting:")
+            print("    1. Test SSH manually:")
             print_cmd(f"ssh {config.ssh_target}")
-            print("\n  You may need to set up SSH keys:")
+            print("    2. If prompted for password, set up SSH keys:")
             print_cmd(f"ssh-copy-id {config.ssh_target}")
+            print("    3. If keys still don't work, fix permissions on VM:")
+            print_cmd("chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys")
             return False
     except subprocess.TimeoutExpired:
         print_error("SSH connection timed out.")
