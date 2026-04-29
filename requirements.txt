@@ -14,6 +14,7 @@ langgraph-checkpoint-postgres>=2.0.0      # State persistence for LangGraph (Pos
 # =============================================================================
 # Direct API clients for various LLM providers
 openai>=1.0.0                             # OpenAI SDK client used with OpenRouter
+openai-agents>=0.1.0                      # OpenAI Agents SDK for the new execution framework
 
 # =============================================================================
 # WEB FRAMEWORK & MCP SUPPORT
