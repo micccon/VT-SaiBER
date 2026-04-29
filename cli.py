@@ -155,11 +155,15 @@ def run_setup_wizard(config: Config) -> bool:
     if not config.configured:
         print("  First, we need to connect to your Linux VM.")
         print("  (The VM where Docker and the testbed will run)\n")
-        print("  To find your VM's IP, run this inside the VM:")
-        print_cmd("hostname -I")
-        print("  (UTM VMs typically use 192.168.64.x)\n")
-        config.vm_host = prompt("  VM IP address", "192.168.64.7")
-        config.vm_user = prompt("  VM username", "jaehyun")
+        print("  To find these values, run these commands inside your VM:")
+        print_cmd("hostname -I      # VM IP address")
+        print_cmd("whoami           # VM username")
+        print()
+        print("  Typical IP ranges:")
+        print("    UTM:       192.168.64.x")
+        print("    Parallels: 10.211.55.x\n")
+        config.vm_host = prompt("  VM IP address")
+        config.vm_user = prompt("  VM username")
         config.save()
 
     # Step 2: Test SSH connection
