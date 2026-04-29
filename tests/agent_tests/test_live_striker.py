@@ -653,6 +653,10 @@ async def _execute_live_flow(mission_id: str) -> Dict[str, Any]:
         web_result = await _collect_web_surface(state["discovered_targets"])
         state["web_findings"] = web_result["findings"]
         state["fuzzing_runs"] = web_result["fuzzing_runs"]
+        if web_result["raw"].get("web_content_enum") and "Status:" in web_result["raw"]["web_content_enum"] and not state["web_findings"]:
+            raise RuntimeError("Gobuster output contained findings but no normalized web_findings were produced.")
+        if web_result["raw"].get("web_nikto_scan") and "+ [" in web_result["raw"]["web_nikto_scan"] and not state["web_findings"]:
+            raise RuntimeError("Nikto output contained findings but no normalized web_findings were produced.")
         if web_result["raw"].get("web_content_enum"):
             print(f"[live-trace] WEB_CONTENT_ENUM_RAW:\n{web_result['raw']['web_content_enum'][:12000]}", flush=True)
         if web_result["raw"].get("web_nikto_scan"):

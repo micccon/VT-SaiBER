@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, Iterable, List
 
 from src.state.models import ServiceInfo
+from src.utils.parsers import normalize_tool_result
 
 
 def extract_tool_output_text(raw_output: Any) -> str:
@@ -22,19 +23,26 @@ def extract_tool_output_text(raw_output: Any) -> str:
             payload = {"output": raw_output}
 
     if isinstance(payload, dict):
-        for key in ("output", "stdout", "result", "data", "module_output"):
-            value = payload.get(key)
-            if isinstance(value, str):
-                return value
-            if isinstance(value, dict):
-                nested = value.get("output") or value.get("stdout")
+        candidates: List[Dict[str, Any]] = []
+        normalized = normalize_tool_result(payload)
+        if isinstance(normalized, dict):
+            candidates.append(normalized)
+        candidates.append(payload)
+
+        for candidate in candidates:
+            for key in ("output", "stdout", "module_output"):
+                value = candidate.get(key)
+                if isinstance(value, str):
+                    return value
+                if isinstance(value, dict):
+                    nested = value.get("output") or value.get("stdout")
+                    if isinstance(nested, str):
+                        return nested
+            raw = candidate.get("raw")
+            if isinstance(raw, dict):
+                nested = raw.get("stdout") or raw.get("output")
                 if isinstance(nested, str):
                     return nested
-        raw = payload.get("raw")
-        if isinstance(raw, dict):
-            nested = raw.get("stdout") or raw.get("output")
-            if isinstance(nested, str):
-                return nested
     return ""
 
 
