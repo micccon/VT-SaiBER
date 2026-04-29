@@ -54,6 +54,15 @@ class EmbeddingClient:
         self._sync_client: Any | None = None
         self._local_model: Any | None = None
 
+    def _resolve_openrouter_api_key(self) -> str:
+        """Use a dedicated embedding key when configured, else fall back to the shared key."""
+
+        return str(
+            self.config.openrouter_embedding_api_key
+            or self.config.openrouter_api_key
+            or ""
+        ).strip()
+
     def is_available(self) -> bool:
         """Return whether the configured provider can be used in this process."""
 
@@ -63,7 +72,7 @@ class EmbeddingClient:
             return bool(
                 AsyncOpenAI is not None
                 and OpenAI is not None
-                and str(self.config.openrouter_api_key or "").strip()
+                and self._resolve_openrouter_api_key()
             )
         if self.provider == "local":
             return SentenceTransformer is not None
@@ -180,9 +189,11 @@ class EmbeddingClient:
             return self._async_client
         if AsyncOpenAI is None:
             raise RuntimeError("openai is not installed")
-        api_key = str(self.config.openrouter_api_key or "").strip()
+        api_key = self._resolve_openrouter_api_key()
         if not api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is required for hosted embeddings")
+            raise RuntimeError(
+                "OPENROUTER_EMBEDDING_API_KEY or OPENROUTER_API_KEY is required for hosted embeddings"
+            )
         self._async_client = AsyncOpenAI(
             api_key=api_key,
             base_url=self.config.openrouter_base_url,
@@ -197,9 +208,11 @@ class EmbeddingClient:
             return self._sync_client
         if OpenAI is None:
             raise RuntimeError("openai is not installed")
-        api_key = str(self.config.openrouter_api_key or "").strip()
+        api_key = self._resolve_openrouter_api_key()
         if not api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is required for hosted embeddings")
+            raise RuntimeError(
+                "OPENROUTER_EMBEDDING_API_KEY or OPENROUTER_API_KEY is required for hosted embeddings"
+            )
         self._sync_client = OpenAI(
             api_key=api_key,
             base_url=self.config.openrouter_base_url,

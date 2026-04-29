@@ -92,6 +92,7 @@ class RuntimeConfig:
 
     tavily_api_key: str | None = None
     tavily_max_results: int = 5
+    openrouter_embedding_api_key: str = ""
     embedding_provider: str = "openrouter"
     embedding_model: str = "openai/text-embedding-3-small"
     embedding_dimensions: int = 1024
@@ -131,6 +132,7 @@ def get_runtime_config() -> RuntimeConfig:
         report_export_dir=(os.getenv("REPORT_EXPORT_DIR") or "").strip() or "exports",
         tavily_api_key=(os.getenv("TAVILY_API_KEY") or "").strip() or None,
         tavily_max_results=_env_int("TAVILY_MAX_RESULTS", 5),
+        openrouter_embedding_api_key=(os.getenv("OPENROUTER_EMBEDDING_API_KEY") or "").strip(),
         embedding_provider=(os.getenv("EMBEDDING_PROVIDER") or "openrouter").strip().lower() or "openrouter",
         embedding_model=(os.getenv("EMBEDDING_MODEL") or "openai/text-embedding-3-small").strip() or "openai/text-embedding-3-small",
         embedding_dimensions=_env_int("EMBEDDING_DIMENSIONS", 1024),

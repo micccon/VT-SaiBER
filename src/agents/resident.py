@@ -168,6 +168,7 @@ def _build_resident_context(state: CyberState) -> str:
     intelligence_findings = state.get("intelligence_findings", []) or []
     skill_matches = match_skills(state, "resident", limit=2)
     skills_block = render_skill_matches(skill_matches)
+    skills_section = f"RELEVANT SKILLS:\n{skills_block}\n\n" if skills_block else ""
 
     session_lines: List[str] = []
     for target, info in active_sessions.items():
@@ -218,7 +219,7 @@ def _build_resident_context(state: CyberState) -> str:
         f"ACTIVE SESSIONS:\n{_compact_lines(session_lines)}\n\n"
         f"TARGET CONTEXT:\n{_compact_lines(target_lines)}\n\n"
         f"RESEARCH & INTELLIGENCE:\n{_compact_lines(research_lines)}\n\n"
-        f"{'RELEVANT SKILLS:\n' + skills_block + '\n\n' if skills_block else ''}"
+        f"{skills_section}"
         "Work toward the immediate objective with one bounded next step. "
         "Validate sessions first, minimize noisy enumeration, and stop cleanly when approval is required."
     )

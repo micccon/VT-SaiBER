@@ -195,12 +195,13 @@ def build_striker_context(state: CyberState) -> str:
 
     skill_matches = match_skills(state, "striker", limit=2)
     skills_block = render_skill_matches(skill_matches)
+    skills_section = f"RELEVANT SKILLS:\n{skills_block}\n\n" if skills_block else ""
     return (
         f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
         f"TARGET INTELLIGENCE:\n{_format_targets(state)}\n\n"
         f"RELEVANT WEB FINDINGS:\n{_format_web_findings(state)}\n\n"
         f"RESEARCH / INTELLIGENCE HINTS:\n{_format_research_hints(state)}\n\n"
-        f"{'RELEVANT SKILLS:\n' + skills_block + '\n\n' if skills_block else ''}"
+        f"{skills_section}"
         f"PRIOR EXPLOIT ATTEMPTS:\n{_format_prior_attempts(state)}\n\n"
         f"CANDIDATE PATHS:\n{_format_candidates(_rank_candidates(state))}\n"
     )

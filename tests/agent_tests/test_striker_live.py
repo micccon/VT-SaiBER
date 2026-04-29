@@ -16,7 +16,6 @@ Run inside the agents container:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -31,6 +30,7 @@ if str(ROOT) not in sys.path:
 import src.agents.striker as em
 from src.mcp.mcp_tool_bridge import get_mcp_bridge, reset_mcp_bridge
 from src.utils.agent_parsers import extract_tool_output_text, parse_nmap_output, parse_service_records
+from src.utils.parsers import normalize_tool_result
 
 
 pytestmark = pytest.mark.live
@@ -130,8 +130,8 @@ async def _scan_target_into_state(target: str) -> tuple[Dict[str, Any], str]:
         additional_args=LIVE_NMAP_EXTRA_ARGS,
     )
 
-    parsed = json.loads(raw_scan) if isinstance(raw_scan, str) else raw_scan
-    service_records = (((parsed or {}).get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
+    parsed = normalize_tool_result(raw_scan)
+    service_records = ((parsed.get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
     services = parse_service_records(service_records) or parse_nmap_output(raw_scan)
     if not services:
         text = extract_tool_output_text(raw_scan) or str(raw_scan)

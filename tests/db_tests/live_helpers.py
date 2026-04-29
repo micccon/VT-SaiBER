@@ -67,8 +67,9 @@ def require_live_embeddings() -> EmbeddingClient:
     if not client.is_available():
         cfg = get_runtime_config()
         reason = (
-            "Live embedding test requires configured EMBEDDING_PROVIDER and OPENROUTER_API_KEY. "
+            "Live embedding test requires configured EMBEDDING_PROVIDER and an embedding-capable OpenRouter key. "
             f"provider={client.provider!r} model={client.model_name!r} "
+            f"has_embedding_key={bool(cfg.openrouter_embedding_api_key)} "
             f"has_api_key={bool(cfg.openrouter_api_key)} "
             f"base_url={cfg.openrouter_base_url!r}"
         )

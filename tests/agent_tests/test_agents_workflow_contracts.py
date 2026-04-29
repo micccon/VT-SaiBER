@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
@@ -34,6 +35,7 @@ from src.agents.resident import _extract_resident_updates, resident_node
 from src.agents.scout import ScoutAgent
 from src.agents.supervisor import SupervisorAgent, supervisor_node
 from src.config import get_runtime_config
+from src.database.rag.embedding import EmbeddingClient
 from src.state.models import SupervisorDecision
 from src.utils.agent_runtime import make_tool_message
 
@@ -328,6 +330,7 @@ def test_resident_returns_error_when_no_sessions():
 
 def test_striker_uses_shared_model_and_key(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "shared-key")
+    monkeypatch.setenv("OPENROUTER_EMBEDDING_API_KEY", "embedding-key")
     monkeypatch.setenv("SUPERVISOR_MODEL", "shared-model")
     get_runtime_config.cache_clear()
 
@@ -345,6 +348,46 @@ def test_striker_uses_shared_model_and_key(monkeypatch):
     assert captured["model"] == "shared-model"
     assert captured["base_url"] == get_runtime_config().openrouter_base_url
     get_runtime_config.cache_clear()
+
+
+def test_embedding_client_prefers_embedding_specific_key(monkeypatch):
+    cfg = replace(
+        get_runtime_config(),
+        openrouter_api_key="shared-key",
+        openrouter_embedding_api_key="embedding-key",
+        embedding_provider="openrouter",
+    )
+    captured: Dict[str, Any] = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("src.database.rag.embedding.OpenAI", FakeOpenAI)
+    client = EmbeddingClient(config=cfg)
+    client._get_sync_openrouter_client()
+
+    assert captured["api_key"] == "embedding-key"
+
+
+def test_embedding_client_falls_back_to_shared_key(monkeypatch):
+    cfg = replace(
+        get_runtime_config(),
+        openrouter_api_key="shared-key",
+        openrouter_embedding_api_key="",
+        embedding_provider="openrouter",
+    )
+    captured: Dict[str, Any] = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("src.database.rag.embedding.OpenAI", FakeOpenAI)
+    client = EmbeddingClient(config=cfg)
+    client._get_sync_openrouter_client()
+
+    assert captured["api_key"] == "shared-key"
 
 
 def test_striker_supports_llm_model_fallback(monkeypatch):

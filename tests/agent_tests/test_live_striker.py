@@ -54,6 +54,7 @@ from src.utils.agent_parsers import (
     parse_nmap_output,
     parse_service_records,
 )
+from src.utils.parsers import normalize_tool_result
 from src.utils.tools import RuntimeTool
 
 
@@ -261,8 +262,8 @@ async def _discover_target() -> tuple[str, str]:
     if host_tool is not None:
         _step(f"Running host discovery for scope: {LIVE_TARGET_SCOPE}")
         raw_discovery = await host_tool.executor(targets=LIVE_TARGET_SCOPE, additional_args=LIVE_NMAP_EXTRA_ARGS)
-        parsed = json.loads(raw_discovery) if isinstance(raw_discovery, str) else raw_discovery
-        evidence_hosts = (((parsed or {}).get("evidence") or {}).get("hosts") or []) if isinstance(parsed, dict) else []
+        parsed = normalize_tool_result(raw_discovery)
+        evidence_hosts = ((parsed.get("evidence") or {}).get("hosts") or []) if isinstance(parsed, dict) else []
         hosts = [str(host).strip() for host in evidence_hosts if str(host).strip()]
         hosts = hosts or parse_host_discovery_output(raw_discovery, max_hosts=8)
         if hosts:
@@ -288,8 +289,8 @@ async def _scan_target_into_state(mission_id: str) -> tuple[CyberState, str, str
         additional_args=LIVE_NMAP_EXTRA_ARGS,
     )
 
-    parsed = json.loads(raw_scan) if isinstance(raw_scan, str) else raw_scan
-    service_records = (((parsed or {}).get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
+    parsed = normalize_tool_result(raw_scan)
+    service_records = ((parsed.get("evidence") or {}).get("services") or []) if isinstance(parsed, dict) else []
     services = parse_service_records(service_records) or parse_nmap_output(raw_scan)
     if not services:
         text = extract_tool_output_text(raw_scan) or str(raw_scan)

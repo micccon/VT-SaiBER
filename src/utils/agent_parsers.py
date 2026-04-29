@@ -132,12 +132,14 @@ def parse_gobuster_output(
 
     text = extract_tool_output_text(raw_output)
     findings: List[Dict[str, Any]] = []
-    line_regex = re.compile(r"^(/[^ ]*)\s+\(Status:\s*(\d{3})\)", re.IGNORECASE)
+    line_regex = re.compile(r"^(/?[^ ]*)\s+\(Status:\s*(\d{3})\)", re.IGNORECASE)
     for line in text.splitlines():
         match = line_regex.match(line.strip())
         if not match:
             continue
-        path = match.group(1)
+        path = match.group(1).strip()
+        if not path.startswith("/"):
+            path = f"/{path}"
         status_code = int(match.group(2))
         depth = len([segment for segment in path.split("/") if segment])
         if depth > max_depth or status_code in soft_404_statuses:
@@ -175,7 +177,7 @@ def parse_nikto_output(
 
     text = extract_tool_output_text(raw_output)
     findings: List[Dict[str, Any]] = []
-    line_regex = re.compile(r"^\+\s+(/[^:\s]*).*?:\s*(.+)$")
+    line_regex = re.compile(r"^\+\s+(?:\[[0-9]+\]\s+)?(/[^:\s]*).*?:\s*(.+)$")
     for line in text.splitlines():
         match = line_regex.match(line.strip())
         if not match:
