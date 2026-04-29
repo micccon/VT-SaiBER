@@ -18,7 +18,7 @@ from src.utils.agent_runtime import (
     collect_reasoning_chunks,
     iter_tool_messages,
 )
-from src.utils.approval import require_manual_approval
+from src.utils.approval import derive_command_target, require_manual_approval
 from src.utils.parsers import metasploit_module_key, normalize_tool_result
 from src.utils.tools import BaseToolPolicy, RuntimeTool, ToolInterception
 
@@ -41,6 +41,7 @@ MAX_EXPLOIT_ATTEMPTS = int(os.getenv("STRIKER_MAX_EXPLOIT_ATTEMPTS", "3"))
 MAX_SEARCH_CALLS = int(os.getenv("STRIKER_MAX_SEARCH_CALLS", "6"))
 EXECUTION_TOOL_NAMES = {"msf_run_exploit", "msf_run_auxiliary"}
 SEARCH_TOOL_NAMES = {"msf_search_modules"}
+MODULE_INSPECTION_TOOL_NAMES = {"msf_get_module_info", "msf_get_module_options"}
 KALI_TOOL_NAMES = {
     "web_sqlmap_scan",
     "access_hydra_attack",
@@ -177,6 +178,43 @@ def decode_tool_payload(raw: Any) -> Any:
     return {}
 
 
+def extract_tool_field(payload: Dict[str, Any], key: str, default: Any = None) -> Any:
+    """Read a value from direct, evidence, or raw tool payload locations."""
+
+    for container in (
+        payload,
+        payload.get("evidence") if isinstance(payload.get("evidence"), dict) else None,
+        payload.get("raw") if isinstance(payload.get("raw"), dict) else None,
+    ):
+        if isinstance(container, dict) and key in container:
+            return container.get(key)
+    return default
+
+
+def extract_tool_invocation(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Read invocation metadata from common normalized tool payload shapes."""
+
+    for container in (
+        payload,
+        payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+        payload.get("raw") if isinstance(payload.get("raw"), dict) else None,
+    ):
+        if isinstance(container, dict):
+            invocation = container.get("invocation")
+            if isinstance(invocation, dict):
+                return invocation
+    return {}
+
+
+def extract_tool_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Read normalized validation metadata from tool payloads."""
+
+    validation = payload.get("validation")
+    if isinstance(validation, dict):
+        return validation
+    return {}
+
+
 def is_invalid_callback_host(value: str) -> bool:
     """Reject loopback or empty callback hosts for reverse payloads."""
 
@@ -238,7 +276,21 @@ def _format_web_findings(state: CyberState) -> str:
             continue
         path = finding.get("path") or finding.get("url") or ""
         code = finding.get("status_code", "?")
-        if path and (finding.get("is_interesting") or code in {200, 301, 302, 403}):
+        if not path:
+            continue
+        if finding.get("source_tool") == "gobuster":
+            raw_finding = str(finding.get("raw_finding", "") or "").strip()
+            if raw_finding:
+                lines.append(f"- {raw_finding}")
+                continue
+        if code in {0, "0", None, ""}:
+            rationale = str(finding.get("rationale", "") or "").strip()
+            if rationale.lower().startswith("nikto finding:"):
+                rationale = rationale.split(":", 1)[1].strip()
+            if finding.get("is_interesting") and rationale:
+                lines.append(f"- {path}: {rationale}")
+            continue
+        if finding.get("is_interesting") or code in {200, 301, 302, 403}:
             lines.append(f"- {code} {path}")
     return "\n".join(lines) if lines else "- none"
 
@@ -470,10 +522,19 @@ class StrikerToolPolicy(BaseToolPolicy):
 
         if tool_name not in KALI_APPROVAL_TOOLS:
             return None
+        module_label = str(call_kwargs.get("service") or call_kwargs.get("additional_args") or "").strip()
+        if tool_name == "system_execute_command":
+            module_label = "shell-command"
         approved = require_manual_approval(
             tool_name=tool_name,
-            module_name=str(call_kwargs.get("service") or call_kwargs.get("command") or call_kwargs.get("additional_args") or ""),
-            target=str(call_kwargs.get("target") or call_kwargs.get("url") or call_kwargs.get("command") or "unknown"),
+            module_name=module_label,
+            target=str(
+                call_kwargs.get("target")
+                or call_kwargs.get("url")
+                or (derive_command_target(str(call_kwargs.get("command") or "")) if tool_name == "system_execute_command" else "")
+                or "unknown"
+            ),
+            action=str(call_kwargs.get("command") or ""),
             enabled=self.require_confirmation,
         )
         return None if approved else {"status": "aborted", "message": "Execution blocked pending manual approval.", "tool": tool_name}
@@ -575,6 +636,8 @@ def extract_striker_updates(
     candidate_modules: List[str] = []
     selected_module = ""
     stop_reason = ""
+    module_inspection_failed = False
+    module_inspection_error = ""
     reasoning = "\n\n".join(chunk for chunk in collect_reasoning_chunks(messages) if chunk).strip()
     saw_tool_activity = False
     collected_artifacts: List[Dict[str, Any]] = []
@@ -586,70 +649,109 @@ def extract_striker_updates(
         if not isinstance(data, dict):
             data = {}
         name = str(message.get("name", "") or "")
+        invocation = extract_tool_invocation(data)
 
         if name == "msf_search_modules":
-            invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
             term = str(invocation.get("search_term", "") or "").strip()
             if term:
                 search_terms.append(term)
                 matched_terms.append(term)
-            for item in data.get("result", []) if isinstance(data.get("result"), list) else []:
+            results = extract_tool_field(data, "result", None)
+            if not isinstance(results, list):
+                results = extract_tool_field(data, "results", [])
+            for item in results if isinstance(results, list) else []:
                 normalized_item = str(item or "").strip()
                 if normalized_item:
                     candidate_modules.append(normalized_item)
             continue
 
-        if name == "msf_get_module_options":
-            invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
+        if name in MODULE_INSPECTION_TOOL_NAMES:
             module_name = str(invocation.get("module_name", "") or "").strip()
             if module_name:
                 selected_module = module_name
-
-        invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
+            if str(data.get("status", "") or "").lower() == "error":
+                module_inspection_failed = True
+                raw_message = extract_tool_field(data, "message", "") or data.get("summary") or ""
+                detail = str(raw_message or f"{name} failed").strip()
+                module_label = module_name or selected_module or "unknown module"
+                module_inspection_error = (
+                    f"Metasploit module introspection failed for {module_label}: {detail}"
+                )
         for artifact in data.get("artifacts", []) if isinstance(data.get("artifacts"), list) else []:
             if isinstance(artifact, dict):
                 collected_artifacts.append(artifact)
 
         if name in EXECUTION_TOOL_NAMES:
-            options = data.get("options", {}) if isinstance(data.get("options"), dict) else {}
+            options = extract_tool_field(data, "options", {})
+            if not isinstance(options, dict):
+                options = {}
             target = options.get("RHOSTS") or options.get("RHOST") or invocation.get("target") or invocation.get("url") or default_target
-            module_name = data.get("module") or data.get("module_name") or invocation.get("module_name") or selected_module or "unknown"
+            module_name = (
+                extract_tool_field(data, "module", "")
+                or extract_tool_field(data, "module_name", "")
+                or invocation.get("module_name")
+                or selected_module
+                or "unknown"
+            )
             selected_module = str(module_name)
             last_execution = {
-                "target": target,
-                "module": module_name,
-                "status": data.get("status", "unknown"),
-                "session_id": data.get("session_id") or data.get("session_id_detected"),
+                "target": str(target),
+                "module": str(module_name),
+                "executed_tool": name,
+                "executed_module": str(module_name),
+                "tool_status": str(data.get("status", "unknown") or "unknown"),
+                "session_id": extract_tool_field(data, "session_id") or extract_tool_field(data, "session_id_detected"),
                 "timestamp": datetime.now().isoformat(),
             }
-            if str(data.get("message", "") or "").strip():
-                stop_reason = str(data.get("message", "") or "").strip()
+            raw_message = extract_tool_field(data, "message", "") or data.get("summary") or ""
+            if str(raw_message or "").strip():
+                stop_reason = str(raw_message).strip()
         elif name in KALI_TOOL_NAMES:
             target = invocation.get("target") or invocation.get("url") or invocation.get("command") or default_target
             status = data.get("status")
             if status is None and "success" in data:
                 status = "success" if data.get("success") else "error"
+            validation = extract_tool_validation(data)
             last_execution = {
                 "target": str(target),
                 "module": name,
-                "status": str(status or "unknown"),
+                "executed_tool": name,
+                "executed_module": None,
+                "tool_status": str(status or "unknown"),
                 "session_id": None,
+                "validation_outcome": str(validation.get("outcome", "inconclusive") or "inconclusive"),
+                "validation_reason": str(validation.get("reason", "") or ""),
                 "timestamp": datetime.now().isoformat(),
             }
-            if str(data.get("message", "") or "").strip():
-                stop_reason = str(data.get("message", "") or "").strip()
+            raw_message = extract_tool_field(data, "message", "") or data.get("summary") or ""
+            if str(raw_message or "").strip():
+                stop_reason = str(raw_message).strip()
+            if (
+                last_execution.get("validation_reason")
+                and str(last_execution.get("validation_outcome", "")).lower() != "positive"
+            ):
+                stop_reason = str(last_execution.get("validation_reason") or stop_reason)
 
         # Session validation is authoritative; module success without a session is not enough.
-        if name == "msf_list_sessions" and data.get("status") == "success" and isinstance(data.get("sessions"), dict):
-            verified_sessions = data.get("sessions", {})
+        sessions = extract_tool_field(data, "sessions", {})
+        if name == "msf_list_sessions" and data.get("status") == "success" and isinstance(sessions, dict):
+            verified_sessions = sessions
 
     session_id = last_execution.get("session_id")
-    if session_id is not None and (not verified_sessions or str(session_id) not in verified_sessions):
-        session_id = None
+    session_opened = bool(session_id is not None and verified_sessions and str(session_id) in verified_sessions)
+    if session_id is not None and not session_opened:
         last_execution["session_id"] = None
-    if candidate_modules and not selected_module:
-        selected_module = candidate_modules[0]
+        session_id = None
 
+    if module_inspection_failed:
+        pivot_reason = module_inspection_error or "Metasploit module introspection failed."
+        if last_execution and last_execution.get("executed_tool") in KALI_TOOL_NAMES:
+            pivot_reason = f"{pivot_reason} Pivoted to fallback validation after introspection failed."
+        if pivot_reason and pivot_reason not in reasoning:
+            reasoning = f"{reasoning}\n\n{pivot_reason}".strip() if reasoning else pivot_reason
+
+    if not stop_reason and module_inspection_failed:
+        stop_reason = module_inspection_error
     if stop_reason and stop_reason not in reasoning:
         reasoning = f"{reasoning}\n\n{stop_reason}".strip() if reasoning else stop_reason
     if not last_execution and saw_tool_activity and not stop_reason:
@@ -658,31 +760,63 @@ def extract_striker_updates(
     if context and "TARGET INTELLIGENCE:" not in reasoning:
         reasoning = f"{reasoning}\n\n{context}".strip() if reasoning else context
 
+    findings_status = "no_candidate"
+    execution_status = str(last_execution.get("tool_status", "") or "").lower()
+    used_kali_fallback = bool(last_execution and last_execution.get("executed_tool") in KALI_TOOL_NAMES)
+    validation_outcome = str(last_execution.get("validation_outcome", "") or "").lower()
+    if last_execution:
+        if execution_status == "aborted" or "manual approval" in stop_reason.lower():
+            findings_status = "approval_blocked"
+        elif session_opened:
+            findings_status = "session_opened"
+        elif module_inspection_failed and used_kali_fallback:
+            findings_status = "execution_error"
+        elif used_kali_fallback and validation_outcome == "positive":
+            findings_status = "validated_no_session"
+        elif used_kali_fallback and execution_status in {"success", "warning"}:
+            findings_status = "no_candidate"
+        elif execution_status in {"success", "warning"}:
+            findings_status = "validated_no_session"
+        else:
+            findings_status = "execution_error"
+    elif module_inspection_failed:
+        findings_status = "execution_error"
+
     findings: Dict[str, Any] = {
         "search_terms": dedupe_terms(search_terms),
         "matched_terms": dedupe_terms(matched_terms),
+        "status": findings_status,
+        "session_opened": session_opened,
+        "verified_session_ids": sorted(str(key) for key in verified_sessions),
     }
     if matched_skill_names:
         findings["matched_skills"] = dedupe_terms(matched_skill_names)
+    if candidate_modules:
+        findings["candidate_modules"] = dedupe_terms(candidate_modules)
+    if selected_module:
+        findings["selected_module"] = selected_module
+        findings["module"] = selected_module
+    if module_inspection_failed:
+        findings["module_inspection_failed"] = True
+        findings["module_inspection_error"] = module_inspection_error
     if last_execution:
         findings.update(last_execution)
+        findings["status"] = findings_status
         if selected_module:
-            findings["module"] = selected_module
             findings["selected_module"] = selected_module
-        if candidate_modules:
-            findings["candidate_modules"] = dedupe_terms(candidate_modules)
-        if stop_reason:
-            findings["stop_reason"] = stop_reason
+            findings["module"] = selected_module
+        elif last_execution.get("executed_module") is None:
+            findings.pop("module", None)
     elif saw_tool_activity:
         findings.update(
             {
-                "status": "aborted" if "manual approval" in stop_reason.lower() else "no_candidate",
-                "candidate_modules": dedupe_terms(candidate_modules),
                 "module": selected_module or None,
                 "selected_module": selected_module or None,
                 "stop_reason": stop_reason or "No acceptable Metasploit module matched current evidence.",
             }
         )
+    if last_execution and stop_reason:
+        findings["stop_reason"] = stop_reason
 
     updates: Dict[str, Any] = {**base_update, **log_action_payload}
     updates["agent_log"][0].reasoning = reasoning or context
@@ -696,24 +830,26 @@ def extract_striker_updates(
             {
                 "target": last_execution.get("target", default_target),
                 "module": last_execution.get("module", "unknown"),
-                "status": last_execution.get("status", "unknown"),
+                "status": findings_status,
                 "session_id": last_execution.get("session_id"),
                 "summary": stop_reason or reasoning[:240] or "striker execution",
             }
         ]
-    if session_id is not None:
+    if session_opened and session_id is not None:
         target = last_execution.get("target", default_target)
         updates["active_sessions"] = {
             **state.get("active_sessions", {}),
             target: {
                 "session_id": session_id,
-                "module": last_execution.get("module", "unknown"),
+                "module": last_execution.get("executed_module") or last_execution.get("module", "unknown"),
                 "established_at": datetime.now().isoformat(),
             },
         }
-        updates["critical_findings"] = [f"Session {session_id} opened on {target} via {last_execution.get('module', 'unknown')}"]
-    elif last_execution and str(last_execution.get("status", "")).lower() == "success":
-        updates["critical_findings"] = [f"Striker validated a Kali path on {last_execution.get('target', default_target)} via {last_execution.get('module', 'unknown')}"]
+        updates["critical_findings"] = [f"Session {session_id} opened on {target} via {last_execution.get('executed_module') or last_execution.get('module', 'unknown')}"]
+    elif findings_status == "validated_no_session" and last_execution:
+        updates["critical_findings"] = [
+            f"Striker validated a fallback path on {last_execution.get('target', default_target)} via {last_execution.get('executed_tool', last_execution.get('module', 'unknown'))} without opening a session"
+        ]
     if collected_artifacts:
         updates["artifacts"] = collected_artifacts
     return updates

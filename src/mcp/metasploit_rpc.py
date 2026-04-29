@@ -752,6 +752,104 @@ def _normalize_module_type(module_type: str) -> str:
         )
     return normalized
 
+
+def _normalize_sequence(value: Any) -> List[Any]:
+    """Normalize list-like RPC values while treating booleans as empty."""
+
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, dict):
+        return list(value.values())
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [value]
+
+
+def _normalize_string_list(value: Any) -> List[str]:
+    """Convert a sequence-like RPC value into string values."""
+
+    return [str(item) for item in _normalize_sequence(value)]
+
+
+def _normalize_option_info(value: Any) -> Dict[str, Dict[str, Any]]:
+    """Normalize pymetasploit3 option metadata into a safe dict-of-dicts."""
+
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for key, info in value.items():
+        if isinstance(info, dict):
+            normalized[str(key)] = info
+        else:
+            normalized[str(key)] = {}
+    return normalized
+
+
+def _normalize_option_names(value: Any) -> List[str]:
+    """Extract option names from either a dict or sequence-like RPC shape."""
+
+    if isinstance(value, dict):
+        return [str(item) for item in value.keys()]
+    return [str(item) for item in _normalize_sequence(value)]
+
+
+def _normalize_targets(value: Any) -> List[Dict[str, str]]:
+    """Normalize target metadata returned by pymetasploit3."""
+
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, dict):
+        return [{"id": str(key), "name": str(val)} for key, val in value.items()]
+    if isinstance(value, (list, tuple, set)):
+        return [{"id": str(idx), "name": str(val)} for idx, val in enumerate(value)]
+    return []
+
+
+def _safe_module_attr(module_obj: Any, attr_name: str, default: Any) -> Any:
+    """Read a module attribute without letting pymetasploit3 shape errors leak."""
+
+    try:
+        return getattr(module_obj, attr_name, default)
+    except Exception as exc:
+        logger.warning(
+            "Falling back to default for module attribute %s on %s due to %s",
+            attr_name,
+            getattr(module_obj, "fullname", getattr(module_obj, "name", "unknown-module")),
+            exc,
+        )
+        return default
+
+
+async def _rpc_module_details(module_type: str, module_name: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Fetch raw module info and option payloads directly from the RPC API."""
+
+    client = get_msf_client()
+    info_payload, options_payload = await asyncio.gather(
+        asyncio.wait_for(
+            asyncio.to_thread(lambda: client.call("module.info", [module_type, module_name])),
+            timeout=RPC_CALL_TIMEOUT,
+        ),
+        asyncio.wait_for(
+            asyncio.to_thread(lambda: client.call("module.options", [module_type, module_name])),
+            timeout=RPC_CALL_TIMEOUT,
+        ),
+    )
+    return (
+        info_payload if isinstance(info_payload, dict) else {},
+        options_payload if isinstance(options_payload, dict) else {},
+    )
+
+
+def _module_rpc_error_payload_message(payload: Dict[str, Any]) -> str:
+    """Format a Metasploit RPC error payload into a short readable message."""
+
+    error_class = str(payload.get("error_class", "") or "").strip()
+    error_string = str(payload.get("error_string", "") or payload.get("error_message", "") or "").strip()
+    if error_class and error_string:
+        return f"{error_class}: {error_string}"
+    return error_string or error_class or "unknown backend error"
+
 @mcp.tool(name="list_exploits")
 async def list_exploits(search_term: str = "") -> List[str]:
     """
@@ -865,25 +963,34 @@ async def get_module_options(
     """
     try:
         normalized_type = _normalize_module_type(module_type)
-        module_obj = await _get_module_object(normalized_type, module_name)
-        full_module_path = getattr(module_obj, "fullname", f"{normalized_type}/{module_name}")
-
-        raw_options = getattr(module_obj, "options", [])
-        if isinstance(raw_options, dict):
-            option_names = list(raw_options.keys())
-        elif isinstance(raw_options, (list, tuple, set)):
-            option_names = list(raw_options)
-        else:
-            option_names = []
-
-        option_info = getattr(module_obj, "optioninfo", {})
-        if not isinstance(option_info, dict):
-            option_info = {}
-
-        required_raw = getattr(module_obj, "required", [])
-        required_set = set()
-        if isinstance(required_raw, (list, tuple, set)):
-            required_set = {str(v) for v in required_raw}
+        full_module_path = f"{normalized_type}/{module_name}"
+        missing_required: List[str] = []
+        try:
+            module_obj = await _get_module_object(normalized_type, module_name)
+            full_module_path = getattr(module_obj, "fullname", full_module_path)
+            option_names = _normalize_option_names(_safe_module_attr(module_obj, "options", []))
+            option_info = _normalize_option_info(_safe_module_attr(module_obj, "optioninfo", {}))
+            required_set = {str(v) for v in _normalize_sequence(_safe_module_attr(module_obj, "required", []))}
+            missing_required = _normalize_string_list(_safe_module_attr(module_obj, "missing_required", []))
+        except Exception as object_error:
+            logger.warning(
+                "Falling back to raw RPC payloads for module options on %s/%s after module object construction failed: %s",
+                normalized_type,
+                module_name,
+                object_error,
+            )
+            _, raw_options_payload = await _rpc_module_details(normalized_type, module_name)
+            if raw_options_payload.get("error"):
+                message = _module_rpc_error_payload_message(raw_options_payload)
+                return {
+                    "status": "error",
+                    "message": f"Metasploit backend error retrieving module options for {full_module_path}: {message}",
+                }
+            option_names = _normalize_option_names(raw_options_payload)
+            option_info = _normalize_option_info(raw_options_payload)
+            required_set = {
+                name for name, info in option_info.items() if isinstance(info, dict) and bool(info.get("required", False))
+            }
 
         search_term = (search or "").strip().lower()
         options_out: List[Dict[str, Any]] = []
@@ -924,12 +1031,6 @@ async def get_module_options(
 
             options_out.append(entry)
 
-        missing_required_raw = getattr(module_obj, "missing_required", [])
-        if isinstance(missing_required_raw, (list, tuple, set)):
-            missing_required = [str(v) for v in missing_required_raw]
-        else:
-            missing_required = []
-
         return {
             "status": "success",
             "module_type": normalized_type,
@@ -963,55 +1064,60 @@ async def get_module_info(module_type: str, module_name: str) -> Dict[str, Any]:
     """
     try:
         normalized_type = _normalize_module_type(module_type)
-        module_obj = await _get_module_object(normalized_type, module_name)
-        full_module_path = getattr(module_obj, "fullname", f"{normalized_type}/{module_name}")
+        full_module_path = f"{normalized_type}/{module_name}"
+        try:
+            module_obj = await _get_module_object(normalized_type, module_name)
+            full_module_path = getattr(module_obj, "fullname", full_module_path)
 
-        def _as_list(value: Any) -> List[Any]:
-            if isinstance(value, (list, tuple, set)):
-                return list(value)
-            if value is None:
-                return []
-            return [value]
+            description = str(getattr(module_obj, "description", "") or "").strip()
+            rank = str(getattr(module_obj, "rank", "") or "")
+            disclosure_date = str(getattr(module_obj, "disclosure_date", "") or "")
+            license_name = str(getattr(module_obj, "license", "") or "")
+            platform = str(getattr(module_obj, "platform", "") or "")
+            arch = _normalize_string_list(_safe_module_attr(module_obj, "arch", []))
+            references = _normalize_string_list(_safe_module_attr(module_obj, "references", []))
+            targets = _normalize_targets(_safe_module_attr(module_obj, "targets", {}))
+            default_target = getattr(module_obj, "target", None)
 
-        description = str(getattr(module_obj, "description", "") or "").strip()
-        rank = str(getattr(module_obj, "rank", "") or "")
-        disclosure_date = str(getattr(module_obj, "disclosure_date", "") or "")
-        license_name = str(getattr(module_obj, "license", "") or "")
-        platform = str(getattr(module_obj, "platform", "") or "")
-        arch = [str(v) for v in _as_list(getattr(module_obj, "arch", []))]
-        references = [str(v) for v in _as_list(getattr(module_obj, "references", []))]
+            compatible_payloads: List[str] = []
+            if normalized_type == "exploit":
+                compatible_payloads = sorted(set(_normalize_string_list(_safe_module_attr(module_obj, "payloads", []))))[:300]
 
-        targets_raw = getattr(module_obj, "targets", {})
-        targets: List[Dict[str, Any]] = []
-        if isinstance(targets_raw, dict):
-            for key, val in targets_raw.items():
-                targets.append({"id": str(key), "name": str(val)})
-        elif isinstance(targets_raw, (list, tuple, set)):
-            for idx, val in enumerate(targets_raw):
-                targets.append({"id": str(idx), "name": str(val)})
+            option_names = _normalize_option_names(_safe_module_attr(module_obj, "options", []))
+            option_info = _normalize_option_info(_safe_module_attr(module_obj, "optioninfo", {}))
+            required_set = {str(v) for v in _normalize_sequence(_safe_module_attr(module_obj, "required", []))}
+        except Exception as object_error:
+            logger.warning(
+                "Falling back to raw RPC payloads for module info on %s/%s after module object construction failed: %s",
+                normalized_type,
+                module_name,
+                object_error,
+            )
+            raw_info_payload, raw_options_payload = await _rpc_module_details(normalized_type, module_name)
+            error_payload = raw_info_payload if raw_info_payload.get("error") else raw_options_payload if raw_options_payload.get("error") else {}
+            if error_payload:
+                message = _module_rpc_error_payload_message(error_payload)
+                return {
+                    "status": "error",
+                    "message": f"Metasploit backend error retrieving module info for {full_module_path}: {message}",
+                }
 
-        default_target = getattr(module_obj, "target", None)
-
-        compatible_payloads: List[str] = []
-        if normalized_type == "exploit":
-            payloads_raw = getattr(module_obj, "payloads", [])
-            if isinstance(payloads_raw, (list, tuple, set)):
-                compatible_payloads = sorted({str(v) for v in payloads_raw})[:300]
-
-        raw_options = getattr(module_obj, "options", [])
-        if isinstance(raw_options, dict):
-            option_names = [str(v) for v in raw_options.keys()]
-        elif isinstance(raw_options, (list, tuple, set)):
-            option_names = [str(v) for v in raw_options]
-        else:
-            option_names = []
-
-        option_info = getattr(module_obj, "optioninfo", {})
-        if not isinstance(option_info, dict):
-            option_info = {}
-
-        required_raw = getattr(module_obj, "required", [])
-        required_set = {str(v) for v in _as_list(required_raw)}
+            full_module_path = str(raw_info_payload.get("fullname") or full_module_path)
+            description = str(raw_info_payload.get("description", "") or "").strip()
+            rank = str(raw_info_payload.get("rank", "") or "")
+            disclosure_date = str(raw_info_payload.get("disclosure_date", "") or "")
+            license_name = str(raw_info_payload.get("license", "") or "")
+            platform = str(raw_info_payload.get("platform", "") or "")
+            arch = _normalize_string_list(raw_info_payload.get("arch", []))
+            references = _normalize_string_list(raw_info_payload.get("references", []))
+            targets = _normalize_targets(raw_info_payload.get("targets", {}))
+            default_target = raw_info_payload.get("default_target")
+            compatible_payloads = sorted(set(_normalize_string_list(raw_info_payload.get("payloads", []))))[:300]
+            option_names = _normalize_option_names(raw_options_payload)
+            option_info = _normalize_option_info(raw_options_payload)
+            required_set = {
+                name for name, info in option_info.items() if isinstance(info, dict) and bool(info.get("required", False))
+            }
         required_options: List[str] = []
         for name in sorted(set(option_names)):
             info = option_info.get(name, {})

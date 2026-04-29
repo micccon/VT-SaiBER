@@ -225,8 +225,8 @@ def test_striker_live_scans_into_cyberstate_then_runs_worker(monkeypatch):
             attempt = attempt.model_dump()
         assert attempt.get("module"), "live exploit attempt should record the chosen module"
     else:
-        assert findings.get("status") in {"aborted", "no_candidate"}
-        if findings.get("status") == "aborted":
+        assert findings.get("status") in {"approval_blocked", "no_candidate"}
+        if findings.get("status") == "approval_blocked":
             assert findings.get("module"), "live planning should select a module before the approval gate"
             assert "Execution blocked pending manual approval." in reasoning
         else:

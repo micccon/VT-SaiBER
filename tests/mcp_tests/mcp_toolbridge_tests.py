@@ -111,12 +111,14 @@ async def test_normalized_envelope_for_command():
             raise AssertionError("system_execute_command not found")
 
         result = _load_json(await tool.coroutine(command="echo MCP_TEST_SUCCESS"))
-        required = {"status", "summary", "evidence", "artifacts", "raw", "metadata"}
+        required = {"status", "summary", "evidence", "artifacts", "raw", "metadata", "validation"}
         missing = required - set(result)
         if missing:
             raise AssertionError(f"Envelope missing keys: {sorted(missing)}")
         if result["status"] != "success":
             raise AssertionError(f"Expected success status, got: {result}")
+        if result["validation"].get("outcome") != "inconclusive":
+            raise AssertionError(f"Expected inconclusive validation, got: {result['validation']}")
         if "MCP_TEST_SUCCESS" not in str(result["raw"].get("stdout", "")):
             raise AssertionError(f"Command output missing marker: {result}")
         results.add_pass("test_normalized_envelope_for_command")

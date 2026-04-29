@@ -140,7 +140,15 @@ def parse_gobuster_output(
 
     text = extract_tool_output_text(raw_output)
     findings: List[Dict[str, Any]] = []
-    line_regex = re.compile(r"^(/?[^ ]*)\s+\(Status:\s*(\d{3})\)", re.IGNORECASE)
+    line_regex = re.compile(
+        r"^"
+        r"(/?[^ ]*)"
+        r"\s+\(Status:\s*(\d{3})\)"
+        r"(?:\s+\[Size:\s*(\d+)\])?"
+        r"(?:\s+\[-->\s*([^\]]+)\])?"
+        r"$",
+        re.IGNORECASE,
+    )
     for line in text.splitlines():
         match = line_regex.match(line.strip())
         if not match:
@@ -149,6 +157,8 @@ def parse_gobuster_output(
         if not path.startswith("/"):
             path = f"/{path}"
         status_code = int(match.group(2))
+        content_length = int(match.group(3)) if match.group(3) else None
+        redirect_to = (match.group(4) or "").strip() or None
         depth = len([segment for segment in path.split("/") if segment])
         if depth > max_depth or status_code in soft_404_statuses:
             continue
@@ -157,18 +167,31 @@ def parse_gobuster_output(
             or any(token in path.lower() for token in ("admin", "login", "dashboard", "config"))
             or status_code in {200, 401, 403}
         )
+        finding_line = f"{path} (Status: {status_code})"
+        if content_length is not None:
+            finding_line += f" [Size: {content_length}]"
+        if redirect_to:
+            finding_line += f" [--> {redirect_to}]"
+
         findings.append(
             {
                 "url": f"{base_url}{path}",
                 "path": path,
                 "status_code": status_code,
-                "content_length": None,
+                "content_length": content_length,
                 "content_type": None,
                 "is_api_endpoint": path.startswith("/api"),
                 "is_interesting": is_interesting,
                 "discovery_depth": depth,
                 "scan_policy": scan_policy,
-                "rationale": "Discovered by gobuster",
+                "source_tool": "gobuster",
+                "redirect_to": redirect_to,
+                "raw_finding": finding_line,
+                "rationale": (
+                    f"Discovered by gobuster; redirects to {redirect_to}"
+                    if redirect_to
+                    else "Discovered by gobuster"
+                ),
             }
         )
     return findings[:100]

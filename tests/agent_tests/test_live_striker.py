@@ -769,11 +769,11 @@ def _validate_live_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     ), "Striker did not appear to consume the live recon-derived evidence"
 
     assert findings, "Striker live planning run should record findings from the tool loop"
-    assert findings.get("status") in {"aborted", "no_candidate"} or findings.get("module") or findings.get("candidate_modules"), (
+    assert findings.get("status") in {"approval_blocked", "no_candidate"} or findings.get("module") or findings.get("candidate_modules"), (
         "Planning run should either stop safely or record a module-selection path"
     )
 
-    if findings.get("status") == "aborted":
+    if findings.get("status") == "approval_blocked":
         assert "Execution blocked pending manual approval." in reasoning
 
     summary = {
@@ -791,8 +791,8 @@ def _validate_live_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "cve_hits": len(cve_results),
         "osint_hits": len(osint_results),
         "trace_tools": sorted(trace_tool_names),
-        "selected_module": findings.get("module") or findings.get("selected_module"),
-        "findings_status": findings.get("status") or findings.get("stop_reason"),
+        "selected_module": findings.get("selected_module") or findings.get("module"),
+        "findings_status": findings.get("status"),
         "degraded_reasons": state["research_cache"].get("degraded_reasons", []),
     }
     _trace("LIVE_STRIKER_SUMMARY", summary)

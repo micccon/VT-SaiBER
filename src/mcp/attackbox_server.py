@@ -44,6 +44,7 @@ def _envelope(
     evidence: Any = None,
     artifacts: Optional[List[Dict[str, Any]]] = None,
     raw: Any = None,
+    validation: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Wrap tool results in the normalized payload shape expected by the agents."""
@@ -54,8 +55,38 @@ def _envelope(
         "evidence": evidence if evidence is not None else {},
         "artifacts": artifacts or [],
         "raw": raw if raw is not None else {},
+        "validation": validation or {
+            "outcome": "inconclusive",
+            "reason": "Tool did not return structured validation evidence.",
+            "details": {},
+        },
         "metadata": metadata or {},
     }
+
+
+def _validation(outcome: str, reason: str, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Normalize validation truthfulness separately from process status."""
+
+    return {
+        "outcome": str(outcome or "inconclusive"),
+        "reason": str(reason or ""),
+        "details": details or {},
+    }
+
+
+def _validation_from_signal_results(
+    results: Iterable[Dict[str, Any]],
+    *,
+    signal_key: str,
+    positive_reason: str,
+    negative_reason: str,
+) -> Dict[str, Any]:
+    """Summarize signal-bearing probe results into a validation verdict."""
+
+    positives = [item for item in results if isinstance(item, dict) and bool(item.get(signal_key))]
+    if positives:
+        return _validation("positive", positive_reason, {"signal_count": len(positives)})
+    return _validation("negative", negative_reason, {"signal_count": 0})
 
 
 def _artifact(tool_name: str, suffix: str, content: str) -> Optional[Dict[str, Any]]:
@@ -117,6 +148,11 @@ def _run_shell_command(
             "stderr": stderr,
             "exit_code": completed.returncode,
         },
+        validation=_validation(
+            "inconclusive",
+            f"{tool_name} completed, but produced no structured validation claim.",
+            {"exit_code": completed.returncode},
+        ),
         metadata={"tool": tool_name},
     )
 
@@ -547,6 +583,12 @@ async def web_command_injection_probe(
         summary=f"Sent {len(findings)} command injection probe(s)",
         evidence={"payload_results": findings},
         raw={"payload_results": findings},
+        validation=_validation_from_signal_results(
+            findings,
+            signal_key="possible_signal",
+            positive_reason="Command injection probe observed command-execution output.",
+            negative_reason="Command injection probe found no command-execution signal.",
+        ),
         metadata={"tool": "web_command_injection_probe"},
     )
 
@@ -580,6 +622,12 @@ async def web_traversal_probe(
         summary=f"Sent {len(findings)} traversal probe(s)",
         evidence={"payload_results": findings},
         raw={"payload_results": findings},
+        validation=_validation_from_signal_results(
+            findings,
+            signal_key="possible_signal",
+            positive_reason="Traversal probe observed file-disclosure output.",
+            negative_reason="Traversal probe found no file-disclosure signal.",
+        ),
         metadata={"tool": "web_traversal_probe"},
     )
 

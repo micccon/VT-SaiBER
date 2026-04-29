@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, List
 
-from src.utils.agent_runtime.transcript import extract_message_text, make_assistant_message, make_tool_message
+from ..agent_runtime.transcript import extract_message_text, make_assistant_message, make_tool_message
 from src.utils.tools.loader import (
     build_openai_tools,
     find_tool,

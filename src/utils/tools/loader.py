@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
-from src.mcp.mcp_tool_bridge import get_mcp_bridge
 from src.utils.parsers import normalize_tool_result
 from src.utils.tools.models import RuntimeTool
 
@@ -35,6 +34,8 @@ def _clean_json_schema(value: Any) -> Any:
 
 async def load_filtered_tools(allowed_tools: Iterable[str]) -> List[RuntimeTool]:
     """Load the current MCP tool inventory and apply the agent allowlist."""
+
+    from src.mcp.mcp_tool_bridge import get_mcp_bridge
 
     bridge = await get_mcp_bridge()
     return bridge.get_tools_for_agent(set(allowed_tools))

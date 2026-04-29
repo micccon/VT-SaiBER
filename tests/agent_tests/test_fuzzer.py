@@ -231,7 +231,33 @@ def test_parse_gobuster_nested_output():
     if findings[0]["status_code"] != 403:
         results.add_fail("test_parse_nested", f"Expected 403, got {findings[0]['status_code']}")
         return
+    if findings[0]["content_length"] != 0:
+        results.add_fail("test_parse_nested", f"Expected parsed size 0, got {findings[0]['content_length']}")
+        return
     results.add_pass("test_parse_nested")
+
+
+def test_parse_gobuster_redirect_details():
+    agent = FuzzerAgent()
+    raw = "dashboard (Status: 302) [Size: 199] [--> /login]\n"
+    findings = _parse_gobuster(raw, "http://10.0.0.1")
+    if len(findings) != 1:
+        results.add_fail("test_parse_redirect_details", f"Expected 1, got {len(findings)}")
+        return
+    finding = findings[0]
+    if finding["path"] != "/dashboard":
+        results.add_fail("test_parse_redirect_details", f"Expected /dashboard, got {finding['path']}")
+        return
+    if finding["content_length"] != 199:
+        results.add_fail("test_parse_redirect_details", f"Expected size 199, got {finding['content_length']}")
+        return
+    if finding.get("redirect_to") != "/login":
+        results.add_fail("test_parse_redirect_details", f"Expected redirect /login, got {finding.get('redirect_to')}")
+        return
+    if "Status: 302" not in str(finding.get("raw_finding") or ""):
+        results.add_fail("test_parse_redirect_details", f"Missing raw finding detail: {finding.get('raw_finding')}")
+        return
+    results.add_pass("test_parse_redirect_details")
 
 
 def test_parse_gobuster_raw_string():

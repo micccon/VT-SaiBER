@@ -15,7 +15,7 @@ from src.state.cyber_state import CyberState
 from src.state.models import AgentLogEntry
 from src.utils.agent_parsers import extract_tool_output_text
 from src.utils.agent_runtime import collect_reasoning_chunks, iter_tool_messages
-from src.utils.approval import require_manual_approval
+from src.utils.approval import derive_command_target, require_manual_approval
 from src.utils.parsers import extract_json_payload
 from src.utils.tools import BaseToolPolicy, RuntimeTool, ToolInterception
 
@@ -537,8 +537,9 @@ class ResidentToolPolicy(BaseToolPolicy):
         if tool.name == "system_execute_command":
             approved = require_manual_approval(
                 tool_name=tool.name,
-                module_name=str(arguments.get("command", "") or ""),
-                target="attackbox",
+                module_name="shell-command",
+                target=derive_command_target(str(arguments.get("command", "") or "")),
+                action=str(arguments.get("command", "") or ""),
                 enabled=self.require_confirmation,
             )
             if approved:

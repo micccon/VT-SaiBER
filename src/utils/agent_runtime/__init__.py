@@ -16,11 +16,7 @@ from .transcript import (
     make_assistant_message,
     make_tool_message,
 )
-from src.utils.tools import (
-    BaseToolPolicy,
-    RuntimeTool,
-    ToolInterception,
-    ToolLoopResult,
+from src.utils.tools.loader import (
     build_openai_tools,
     call_tool,
     find_tool,
@@ -28,10 +24,13 @@ from src.utils.tools import (
     load_filtered_tools,
     normalize_tool_payload,
     parse_tool_arguments,
-    run_agent_tool_loop,
-    run_tool_worker,
     serialize_tool_result,
     tool_names,
+)
+from src.utils.tools.models import RuntimeTool
+from src.utils.tools.policy import (
+    BaseToolPolicy,
+    ToolInterception,
 )
 
 __all__ = [
@@ -39,7 +38,6 @@ __all__ = [
     "OpenRouterRuntime",
     "RuntimeTool",
     "ToolInterception",
-    "ToolLoopResult",
     "build_openai_tools",
     "build_openrouter_client",
     "call_tool",
@@ -55,8 +53,6 @@ __all__ = [
     "parse_tool_arguments",
     "resolve_openrouter_runtime",
     "run_chat_completion",
-    "run_agent_tool_loop",
-    "run_tool_worker",
     "serialize_tool_result",
     "tool_names",
     "try_resolve_openrouter_runtime",

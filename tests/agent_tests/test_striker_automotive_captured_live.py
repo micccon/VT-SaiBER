@@ -49,6 +49,18 @@ CAPTURED_SCAN_POLICY = {
     "soft_404_detection": True,
 }
 CAPTURED_STRIKER_TIMEOUT_SECONDS = int((os.getenv("LIVE_STRIKER_TIMEOUT_SECONDS") or "180").strip() or "180")
+LIVE_STRIKER_EXECUTE = (os.getenv("LIVE_STRIKER_EXECUTE") or "false").strip().lower() == "true"
+LIVE_STRIKER_INTERACTIVE_APPROVAL = (
+    os.getenv("LIVE_STRIKER_INTERACTIVE_APPROVAL") or "false"
+).strip().lower() == "true"
+
+
+def _approval_mode_label() -> str:
+    if LIVE_STRIKER_INTERACTIVE_APPROVAL:
+        return "interactive approval"
+    if LIVE_STRIKER_EXECUTE:
+        return "auto-approve"
+    return "planning-only"
 
 CAPTURED_SERVICES = [
     {
@@ -438,6 +450,27 @@ async def _execute_captured_live_flow(mission_id: str) -> Dict[str, Any]:
     await _require_live_prereqs()
     TRACE_EVENTS.clear()
     bridge, original_get_tools = await _enable_tool_tracing()
+    original_call_llm = striker_module.StrikerAgent.call_llm
+
+    async def traced_call_llm(self, state):
+        _trace(
+            "STRIKER_AGENT_CALL_LLM_START",
+            {
+                "candidate_target_count": len(state.get("discovered_targets", {}) or {}),
+                "web_findings_count": len(state.get("web_findings", []) or []),
+            },
+        )
+        result = await original_call_llm(self, state)
+        _trace(
+            "STRIKER_AGENT_CALL_LLM_END",
+            {
+                "agent_log_entries": len(result.get("agent_log", []) or []),
+                "error_count": len(result.get("errors", []) or []),
+            },
+        )
+        return result
+
+    striker_module.StrikerAgent.call_llm = traced_call_llm
 
     try:
         _step("Loading captured automotive evidence into Striker state")
@@ -468,7 +501,8 @@ async def _execute_captured_live_flow(mission_id: str) -> Dict[str, Any]:
         )
         print(f"[captured-trace] STRIKER_CONTEXT:\n{context_preview[:20000]}", flush=True)
 
-        _step("Running live Striker planning turn with approval forced off")
+        approval_mode = _approval_mode_label()
+        _step(f"Running live Striker planning turn in {approval_mode} mode")
         _trace(
             "STRIKER_CALL_START",
             {
@@ -477,7 +511,21 @@ async def _execute_captured_live_flow(mission_id: str) -> Dict[str, Any]:
                 "preloaded_intelligence_findings": len(state.get("intelligence_findings", []) or []),
             },
         )
-        striker_module.require_manual_approval = lambda **kwargs: False
+        original_require_manual_approval = striker_module.require_manual_approval
+        if LIVE_STRIKER_INTERACTIVE_APPROVAL:
+            striker_module.require_manual_approval = original_require_manual_approval
+        elif LIVE_STRIKER_EXECUTE:
+            striker_module.require_manual_approval = lambda **kwargs: True
+        else:
+            striker_module.require_manual_approval = lambda **kwargs: False
+        _trace(
+            "STRIKER_APPROVAL_MODE",
+            {
+                "mode": approval_mode,
+                "live_striker_execute": LIVE_STRIKER_EXECUTE,
+                "interactive_approval": LIVE_STRIKER_INTERACTIVE_APPROVAL,
+            },
+        )
         try:
             result = await asyncio.wait_for(
                 striker_module.striker_node(state),
@@ -488,6 +536,8 @@ async def _execute_captured_live_flow(mission_id: str) -> Dict[str, Any]:
                 "Captured-state Striker planning turn timed out before returning or producing tool trace output. "
                 f"Increase LIVE_STRIKER_TIMEOUT_SECONDS if the model is just slow. Current timeout={CAPTURED_STRIKER_TIMEOUT_SECONDS}s."
             ) from exc
+        finally:
+            striker_module.require_manual_approval = original_require_manual_approval
         _trace(
             "STRIKER_CALL_END",
             {
@@ -506,6 +556,7 @@ async def _execute_captured_live_flow(mission_id: str) -> Dict[str, Any]:
             "trace_events": list(TRACE_EVENTS),
         }
     finally:
+        striker_module.StrikerAgent.call_llm = original_call_llm
         bridge.get_tools_for_agent = original_get_tools
 
 
@@ -567,9 +618,14 @@ def _validate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     matched_terms = [str(term).lower() for term in findings.get("matched_terms", [])]
 
     assert "TARGET INTELLIGENCE:" in reasoning
-    assert not result.get("active_sessions"), "Approval-forced planning runs must not open live sessions"
     assert findings, "Striker captured-state run should record findings from the tool loop"
-    assert findings.get("status") in {"aborted", "no_candidate"} or findings.get("module") or findings.get("candidate_modules"), (
+    assert findings.get("status") in {
+        "approval_blocked",
+        "no_candidate",
+        "validated_no_session",
+        "session_opened",
+        "execution_error",
+    } or findings.get("module") or findings.get("candidate_modules"), (
         "Planning run should either stop safely or record a module-selection path"
     )
     assert (
@@ -582,8 +638,17 @@ def _validate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "Striker reasoning did not appear to consume the captured evidence"
     )
 
-    if findings.get("status") == "aborted":
+    if not LIVE_STRIKER_EXECUTE:
+        assert not result.get("active_sessions"), "Planning-only runs must not open live sessions"
+    if not result.get("active_sessions"):
+        assert findings.get("session_opened") is False
+    if findings.get("status") == "approval_blocked":
         assert "Execution blocked pending manual approval." in reasoning
+    elif LIVE_STRIKER_EXECUTE and result.get("exploited_services"):
+        attempt = result["exploited_services"][0]
+        if hasattr(attempt, "model_dump"):
+            attempt = attempt.model_dump()
+        assert attempt.get("module"), "Execution-enabled run should record the chosen module"
 
     summary = {
         "mission_id": state["mission_id"],
@@ -591,8 +656,14 @@ def _validate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "open_ports": state["discovered_targets"][CAPTURED_TARGET]["ports"],
         "web_findings_count": len(state["web_findings"]),
         "trace_tools": sorted(trace_tool_names),
-        "selected_module": findings.get("module") or findings.get("selected_module"),
-        "findings_status": findings.get("status") or findings.get("stop_reason"),
+        "selected_module": findings.get("selected_module") or findings.get("module"),
+        "executed_tool": findings.get("executed_tool"),
+        "executed_module": findings.get("executed_module"),
+        "findings_status": findings.get("status"),
+        "session_opened": findings.get("session_opened"),
+        "approval_mode": _approval_mode_label(),
+        "execution_enabled": LIVE_STRIKER_EXECUTE,
+        "interactive_approval": LIVE_STRIKER_INTERACTIVE_APPROVAL,
     }
     _trace("CAPTURED_STRIKER_SUMMARY", summary)
     return summary

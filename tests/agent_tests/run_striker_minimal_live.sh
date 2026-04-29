@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the captured-evidence Striker live planning test inside the agents container.
+# Run the minimal-state Striker live planning test inside the agents container.
 
 set -euo pipefail
 
@@ -18,9 +18,9 @@ else
 fi
 
 echo "======================================"
-echo "STRIKER CAPTURED-STATE LIVE TEST"
+echo "STRIKER MINIMAL LIVE TEST"
 echo "======================================"
-echo "Target source: pre-given evidence from output2.txt"
+echo "Target source: tiny prebuilt state"
 MODE_LABEL="planning-only"
 if [ "${LIVE_STRIKER_INTERACTIVE_APPROVAL:-false}" = "true" ]; then
     MODE_LABEL="interactive approval"
@@ -57,5 +57,7 @@ docker exec "${DOCKER_TTY_ARGS[@]}" \
     -e LIVE_STRIKER_EXECUTE="${LIVE_STRIKER_EXECUTE:-false}" \
     -e LIVE_STRIKER_INTERACTIVE_APPROVAL="${LIVE_STRIKER_INTERACTIVE_APPROVAL:-false}" \
     -e ATTACKBOX_MCP_URL="${ATTACKBOX_MCP_URL:-http://attackbox:8080/mcp}" \
+    -e LIVE_STRIKER_TIMEOUT_SECONDS="${LIVE_STRIKER_TIMEOUT_SECONDS:-180}" \
+    -e LIVE_STRIKER_MINIMAL_TARGET="${LIVE_STRIKER_MINIMAL_TARGET:-172.20.0.5}" \
     vt-saiber-agents \
-    python3 -u /app/tests/agent_tests/test_striker_automotive_captured_live.py
+    python3 -u /app/tests/agent_tests/test_striker_minimal_live.py

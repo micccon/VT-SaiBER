@@ -466,9 +466,231 @@ def test_striker_aborted_execution_records_selected_module():
     out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
     log_entry = out["agent_log"][0].model_dump()
 
-    assert log_entry["findings"]["status"] == "aborted"
+    assert log_entry["findings"]["status"] == "approval_blocked"
     assert log_entry["findings"]["module"] == "multi/http/werkzeug_debug_rce"
+    assert log_entry["findings"]["selected_module"] == "multi/http/werkzeug_debug_rce"
+    assert log_entry["findings"]["executed_tool"] == "msf_run_exploit"
+    assert log_entry["findings"]["executed_module"] == "multi/http/werkzeug_debug_rce"
+    assert log_entry["findings"]["session_opened"] is False
     assert "Execution blocked pending manual approval." in log_entry["reasoning"]
+
+
+def test_striker_keeps_selected_module_separate_from_validation_tool():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "services": {"80": {"service_name": "http", "version": "Werkzeug 3.1.8"}}
+        }
+    }
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
+    messages = [
+        _tool_message(
+            "msf_get_module_options",
+            {
+                "status": "success",
+                "options": [{"name": "RHOSTS", "required": True}],
+                "invocation": {
+                    "module_type": "exploit",
+                    "module_name": "multi/http/werkzeug_debug_rce",
+                },
+            },
+            "c1",
+        ),
+        _tool_message(
+            "web_sqlmap_scan",
+            {
+                "status": "success",
+                "summary": "web_sqlmap_scan completed with exit code 0",
+                "validation": {
+                    "outcome": "inconclusive",
+                    "reason": "web_sqlmap_scan completed, but produced no structured validation claim.",
+                },
+                "invocation": {"url": "http://192.168.1.10/login"},
+            },
+            "c2",
+        ),
+    ]
+
+    out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
+    log_entry = out["agent_log"][0].model_dump()
+    findings = log_entry["findings"]
+
+    assert findings["selected_module"] == "multi/http/werkzeug_debug_rce"
+    assert findings["module"] == "multi/http/werkzeug_debug_rce"
+    assert findings["executed_tool"] == "web_sqlmap_scan"
+    assert findings["executed_module"] is None
+    assert findings["status"] == "no_candidate"
+    assert findings["validation_outcome"] == "inconclusive"
+    assert findings["session_opened"] is False
+    assert not out.get("critical_findings")
+
+
+def test_striker_fallback_without_positive_validation_is_not_promoted():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "services": {"80": {"service_name": "http", "version": "Werkzeug 3.1.8"}}
+        }
+    }
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
+    messages = [
+        _tool_message(
+            "system_execute_command",
+            {
+                "status": "success",
+                "summary": "system_execute_command completed with exit code 0",
+                "validation": {
+                    "outcome": "inconclusive",
+                    "reason": "system_execute_command completed, but produced no structured validation claim.",
+                },
+                "invocation": {"command": "curl -I http://192.168.1.10/login"},
+            },
+            "c1",
+        )
+    ]
+
+    out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
+    log_entry = out["agent_log"][0].model_dump()
+    findings = log_entry["findings"]
+
+    assert findings["status"] == "no_candidate"
+    assert findings["executed_tool"] == "system_execute_command"
+    assert findings["executed_module"] is None
+    assert findings["validation_outcome"] == "inconclusive"
+    assert findings["session_opened"] is False
+    assert not out.get("active_sessions")
+    assert not out.get("critical_findings")
+
+
+def test_striker_positive_fallback_validation_uses_validated_no_session_status():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "services": {"22": {"service_name": "ssh", "version": "OpenSSH 9.6"}}
+        }
+    }
+    context = "TARGET INTELLIGENCE:\n- 22/tcp ssh\n\nCANDIDATE PATHS:\n- none"
+    messages = [
+        _tool_message(
+            "access_hydra_attack",
+            {
+                "status": "success",
+                "summary": "access_hydra_attack completed with exit code 0",
+                "validation": {"outcome": "positive", "reason": "Hydra confirmed at least one valid credential."},
+                "invocation": {"target": "192.168.1.10", "service": "ssh"},
+            },
+            "c1",
+        )
+    ]
+
+    out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
+    findings = out["agent_log"][0].model_dump()["findings"]
+
+    assert findings["status"] == "validated_no_session"
+    assert findings["validation_outcome"] == "positive"
+    assert findings["executed_tool"] == "access_hydra_attack"
+    assert findings["executed_module"] is None
+    assert findings["session_opened"] is False
+    assert out.get("critical_findings")
+
+
+def test_striker_verified_session_sets_session_opened():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "services": {"80": {"service_name": "http", "version": "Apache 2.4.57"}}
+        }
+    }
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
+    messages = [
+        _tool_message(
+            "msf_run_exploit",
+            {
+                "status": "success",
+                "module": "multi/http/apache_demo",
+                "session_id": 7,
+                "invocation": {
+                    "module_name": "multi/http/apache_demo",
+                    "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
+                },
+            },
+            "c1",
+        ),
+        _tool_message(
+            "msf_list_sessions",
+            {
+                "status": "success",
+                "sessions": {"7": {"target_host": "192.168.1.10"}},
+            },
+            "c2",
+        ),
+    ]
+
+    out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
+    log_entry = out["agent_log"][0].model_dump()
+    findings = log_entry["findings"]
+
+    assert findings["status"] == "session_opened"
+    assert findings["session_opened"] is True
+    assert findings["executed_tool"] == "msf_run_exploit"
+    assert findings["executed_module"] == "multi/http/apache_demo"
+    assert out["active_sessions"]["192.168.1.10"]["session_id"] == 7
+
+
+def test_striker_records_module_introspection_failure_before_validation_pivot():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "services": {"80": {"service_name": "http", "version": "Werkzeug 3.1.8"}}
+        }
+    }
+    context = "TARGET INTELLIGENCE:\n- 80/tcp http\n\nCANDIDATE PATHS:\n- none"
+    messages = [
+        _tool_message(
+            "msf_search_modules",
+            {
+                "status": "success",
+                "result": ["multi/http/werkzeug_debug_rce"],
+                "invocation": {"search_term": "werkzeug"},
+            },
+            "c1",
+        ),
+        _tool_message(
+            "msf_get_module_info",
+            {
+                "status": "error",
+                "message": "Unexpected error retrieving module info: 'bool' object is not subscriptable",
+                "invocation": {
+                    "module_type": "exploit",
+                    "module_name": "multi/http/werkzeug_debug_rce",
+                },
+            },
+            "c2",
+        ),
+        _tool_message(
+            "web_sqlmap_scan",
+            {
+                "status": "success",
+                "summary": "web_sqlmap_scan completed with exit code 0",
+                "validation": {
+                    "outcome": "inconclusive",
+                    "reason": "web_sqlmap_scan completed, but produced no structured validation claim.",
+                },
+                "invocation": {"url": "http://192.168.1.10/login"},
+            },
+            "c3",
+        ),
+    ]
+
+    out = striker_mod.StrikerAgent()._extract_updates(messages, state, context)
+    log_entry = out["agent_log"][0].model_dump()
+    findings = log_entry["findings"]
+
+    assert findings["status"] == "execution_error"
+    assert findings["module_inspection_failed"] is True
+    assert "bool' object is not subscriptable" in findings["module_inspection_error"]
+    assert "Pivoted to fallback validation" in log_entry["reasoning"]
+    assert not out.get("critical_findings")
 
 
 # ---------------------------------------------------------------------------
