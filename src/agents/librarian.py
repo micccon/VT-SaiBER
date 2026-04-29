@@ -612,7 +612,7 @@ class LibrarianAgent(BaseAgent):
                 error_message="Librarian chat completion failed.",
             )
             if isinstance(content, dict):
-                raise RuntimeError(content.get("errors", [{}])[0].get("error", "Chat completion failed"))
+                raise RuntimeError(self._error_text_from_update(content, "Chat completion failed"))
             return content
 
         if self._llm is not None and hasattr(self._llm, "ainvoke"):
@@ -622,6 +622,18 @@ class LibrarianAgent(BaseAgent):
             return str(response)
 
         raise RuntimeError("No LLM client available for synthesis")
+
+    @staticmethod
+    def _error_text_from_update(update: Dict[str, Any], default: str) -> str:
+        """Extract a useful error string from dict or pydantic error updates."""
+
+        errors = update.get("errors") if isinstance(update, dict) else None
+        if not errors:
+            return default
+        first = errors[0]
+        if isinstance(first, dict):
+            return str(first.get("error") or first.get("message") or default)
+        return str(getattr(first, "error", None) or getattr(first, "message", None) or default)
 
     def _fallback_brief(
         self,

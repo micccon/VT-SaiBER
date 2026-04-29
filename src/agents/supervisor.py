@@ -12,6 +12,7 @@ from src.database.persistence import persist_state_update
 from src.graph.router import validate_all_targets_in_scope
 from src.state.cyber_state import CyberState
 from src.state.models import SupervisorDecision
+from src.utils.agent_parsers import iter_target_services
 from src.utils.parsers import extract_json_payload
 from src.utils.validators import has_agent_run, has_service_version_intel, list_recent_agent_names
 
@@ -118,7 +119,17 @@ class SupervisorAgent(BaseAgent):
                 error_message="Supervisor chat completion failed.",
             )
             if isinstance(content, dict):
-                raise RuntimeError(content.get("errors", [{}])[0].get("error", "OpenRouter client unavailable"))
+                raise RuntimeError(self._error_text_from_update(content, "OpenRouter client unavailable"))
+            if not str(content or "").strip():
+                content = await self._run_chat_agent(
+                    state,
+                    user_prompt=f"{context}\n\nYour previous response was empty. Return only the required JSON routing object.",
+                    history=[],
+                    temperature=0.0,
+                    error_message="Supervisor chat completion retry failed.",
+                )
+                if isinstance(content, dict):
+                    raise RuntimeError(self._error_text_from_update(content, "OpenRouter client unavailable"))
             decision = self._parse_decision(content)
             assistant_payload = {"role": "assistant", "content": content}
         except Exception as exc:
@@ -185,6 +196,8 @@ class SupervisorAgent(BaseAgent):
         resident_outcome = self._latest_resident_outcome(state)
         resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
         resident_objective = str(resident_outcome.get("objective", "") or "").strip()
+        has_services = self._has_any_services(discovered_targets)
+        has_http_service = self._has_http_service(discovered_targets)
 
         targets_block = "\n".join(
             f"- {ip} -> {self._service_summary(details.get('services', {}) if isinstance(details, dict) else {})}"
@@ -205,6 +218,7 @@ class SupervisorAgent(BaseAgent):
         has_targets = bool(discovered_targets)
         has_versions = has_service_version_intel(discovered_targets)
         has_web = bool(web_findings)
+        has_web_surface = has_web or has_http_service
         has_sessions = bool(active_sessions)
 
         # The phase hint keeps the routing prompt simple while still nudging the pipeline order.
@@ -217,11 +231,15 @@ class SupervisorAgent(BaseAgent):
                 phase = "Phase 5 - SESSION OBJECTIVE BLOCKED: active session remains but resident needs a new path -> route to resident or librarian"
             else:
                 phase = "Phase 5 - SESSION OBJECTIVE EXECUTION: active session open -> route to resident"
+        elif has_targets and not has_services and librarian_ran:
+            phase = "Phase 6 - NO REMOTE ATTACK SURFACE: scout found no services and librarian already reviewed evidence -> route to end"
         elif librarian_ran:
             phase = "Phase 4 - EXPLOITATION: intelligence gathered, no active session -> route to striker"
-        elif has_targets and has_web and not fuzzer_ran:
+        elif has_targets and has_web_surface and not fuzzer_ran:
             phase = "Phase 2 - WEB ENUMERATION: web service present -> route to fuzzer"
-        elif has_web or has_targets:
+        elif has_targets and not has_services:
+            phase = "Phase 3 - INTELLIGENCE: target found but no services detected -> route to librarian for no-service/deeper-enumeration guidance"
+        elif has_web_surface or has_targets:
             phase = "Phase 3 - INTELLIGENCE: targets/web found, librarian has not run -> route to librarian"
         elif not has_targets:
             phase = "Phase 1 - RECONNAISSANCE: no targets discovered yet -> route to scout"
@@ -229,7 +247,8 @@ class SupervisorAgent(BaseAgent):
             phase = "Phase unknown - use recent actions and state to decide"
 
         phase_flags = (
-            f"targets_found={has_targets} versions_known={has_versions} web_found={has_web} active_sessions={len(active_sessions)}\n"
+            f"targets_found={has_targets} services_found={has_services} versions_known={has_versions} "
+            f"http_service_found={has_http_service} web_found={has_web} active_sessions={len(active_sessions)}\n"
             f"scout_ran={scout_ran} fuzzer_ran={fuzzer_ran} librarian_ran={librarian_ran} "
             f"striker_ran={striker_ran} resident_ran={resident_ran}"
         )
@@ -263,6 +282,41 @@ class SupervisorAgent(BaseAgent):
             items.append(label)
         return ", ".join(items) if items else "no services"
 
+    @staticmethod
+    def _error_text_from_update(update: Dict[str, Any], default: str) -> str:
+        """Extract a useful error string from dict or pydantic error updates."""
+
+        errors = update.get("errors") if isinstance(update, dict) else None
+        if not errors:
+            return default
+        first = errors[0]
+        if isinstance(first, dict):
+            return str(first.get("error") or first.get("message") or default)
+        return str(getattr(first, "error", None) or getattr(first, "message", None) or default)
+
+    @staticmethod
+    def _has_any_services(discovered_targets: Dict[str, Dict[str, Any]]) -> bool:
+        """Return True when reconnaissance found at least one concrete service."""
+
+        for target_data in (discovered_targets or {}).values():
+            if not isinstance(target_data, dict):
+                continue
+            if target_data.get("ports"):
+                return True
+            if target_data.get("services"):
+                return True
+        return False
+
+    @staticmethod
+    def _has_http_service(discovered_targets: Dict[str, Dict[str, Any]]) -> bool:
+        """Return True only when fuzzer has an HTTP-like service to enumerate."""
+
+        http_names = {"http", "https", "http-proxy"}
+        for _ip, port, name in iter_target_services(discovered_targets or {}):
+            if name in http_names or int(port) in {80, 443, 8000, 8080, 8443}:
+                return True
+        return False
+
     def _parse_decision(self, raw_content: str) -> SupervisorDecision:
         """Parse and normalize the model's JSON routing decision."""
 
@@ -279,6 +333,11 @@ class SupervisorAgent(BaseAgent):
         discovered_targets = state.get("discovered_targets", {}) or {}
         active_sessions = state.get("active_sessions", {}) or {}
         web_findings = state.get("web_findings", []) or []
+        agent_log = state.get("agent_log", []) or []
+        has_services = self._has_any_services(discovered_targets)
+        has_http_service = self._has_http_service(discovered_targets)
+        librarian_ran = has_agent_run(agent_log or [], "librarian")
+        fuzzer_ran = has_agent_run(agent_log or [], "fuzzer")
         resident_outcome = self._latest_resident_outcome(state)
         resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
         resident_objective = resident_outcome.get("objective") or state.get("supervisor_expectations", {}).get("specific_goal") or state.get("mission_goal")
@@ -296,15 +355,27 @@ class SupervisorAgent(BaseAgent):
                 next_agent, goal = "resident", str(resident_objective or "Advance the current mission objective using the live session.")
         elif not discovered_targets:
             next_agent, goal = "scout", "Discover targets and fingerprint exposed services."
-        elif web_findings and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
+        elif not has_services and not librarian_ran:
+            next_agent, goal = "librarian", self._build_librarian_goal(
+                state,
+                "Review the no-services reconnaissance result and recommend deeper safe enumeration or closure.",
+            )
+        elif not has_services:
+            next_agent, goal = "end", "No exposed services were detected after reconnaissance and librarian review; summarize findings and request operator guidance."
+        elif has_http_service and not fuzzer_ran:
+            next_agent, goal = "fuzzer", "Enumerate web attack surface for discovered HTTP/HTTPS services."
+        elif web_findings and not librarian_ran:
             next_agent, goal = "librarian", self._build_librarian_goal(
                 state,
                 "Research exploit paths from discovered findings.",
             )
-        elif web_findings:
+        elif web_findings or librarian_ran:
             next_agent, goal = "striker", "Attempt exploitation using researched vectors."
         else:
-            next_agent, goal = "fuzzer", "Enumerate web attack surface for discovered hosts."
+            next_agent, goal = "librarian", self._build_librarian_goal(
+                state,
+                "Research the discovered non-web services and prepare a safe exploitation plan.",
+            )
         return SupervisorDecision(
             next_agent=next_agent,
             rationale=f"Fallback routing due to LLM error: {reason}",
@@ -317,6 +388,11 @@ class SupervisorAgent(BaseAgent):
 
         next_agent = decision.next_agent.strip().lower()
         reason = ""
+        discovered_targets = state.get("discovered_targets", {}) or {}
+        agent_log = state.get("agent_log", []) or []
+        has_services = self._has_any_services(discovered_targets)
+        has_http_service = self._has_http_service(discovered_targets)
+        librarian_ran = has_agent_run(agent_log, "librarian")
         resident_outcome = self._latest_resident_outcome(state)
         resident_status = str(resident_outcome.get("objective_status", "") or "").strip().lower()
         resident_objective = str(
@@ -328,8 +404,18 @@ class SupervisorAgent(BaseAgent):
         if next_agent not in VALID_NEXT_AGENTS:
             next_agent = "scout" if not state.get("discovered_targets") else "librarian"
             reason = "invalid-next-agent-corrected"
+        if next_agent == "fuzzer" and not has_http_service:
+            if not has_services and librarian_ran:
+                next_agent = "end"
+                reason = "fuzzer-without-services-corrected"
+            elif not has_services:
+                next_agent = "librarian"
+                reason = "fuzzer-without-services-corrected"
+            else:
+                next_agent = "librarian"
+                reason = "fuzzer-without-http-service-corrected"
         if next_agent == "resident" and not (state.get("active_sessions") or {}):
-            next_agent = "striker" if has_agent_run(state.get("agent_log", []) or [], "librarian") else "librarian"
+            next_agent = "striker" if librarian_ran else "librarian"
             reason = "resident-without-session-corrected"
         if next_agent == "end" and (state.get("active_sessions") or {}) and resident_status not in {"completed", "needs_approval"}:
             if resident_status in {"blocked", "failed"} and not ((state.get("research_cache") or {}) or (state.get("intelligence_findings") or [])):
@@ -338,7 +424,7 @@ class SupervisorAgent(BaseAgent):
             else:
                 next_agent = "resident"
                 reason = "resident-not-finished"
-        if next_agent == "striker" and has_service_version_intel(state.get("discovered_targets", {}) or {}) and not has_agent_run(state.get("agent_log", []) or [], "librarian"):
+        if next_agent == "striker" and has_service_version_intel(discovered_targets) and not librarian_ran:
             next_agent = "librarian"
             reason = "forced-librarian-before-striker"
         if self._striker_failed_recently(state) and next_agent not in {"librarian", "fuzzer", "end"}:

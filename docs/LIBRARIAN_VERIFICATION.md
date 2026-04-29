@@ -112,7 +112,7 @@ async def _retrieve_from_kb(self, query: str) -> List[Dict[str, Any]]:
 ```
 RAGOrchestrator
   ├─ EmbeddingClient
-  │  └─ SentenceTransformer (BAAI/bge-large-en-v1.5)
+  │  └─ OpenRouter/OpenAI-compatible hosted embeddings
   │     └─ Text → 1024-dim vector
   └─ RAGRetriever
      ├─ embed query text

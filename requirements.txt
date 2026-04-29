@@ -46,7 +46,6 @@ pymetasploit3>=0.2.17                     # Metasploit Framework RPC client
 pydantic>=2.6.0                           # Data validation using Python type hints
 pydantic-settings>=2.1.0                  # Environment variable management with Pydantic
 pypdf>=4.0.0                              # PDF processing and text extraction for RAG indexing
-sentence-transformers>=2.7.0,<3.0.0       # Embedding models for RAG
 
 # =============================================================================
 # HTTP & NETWORK UTILITIES
