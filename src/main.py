@@ -166,10 +166,12 @@ async def maybe_checkpointer(config: RuntimeConfig | None = None):
             if inspect.isawaitable(maybe_setup):
                 await maybe_setup
 
-        yield saver
     except Exception as exc:
         logger.warning("Failed to initialize Postgres checkpointer; continuing without it: %s", exc)
         yield None
+        return
+    try:
+        yield saver
     finally:
         if cm is not None:
             if hasattr(cm, "__aexit__"):
@@ -244,7 +246,16 @@ class CatalystRunner:
         async with maybe_checkpointer(self.config) as checkpointer:
             # The catalyst runner is intentionally thin here: graph construction and orchestration stay centralized.
             graph = build_graph(checkpointer=checkpointer)
-            result = await graph.ainvoke(initial_state, config=graph_config)
+            try:
+                result = await graph.ainvoke(initial_state, config=graph_config)
+            except NotImplementedError:
+                if checkpointer is None:
+                    raise
+                logger.warning(
+                    "Configured checkpointer does not support async graph execution; retrying without checkpointing."
+                )
+                graph = build_graph(checkpointer=None)
+                result = await graph.ainvoke(initial_state, config=graph_config)
             return to_jsonable(result)
 
     async def run(self, request: MissionRequest) -> Dict[str, Any]:

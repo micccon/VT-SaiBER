@@ -432,7 +432,10 @@ class SupervisorAgent(BaseAgent):
 
         for validation in reversed(state.get("validations", []) or []):
             if isinstance(validation, dict) and validation.get("type") == "resident_objective":
-                return dict(validation)
+                outcome = dict(validation)
+                if not outcome.get("objective_status") and outcome.get("status"):
+                    outcome["objective_status"] = outcome.get("status")
+                return outcome
         for entry in reversed(state.get("agent_log", []) or []):
             if not isinstance(entry, dict):
                 if getattr(entry, "agent", "") != "resident":
