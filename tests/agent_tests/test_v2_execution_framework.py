@@ -104,6 +104,12 @@ class _FakeAgent:
         self.tools = kwargs.get("tools", [])
 
 
+class _FakeAgentOutputSchema:
+    def __init__(self, output_type, *, strict_json_schema: bool = True):
+        self.output_type = output_type
+        self.strict_json_schema = strict_json_schema
+
+
 class _FakeRunResult:
     def __init__(self, final_output: Any):
         self.final_output = final_output
@@ -133,12 +139,18 @@ class _FakeSDK:
     Agent = _FakeAgent
     Runner = _FakeRunner
     FunctionTool = _FakeFunctionTool
+    AgentOutputSchema = _FakeAgentOutputSchema
     AsyncOpenAI = _FakeAsyncOpenAI
     OpenAIChatCompletionsModel = _FakeChatModel
     OpenAIProvider = _FakeOpenAIProvider
     RunConfig = _FakeRunConfig
     ModelSettings = _FakeModelSettings
     mcp = _FakeMCPModule()
+    tracing_disabled: bool | None = None
+
+    @classmethod
+    def set_tracing_disabled(cls, disabled=True):
+        cls.tracing_disabled = disabled
 
 
 def _model_config() -> ModelConfig:
@@ -195,6 +207,10 @@ def test_local_tool_execution_records_telemetry_and_artifacts():
 
     assert called == [{"target": "10.0.0.5"}]
     assert result.outcome.status == "ok"
+    assert _FakeRunner.last_call["agent"].kwargs["output_type"].output_type is _SampleOutcome
+    assert _FakeRunner.last_call["agent"].kwargs["output_type"].strict_json_schema is False
+    assert _FakeRunner.last_call["run_config"].kwargs["tracing_disabled"] is True
+    assert _FakeSDK.tracing_disabled is True
     assert len(result.tool_events) == 1
     assert result.tool_events[0].tool_name == "echo"
     assert result.tool_events[0].status == "success"

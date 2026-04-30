@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -228,6 +229,7 @@ class AgentsSDKExecutionRunner:
         """Execute one agent run and return a typed outcome plus telemetry."""
 
         sdk = _load_agents_sdk(self._sdk_module)
+        self._disable_sdk_tracing(sdk)
         active_policy = policy or ExecutionPolicy()
         recorder = _RunRecorder()
         trace_execution_start(
@@ -246,7 +248,7 @@ class AgentsSDKExecutionRunner:
                 agent_kwargs: dict[str, Any] = {
                     "name": spec.agent_name,
                     "instructions": spec.instructions,
-                    "output_type": spec.output_type,
+                    "output_type": self._build_output_schema(sdk, spec.output_type),
                     "tools": function_tools,
                 }
 
@@ -504,6 +506,27 @@ class AgentsSDKExecutionRunner:
             on_invoke_tool=on_invoke_tool,
         )
 
+    def _build_output_schema(self, sdk: Any, output_type: type[Any]) -> Any:
+        """Wrap Pydantic outputs for SDKs that require strict JSON schemas by default."""
+
+        output_schema_cls = getattr(sdk, "AgentOutputSchema", None)
+        if output_schema_cls is None:
+            return output_type
+        try:
+            return output_schema_cls(output_type, strict_json_schema=False)
+        except TypeError:
+            return output_type
+
+    def _disable_sdk_tracing(self, sdk: Any) -> None:
+        """Disable SDK-native trace export; v2 uses its own redacted trace logs."""
+
+        set_disabled = getattr(sdk, "set_tracing_disabled", None)
+        if callable(set_disabled):
+            try:
+                set_disabled(True)
+            except TypeError:
+                set_disabled(disabled=True)
+
     def _build_model(self, sdk: Any, spec: AgentExecutionSpec[Any]) -> Any | None:
         """Build a model object when the SDK expects one instead of a model string."""
 
@@ -547,4 +570,23 @@ class AgentsSDKExecutionRunner:
         if spec.model.trace_include_sensitive_data:
             kwargs["trace_include_sensitive_data"] = True
 
-        return run_config_cls(**kwargs)
+        kwargs["tracing_disabled"] = True
+        return self._build_run_config_instance(run_config_cls, kwargs)
+
+    def _build_run_config_instance(self, run_config_cls: Any, kwargs: dict[str, Any]) -> Any:
+        """Instantiate RunConfig while tolerating SDK version differences."""
+
+        try:
+            signature = inspect.signature(run_config_cls)
+            parameters = signature.parameters
+            supported = set(parameters)
+        except (TypeError, ValueError):
+            parameters = {}
+            supported = set()
+        if supported and not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+            kwargs = {key: value for key, value in kwargs.items() if key in supported}
+        try:
+            return run_config_cls(**kwargs)
+        except TypeError:
+            kwargs.pop("tracing_disabled", None)
+            return run_config_cls(**kwargs)
