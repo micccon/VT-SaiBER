@@ -18,8 +18,6 @@ from src.v2.agents.fuzzer.outcome import FuzzerOutcome
 from src.v2.contracts.execution import AgentExecutionSpec
 from src.v2.execution import AgentsSDKExecutionRunner
 
-NO_WEB_TOOL_ERROR = "Fuzzer v2 did not execute a web enumeration tool."
-
 
 class FuzzerV2Agent:
     """Structured-output Fuzzer implementation on the parallel v2 stack."""
@@ -64,15 +62,19 @@ class FuzzerV2Agent:
         base_url = build_target_url(target)
         context = build_fuzzer_context(state, base_url)
         try:
-            updates = await self._run_once(state, context, base_url)
-            if _has_validation_error(updates, NO_WEB_TOOL_ERROR):
-                retry_context = (
-                    f"{context}\n\n"
-                    "CORRECTION: The previous attempt failed because no web enumeration tool was called. "
-                    "Call web_content_enum exactly once for TARGET URL, then return FuzzerOutcome."
-                )
-                updates = await self._run_once(state, retry_context, base_url)
-            return updates
+            result = await self._runner.run(
+                self.build_execution_spec(),
+                user_input=context,
+                context={**state, "_v2_base_url": base_url},
+            )
+            if not result.outcome.base_url:
+                result.outcome.base_url = base_url
+            return map_execution_result_to_state(
+                state,
+                agent_name=self.name,
+                context=context,
+                result=result,
+            )
         except Exception as exc:
             return execution_error_update(
                 state,
@@ -80,30 +82,6 @@ class FuzzerV2Agent:
                 message="Fuzzer v2 execution failed.",
                 exc=exc,
             )
-
-    async def _run_once(self, state: CyberState, context: str, base_url: str) -> dict[str, Any]:
-        result = await self._runner.run(
-            self.build_execution_spec(),
-            user_input=context,
-            context={**state, "_v2_base_url": base_url},
-        )
-        if not result.outcome.base_url:
-            result.outcome.base_url = base_url
-        return map_execution_result_to_state(
-            state,
-            agent_name=self.name,
-            context=context,
-            result=result,
-        )
-
-
-def _has_validation_error(updates: dict[str, Any], message: str) -> bool:
-    """Check whether a mapped update contains a specific validation error."""
-
-    for error in updates.get("errors", []) or []:
-        if getattr(error, "error", "") == message:
-            return True
-    return False
 
 
 async def fuzzer_v2_node(state: CyberState) -> dict[str, Any]:

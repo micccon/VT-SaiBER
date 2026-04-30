@@ -18,8 +18,6 @@ from src.v2.agents.scout.outcome import ScoutOutcome
 from src.v2.contracts.execution import AgentExecutionSpec
 from src.v2.execution import AgentsSDKExecutionRunner
 
-NO_RECON_TOOL_ERROR = "Scout v2 did not execute a reconnaissance tool."
-
 
 class ScoutV2Agent:
     """Structured-output Scout implementation on the parallel v2 stack."""
@@ -62,15 +60,17 @@ class ScoutV2Agent:
 
         context = build_scout_context(state)
         try:
-            updates = await self._run_once(state, context)
-            if _has_validation_error(updates, NO_RECON_TOOL_ERROR):
-                retry_context = (
-                    f"{context}\n\n"
-                    "CORRECTION: The previous attempt failed because no reconnaissance tool was called. "
-                    "Call recon_service_probe exactly once for the concrete target in scope, then return ScoutOutcome."
-                )
-                updates = await self._run_once(state, retry_context)
-            return updates
+            result = await self._runner.run(
+                self.build_execution_spec(),
+                user_input=context,
+                context=state,
+            )
+            return map_execution_result_to_state(
+                state,
+                agent_name=self.name,
+                context=context,
+                result=result,
+            )
         except Exception as exc:
             return execution_error_update(
                 state,
@@ -78,28 +78,6 @@ class ScoutV2Agent:
                 message="Scout v2 execution failed.",
                 exc=exc,
             )
-
-    async def _run_once(self, state: CyberState, context: str) -> dict[str, Any]:
-        result = await self._runner.run(
-            self.build_execution_spec(),
-            user_input=context,
-            context=state,
-        )
-        return map_execution_result_to_state(
-            state,
-            agent_name=self.name,
-            context=context,
-            result=result,
-        )
-
-
-def _has_validation_error(updates: dict[str, Any], message: str) -> bool:
-    """Check whether a mapped update contains a specific validation error."""
-
-    for error in updates.get("errors", []) or []:
-        if getattr(error, "error", "") == message:
-            return True
-    return False
 
 
 async def scout_v2_node(state: CyberState) -> dict[str, Any]:

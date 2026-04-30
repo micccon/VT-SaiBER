@@ -16,6 +16,7 @@ from src.v2.contracts.execution import (
     ToolCallInterception,
 )
 from src.v2.execution import AgentsSDKExecutionRunner, ExecutionPolicy
+from src.v2.execution.runner import _sanitize_tool_schema
 
 
 class _SampleOutcome(BaseModel):
@@ -253,6 +254,26 @@ def test_mcp_tool_allowlist_uses_direct_sdk_server():
     assert [tool.name for tool in _FakeRunner.last_call["agent"].tools] == ["allowed_tool"]
     assert server.calls == [("allowed_tool", {})]
     assert result.tool_events[0].source == "mcp"
+
+
+def test_tool_schema_sanitizer_removes_additional_properties():
+    schema = {
+        "type": "object",
+        "properties": {
+            "options": {
+                "anyOf": [
+                    {"type": "object", "additionalProperties": True},
+                    {"type": "null"},
+                ]
+            }
+        },
+        "additionalProperties": False,
+    }
+
+    sanitized = _sanitize_tool_schema(schema)
+
+    assert "additionalProperties" not in sanitized
+    assert "additionalProperties" not in sanitized["properties"]["options"]["anyOf"][0]
 
 
 def test_approval_gating_aborts_tool_call():

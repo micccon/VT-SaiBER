@@ -162,6 +162,24 @@ def _normalize_mcp_call_result(result: Any) -> Any:
     return result
 
 
+def _sanitize_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Remove MCP schema features rejected by strict SDK function-tool validation."""
+
+    def sanitize(value: Any) -> Any:
+        if isinstance(value, dict):
+            cleaned: dict[str, Any] = {}
+            for key, item in value.items():
+                if key == "additionalProperties":
+                    continue
+                cleaned[key] = sanitize(item)
+            return cleaned
+        if isinstance(value, list):
+            return [sanitize(item) for item in value]
+        return value
+
+    return sanitize(schema if isinstance(schema, dict) else {"type": "object", "properties": {}})
+
+
 def _coerce_output(output_type: type[Any], raw_output: Any) -> Any:
     """Coerce SDK final output into the declared structured type."""
 
@@ -502,7 +520,7 @@ class AgentsSDKExecutionRunner:
         return function_tool_cls(
             name=tool.name,
             description=tool.description or tool.name,
-            params_json_schema=tool.input_schema or {"type": "object", "properties": {}},
+            params_json_schema=_sanitize_tool_schema(tool.input_schema or {"type": "object", "properties": {}}),
             on_invoke_tool=on_invoke_tool,
         )
 
