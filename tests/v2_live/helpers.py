@@ -13,7 +13,36 @@ import pytest
 from src.config import get_runtime_config
 from src.main import build_initial_state
 from src.state.cyber_state import CyberState
+from src.utils.agent_parsers import dedupe_web_findings, parse_gobuster_output, parse_nikto_output
 from src.v2.agents.scout.constants import ATTACKBOX_MCP_URL
+from src.v2.execution.runner import _normalize_mcp_call_result
+
+
+CAPTURED_TARGET = os.getenv("LIVE_STRIKER_TARGET") or os.getenv("TARGET_HOST") or "automotive-testbed"
+CAPTURED_BASE_URL = os.getenv("LIVE_FUZZER_BASE_URL") or f"http://{CAPTURED_TARGET}:8000"
+CAPTURED_SERVICES = [
+    {"port": 22, "protocol": "tcp", "service_name": "ssh", "version": "OpenSSH 8.9p1 Ubuntu 3ubuntu0.14", "banner": None},
+    {"port": 8000, "protocol": "tcp", "service_name": "http", "version": "Werkzeug httpd 3.1.8 (Python 3.10.12)", "banner": None},
+    {"port": 8080, "protocol": "tcp", "service_name": "http", "version": "Werkzeug httpd 3.1.8 (Python 3.10.12)", "banner": None},
+    {"port": 9555, "protocol": "tcp", "service_name": "trispen-sra?", "version": None, "banner": None},
+    {"port": 9556, "protocol": "tcp", "service_name": "unknown", "version": None, "banner": None},
+]
+CAPTURED_SCAN_POLICY = {"methods": ["GET", "HEAD"], "max_depth": 3, "request_throttle_ms": 200, "soft_404_detection": True}
+CAPTURED_GOBUSTER_RAW = {"result": {"status": "success", "raw": {"stdout": """
+dashboard            (Status: 302) [Size: 199] [--> /login]
+login                (Status: 200) [Size: 1206]
+logout               (Status: 302) [Size: 199] [--> /login]
+search               (Status: 405) [Size: 153]
+settings             (Status: 302) [Size: 199] [--> /login]
+upload               (Status: 405) [Size: 153]
+"""}}}
+CAPTURED_NIKTO_RAW = {"result": {"status": "success", "raw": {"stdout": """
++ Server: Werkzeug/3.1.8 Python/3.10.12
++ [013587] /: Suggested security header missing: referrer-policy.
++ [013587] /: Suggested security header missing: content-security-policy.
++ [600652] Python/3.10.12 appears to be outdated.
++ [999990] OPTIONS: Allowed HTTP Methods: GET, HEAD, OPTIONS .
+"""}}}
 
 
 def step(message: str) -> None:
@@ -86,10 +115,7 @@ def fuzzer_base_url() -> str:
     configured = (os.getenv("LIVE_FUZZER_BASE_URL") or "").strip()
     if configured:
         return configured
-    host = os.getenv("LIVE_FUZZER_TARGET") or os.getenv("TARGET_HOST") or live_target()
-    port = int((os.getenv("LIVE_FUZZER_PORT") or "80").strip() or "80")
-    scheme = "https" if port == 443 else "http"
-    return f"{scheme}://{host}" if port in {80, 443} else f"{scheme}://{host}:{port}"
+    return CAPTURED_BASE_URL
 
 
 def discovered_http_state(base_url: str | None = None) -> CyberState:
@@ -120,6 +146,98 @@ def discovered_http_state(base_url: str | None = None) -> CyberState:
         }
     }
     return state
+
+
+def captured_web_findings(base_url: str | None = None) -> list[dict[str, Any]]:
+    """Return normalized captured web findings from the legacy automotive test."""
+
+    target_url = base_url or CAPTURED_BASE_URL
+    findings = parse_gobuster_output(
+        CAPTURED_GOBUSTER_RAW,
+        base_url=target_url,
+        max_depth=3,
+        soft_404_statuses={404},
+        scan_policy=CAPTURED_SCAN_POLICY,
+    )
+    findings.extend(
+        parse_nikto_output(
+            CAPTURED_NIKTO_RAW,
+            base_url=target_url,
+            max_depth=3,
+            scan_policy=CAPTURED_SCAN_POLICY,
+        )
+    )
+    return dedupe_web_findings(findings)[:100]
+
+
+def captured_automotive_state(*, mission_id: str = "v2-live-captured") -> CyberState:
+    """Build a live-test state seeded with the precomputed automotive evidence."""
+
+    state = base_state(
+        mission_goal=f"Use the precomputed automotive evidence for a bounded v2 live validation on {CAPTURED_TARGET}",
+        target_scope=[live_scope()],
+        mission_id=mission_id,
+    )
+    state["discovered_targets"] = {
+        CAPTURED_TARGET: {
+            "ip_address": CAPTURED_TARGET,
+            "ports": [service["port"] for service in CAPTURED_SERVICES],
+            "services": {str(service["port"]): dict(service) for service in CAPTURED_SERVICES},
+        }
+    }
+    state["web_findings"] = captured_web_findings(CAPTURED_BASE_URL)
+    state["fuzzing_runs"] = [
+        {"target": CAPTURED_BASE_URL, "tool": "web_content_enum", "status": "captured"},
+        {"target": CAPTURED_BASE_URL, "tool": "web_nikto_scan", "status": "captured"},
+    ]
+    state["research_cache"] = {"v2_live_captured": research_seed()}
+    state["intelligence_findings"] = [
+        {
+            "source": "captured_cve_seed",
+            "description": "Captured automotive context indicates HTTP Werkzeug services and SSH exposure.",
+            "confidence": 0.75,
+            "citations": ["legacy-captured-striker-test"],
+            "source_types": ["captured"],
+            "service_name": "http",
+            "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)",
+        }
+    ]
+    return state
+
+
+async def auto_detect_live_session() -> tuple[str, str] | None:
+    """Pick the first live Metasploit session from the attackbox MCP server."""
+
+    try:
+        from agents.mcp import MCPServerStreamableHttp
+    except Exception:
+        return None
+
+    url = os.getenv("MCP_ATTACKBOX_URL") or os.getenv("ATTACKBOX_MCP_URL") or ATTACKBOX_MCP_URL
+    server = MCPServerStreamableHttp(name="attackbox", params={"url": url}, cache_tools_list=False)
+    try:
+        if hasattr(server, "__aenter__"):
+            async with server:
+                raw = await server.call_tool("msf_list_sessions", {})
+        else:
+            await server.connect()
+            raw = await server.call_tool("msf_list_sessions", {})
+            await server.close()
+    except Exception as exc:
+        step(f"Could not auto-detect resident session from {url}: {exc}")
+        return None
+
+    payload = _normalize_mcp_call_result(raw)
+    if not isinstance(payload, dict):
+        return None
+    sessions = payload.get("sessions") or (payload.get("evidence") or {}).get("sessions")
+    if not isinstance(sessions, dict) or not sessions:
+        return None
+    session_id, info = next(iter(sessions.items()))
+    target = ""
+    if isinstance(info, dict):
+        target = str(info.get("target_host") or info.get("session_host") or info.get("tunnel_peer") or "").strip()
+    return str(session_id), target or live_target()
 
 
 def research_seed() -> dict[str, Any]:

@@ -5,7 +5,7 @@ import os
 import pytest
 
 from src.v2.agents.resident.agent import ResidentV2Agent
-from tests.v2_live.helpers import base_state, live_scope, require_live_mcp, runtime_summary, step
+from tests.v2_live.helpers import auto_detect_live_session, base_state, live_scope, require_live_mcp, runtime_summary, step
 
 pytestmark = pytest.mark.live
 
@@ -13,10 +13,11 @@ pytestmark = pytest.mark.live
 @pytest.mark.asyncio
 async def test_resident_v2_live_validates_seeded_session():
     require_live_mcp()
-    session_id = (os.getenv("LIVE_RESIDENT_SESSION_ID") or "").strip()
-    target = (os.getenv("LIVE_RESIDENT_TARGET") or os.getenv("LIVE_STRIKER_TARGET") or "").strip()
+    detected = await auto_detect_live_session()
+    session_id = (os.getenv("LIVE_RESIDENT_SESSION_ID") or (detected[0] if detected else "")).strip()
+    target = (os.getenv("LIVE_RESIDENT_TARGET") or (detected[1] if detected else "") or os.getenv("LIVE_STRIKER_TARGET") or "").strip()
     if not session_id or not target:
-        pytest.skip("Set LIVE_RESIDENT_SESSION_ID and LIVE_RESIDENT_TARGET to run resident_v2 live test")
+        pytest.skip("No live Metasploit session available for resident_v2; run Striker execution or set LIVE_RESIDENT_SESSION_ID/LIVE_RESIDENT_TARGET")
 
     step(f"Running resident_v2 live session validation for session {session_id}: {runtime_summary()}")
     state = base_state(

@@ -43,6 +43,8 @@ Live OpenRouter plus MCP-backed agent tests:
 RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
+If the caller does not set `RUN_V2_LIVE_MCP_TESTS`, the live runner enables MCP-backed tests automatically when `vt-saiber-attackbox` is running.
+
 Resident seeded-session live validation:
 
 ```bash

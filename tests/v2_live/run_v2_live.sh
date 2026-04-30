@@ -7,6 +7,39 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 
+PRESERVE_ENV_NAMES="
+RUN_V2_LIVE_TESTS
+RUN_V2_LIVE_MCP_TESTS
+V2_TRACE_ENABLED
+V2_TRACE_INCLUDE_RAW
+V2_TRACE_MAX_CHARS
+LOG_LEVEL
+OPENROUTER_API_KEY
+OPENROUTER_BASE_URL
+OPENROUTER_MODEL
+SUPERVISOR_TIMEOUT_SECONDS
+SAIBER_GRAPH_VERSION
+TARGET_HOST
+TARGET_SCOPE
+LIVE_TARGET_SCOPE
+LIVE_SCOUT_TARGET
+LIVE_FUZZER_BASE_URL
+LIVE_FUZZER_TARGET
+LIVE_FUZZER_PORT
+LIVE_FUZZER_SERVICE_VERSION
+LIVE_STRIKER_TARGET
+LIVE_STRIKER_BASE_URL
+LIVE_STRIKER_EXECUTE
+LIVE_RESIDENT_SESSION_ID
+LIVE_RESIDENT_TARGET
+ATTACKBOX_MCP_URL
+MCP_ATTACKBOX_URL
+"
+
+for name in $PRESERVE_ENV_NAMES; do
+    eval "__CALLER_${name}=\"\${${name}-}\""
+done
+
 if [ -f "$ENV_FILE" ]; then
     set -a
     # shellcheck disable=SC1090
@@ -17,6 +50,13 @@ else
     exit 1
 fi
 
+for name in $PRESERVE_ENV_NAMES; do
+    eval "value=\"\${__CALLER_${name}-}\""
+    if [ -n "$value" ]; then
+        export "$name=$value"
+    fi
+done
+
 AGENTS_RUNNING=$(docker ps --filter "name=^vt-saiber-agents$" --filter "status=running" -q)
 
 if [ -z "$AGENTS_RUNNING" ]; then
@@ -24,6 +64,16 @@ if [ -z "$AGENTS_RUNNING" ]; then
     echo "Start the stack with: docker compose up -d"
     exit 1
 fi
+
+if [ -z "${__CALLER_RUN_V2_LIVE_MCP_TESTS:-}" ]; then
+    if docker ps --filter "name=^vt-saiber-attackbox$" --filter "status=running" -q | grep -q .; then
+        RUN_V2_LIVE_MCP_TESTS=1
+    else
+        RUN_V2_LIVE_MCP_TESTS=0
+    fi
+fi
+
+echo "v2 live gates: RUN_V2_LIVE_TESTS=${RUN_V2_LIVE_TESTS:-1}, RUN_V2_LIVE_MCP_TESTS=${RUN_V2_LIVE_MCP_TESTS:-0}, V2_TRACE_ENABLED=${V2_TRACE_ENABLED:-true}"
 
 if [ "${RUN_V2_LIVE_MCP_TESTS:-0}" = "1" ]; then
     ATTACKBOX_RUNNING=$(docker ps --filter "name=^vt-saiber-attackbox$" --filter "status=running" -q)
@@ -60,7 +110,7 @@ docker exec -t \
     -e LIVE_RESIDENT_SESSION_ID="${LIVE_RESIDENT_SESSION_ID:-}" \
     -e LIVE_RESIDENT_TARGET="${LIVE_RESIDENT_TARGET:-}" \
     -e ATTACKBOX_MCP_URL="${ATTACKBOX_MCP_URL:-http://attackbox:8080/mcp}" \
-    -e MCP_ATTACKBOX_URL="${MCP_ATTACKBOX_URL:-http://attackbox:8000/mcp}" \
+    -e MCP_ATTACKBOX_URL="${MCP_ATTACKBOX_URL:-${ATTACKBOX_MCP_URL:-http://attackbox:8080/mcp}}" \
     -e DB_HOST="${DB_HOST:-postgres}" \
     -e DB_PORT="${DB_PORT:-5432}" \
     -e DB_NAME="${DB_NAME:-vtsaiber}" \
