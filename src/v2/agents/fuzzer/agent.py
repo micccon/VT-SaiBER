@@ -46,6 +46,7 @@ class FuzzerV2Agent:
             server_url=ATTACKBOX_MCP_URL,
             allowed_tools=FUZZER_ALLOWED_TOOLS,
             max_turns=5,
+            require_tool_use=True,
         )
 
     async def run(self, state: CyberState) -> dict[str, Any]:

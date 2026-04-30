@@ -69,6 +69,7 @@ class AgentExecutionSpec(Generic[TOutcome]):
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     local_tools: list[LocalToolSpec] = field(default_factory=list)
     max_turns: int = 8
+    require_tool_use: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,4 +116,3 @@ class ExecutionResult(Generic[TOutcome]):
     approval_events: list[ApprovalEvent] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     raw_result: Any = None
-

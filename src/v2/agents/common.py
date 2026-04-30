@@ -37,6 +37,7 @@ def build_single_mcp_execution_spec(
     approval_required_tools: set[str] | list[str] | None = None,
     max_turns: int = 8,
     temperature: float = 0.0,
+    require_tool_use: bool = False,
 ) -> AgentExecutionSpec[TOutcome]:
     """Build the standard single-MCP-server execution spec for a v2 specialist."""
 
@@ -54,6 +55,7 @@ def build_single_mcp_execution_spec(
             )
         ],
         max_turns=max_turns,
+        require_tool_use=require_tool_use,
     )
 
 

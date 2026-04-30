@@ -557,7 +557,13 @@ class AgentsSDKExecutionRunner:
         kwargs: dict[str, Any] = {}
         model_settings_cls = getattr(sdk, "ModelSettings", None)
         if model_settings_cls is not None:
-            kwargs["model_settings"] = model_settings_cls(temperature=spec.model.temperature)
+            model_settings_kwargs: dict[str, Any] = {"temperature": spec.model.temperature}
+            if spec.require_tool_use:
+                model_settings_kwargs["tool_choice"] = "required"
+            kwargs["model_settings"] = self._build_model_settings_instance(
+                model_settings_cls,
+                model_settings_kwargs,
+            )
 
         provider_cls = getattr(sdk, "OpenAIProvider", None)
         if provider_cls is not None:
@@ -590,3 +596,21 @@ class AgentsSDKExecutionRunner:
         except TypeError:
             kwargs.pop("tracing_disabled", None)
             return run_config_cls(**kwargs)
+
+    def _build_model_settings_instance(self, model_settings_cls: Any, kwargs: dict[str, Any]) -> Any:
+        """Instantiate ModelSettings while tolerating SDK version differences."""
+
+        try:
+            signature = inspect.signature(model_settings_cls)
+            parameters = signature.parameters
+            supported = set(parameters)
+        except (TypeError, ValueError):
+            parameters = {}
+            supported = set()
+        if supported and not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+            kwargs = {key: value for key, value in kwargs.items() if key in supported}
+        try:
+            return model_settings_cls(**kwargs)
+        except TypeError:
+            kwargs.pop("tool_choice", None)
+            return model_settings_cls(**kwargs)
