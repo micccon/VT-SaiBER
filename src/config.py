@@ -78,6 +78,9 @@ class RuntimeConfig:
     checkpoint_enabled: bool
     checkpoint_database_url: Optional[str]
     default_thread_prefix: str
+    v2_trace_enabled: bool
+    v2_trace_include_raw: bool
+    v2_trace_max_chars: int
 
     # RAG tuning knobs used by librarian and persistence helpers.
     rag_kb_top_k: int
@@ -122,6 +125,9 @@ def get_runtime_config() -> RuntimeConfig:
         checkpoint_enabled=_env_bool("CHECKPOINT_ENABLED", True),
         checkpoint_database_url=_build_database_url(),
         default_thread_prefix=os.getenv("THREAD_ID_PREFIX", "mission").strip() or "mission",
+        v2_trace_enabled=_env_bool("V2_TRACE_ENABLED", False),
+        v2_trace_include_raw=_env_bool("V2_TRACE_INCLUDE_RAW", False),
+        v2_trace_max_chars=_env_int("V2_TRACE_MAX_CHARS", 2000),
         rag_kb_top_k=_env_int("RAG_KB_TOP_K", 8),
         rag_kb_fetch_k=_env_int("RAG_KB_FETCH_K", 24),
         rag_findings_top_k=_env_int("RAG_FINDINGS_TOP_K", 5),

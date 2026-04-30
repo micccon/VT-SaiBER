@@ -9,6 +9,7 @@ from pydantic import TypeAdapter
 from src.utils.agent_runtime.client import create_chat_completion_with_retry, resolve_openrouter_runtime
 from src.utils.parsers import extract_json_payload
 from src.v2.contracts.chat import ChatSynthesisResult, ChatSynthesisSpec
+from src.v2.observability import trace_failure, trace_synthesis_result, trace_synthesis_start
 
 
 def _extract_content_text(content: Any) -> str:
@@ -75,6 +76,7 @@ class V2ChatSynthesisRunner:
 
         client = self._client
         model = self._model or spec.model.model
+        history_messages = list(history or [])
 
         if client is None:
             runtime = resolve_openrouter_runtime(
@@ -86,30 +88,37 @@ class V2ChatSynthesisRunner:
             client = runtime.client
             model = runtime.model
 
-        if hasattr(client, "chat") and getattr(client.chat, "completions", None) is not None:
-            response = await create_chat_completion_with_retry(
-                client=client,
-                model=model,
-                purpose="v2_chat_synthesis",
-                messages=[
-                    {"role": "system", "content": spec.instructions},
-                    *(list(history or [])),
-                    {"role": "user", "content": user_input},
-                ],
-                temperature=spec.model.temperature,
-            )
-            raw_text = _extract_response_text(response)
-            raw_result = response
-        elif hasattr(client, "ainvoke"):
-            response = await client.ainvoke(user_input)
-            if isinstance(response, dict):
-                raw_text = str(response.get("content") or "")
+        trace_synthesis_start(agent_name=spec.agent_name, model=model, history_count=len(history_messages))
+        try:
+            if hasattr(client, "chat") and getattr(client.chat, "completions", None) is not None:
+                response = await create_chat_completion_with_retry(
+                    client=client,
+                    model=model,
+                    purpose="v2_chat_synthesis",
+                    messages=[
+                        {"role": "system", "content": spec.instructions},
+                        *history_messages,
+                        {"role": "user", "content": user_input},
+                    ],
+                    temperature=spec.model.temperature,
+                )
+                raw_text = _extract_response_text(response)
+                raw_result = response
+            elif hasattr(client, "ainvoke"):
+                response = await client.ainvoke(user_input)
+                if isinstance(response, dict):
+                    raw_text = str(response.get("content") or "")
+                else:
+                    raw_text = str(getattr(response, "content", response))
+                raw_result = response
             else:
-                raw_text = str(getattr(response, "content", response))
-            raw_result = response
-        else:
-            raise RuntimeError("Synthesis client does not support chat completions or ainvoke")
+                raise RuntimeError("Synthesis client does not support chat completions or ainvoke")
 
-        payload = extract_json_payload(raw_text)
-        outcome = TypeAdapter(spec.output_type).validate_python(payload)
-        return ChatSynthesisResult(outcome=outcome, raw_result=raw_result, raw_text=raw_text)
+            payload = extract_json_payload(raw_text)
+            outcome = TypeAdapter(spec.output_type).validate_python(payload)
+            result = ChatSynthesisResult(outcome=outcome, raw_result=raw_result, raw_text=raw_text)
+            trace_synthesis_result(agent_name=spec.agent_name, result=result)
+            return result
+        except Exception as exc:
+            trace_failure(lane="chat_synthesis", agent_name=spec.agent_name, exc=exc)
+            raise

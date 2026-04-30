@@ -21,6 +21,7 @@ from src.v2.contracts.execution import (
     ToolSpec,
 )
 from src.v2.execution.policies import ExecutionPolicy
+from src.v2.observability import trace_execution_result, trace_execution_start, trace_failure
 
 
 def _load_agents_sdk(sdk_module: Any | None = None) -> Any:
@@ -229,49 +230,62 @@ class AgentsSDKExecutionRunner:
         sdk = _load_agents_sdk(self._sdk_module)
         active_policy = policy or ExecutionPolicy()
         recorder = _RunRecorder()
-
-        async with AsyncExitStack() as exit_stack:
-            tool_specs = await self._build_tool_specs(sdk, spec, exit_stack)
-            function_tools = [self._build_function_tool(sdk, tool, active_policy, recorder) for tool in tool_specs]
-
-            agent_kwargs: dict[str, Any] = {
-                "name": spec.agent_name,
-                "instructions": spec.instructions,
-                "output_type": spec.output_type,
-                "tools": function_tools,
-            }
-
-            run_config = self._build_run_config(sdk, spec)
-            model = self._build_model(sdk, spec)
-            if model is not None:
-                agent_kwargs["model"] = model
-            elif spec.model.model:
-                agent_kwargs["model"] = spec.model.model
-
-            agent = sdk.Agent(**agent_kwargs)
-            runner = getattr(sdk, "Runner", None)
-            if runner is None:
-                raise RuntimeError("OpenAI Agents SDK Runner is unavailable")
-
-            result = await runner.run(
-                agent,
-                user_input,
-                context=context,
-                max_turns=spec.max_turns,
-                run_config=run_config,
-            )
-
-        outcome = _coerce_output(spec.output_type, getattr(result, "final_output", None))
-        artifacts: list[dict[str, Any]] = []
-        for event in recorder.tool_events:
-            artifacts.extend(event.artifacts)
-        return ExecutionResult(
-            outcome=outcome,
-            tool_events=recorder.tool_events,
-            approval_events=recorder.approval_events,
-            artifacts=artifacts,
-            raw_result=result,
+        trace_execution_start(
+            agent_name=spec.agent_name,
+            model=spec.model.model,
+            mcp_server_count=len(spec.mcp_servers),
+            local_tool_count=len(spec.local_tools),
+            max_turns=spec.max_turns,
         )
+
+        try:
+            async with AsyncExitStack() as exit_stack:
+                tool_specs = await self._build_tool_specs(sdk, spec, exit_stack)
+                function_tools = [self._build_function_tool(sdk, tool, active_policy, recorder) for tool in tool_specs]
+
+                agent_kwargs: dict[str, Any] = {
+                    "name": spec.agent_name,
+                    "instructions": spec.instructions,
+                    "output_type": spec.output_type,
+                    "tools": function_tools,
+                }
+
+                run_config = self._build_run_config(sdk, spec)
+                model = self._build_model(sdk, spec)
+                if model is not None:
+                    agent_kwargs["model"] = model
+                elif spec.model.model:
+                    agent_kwargs["model"] = spec.model.model
+
+                agent = sdk.Agent(**agent_kwargs)
+                runner = getattr(sdk, "Runner", None)
+                if runner is None:
+                    raise RuntimeError("OpenAI Agents SDK Runner is unavailable")
+
+                result = await runner.run(
+                    agent,
+                    user_input,
+                    context=context,
+                    max_turns=spec.max_turns,
+                    run_config=run_config,
+                )
+
+            outcome = _coerce_output(spec.output_type, getattr(result, "final_output", None))
+            artifacts: list[dict[str, Any]] = []
+            for event in recorder.tool_events:
+                artifacts.extend(event.artifacts)
+            execution_result = ExecutionResult(
+                outcome=outcome,
+                tool_events=recorder.tool_events,
+                approval_events=recorder.approval_events,
+                artifacts=artifacts,
+                raw_result=result,
+            )
+            trace_execution_result(agent_name=spec.agent_name, result=execution_result)
+            return execution_result
+        except Exception as exc:
+            trace_failure(lane="execution", agent_name=spec.agent_name, exc=exc)
+            raise
 
     async def _build_tool_specs(
         self,

@@ -1,0 +1,25 @@
+from __future__ import annotations
+
+import pytest
+
+from src.state.models import IntelligenceBrief
+from src.v2.agents.librarian.agent import LibrarianV2Agent
+from tests.v2_live.helpers import FakeRag, discovered_http_state, require_live_openrouter, runtime_summary, step
+
+pytestmark = pytest.mark.live
+
+
+@pytest.mark.asyncio
+async def test_librarian_v2_live_synthesis_with_minimal_retrieval():
+    require_live_openrouter()
+    step(f"Running librarian_v2 live synthesis: {runtime_summary()}")
+
+    state = discovered_http_state()
+    agent = LibrarianV2Agent(rag_orchestrator=FakeRag())
+    out = await agent.run(state)
+
+    assert out["current_agent"] == "librarian_v2"
+    assert out["research_cache"]
+    assert out["intelligence_findings"]
+    assert out["agent_log"]
+    IntelligenceBrief.model_validate(next(iter(out["research_cache"].values())))

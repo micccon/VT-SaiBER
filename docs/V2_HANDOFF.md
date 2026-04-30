@@ -16,6 +16,7 @@ The CLI command shape does not change. `SAIBER_GRAPH_VERSION=legacy` or an unset
 - V2 graph: `build_supervisor_v2_graph()` runs `supervisor_v2` as the entrypoint and routes only to v2 node names.
 - V2 router: `src/v2/graph/router.py` validates v2-only routing and applies hard graph safety checks.
 - Runtime graph selector: `src.main.build_runtime_graph()` chooses legacy or v2 from `RuntimeConfig.graph_version`.
+- V2 production tracing: `src/v2/observability/` emits opt-in, redacted log summaries for execution and chat/synthesis runs.
 
 ## What Still Uses Legacy
 - Legacy is still the default graph.
@@ -36,16 +37,31 @@ Run non-live promotion tests:
 bash tests/v2_non_live/run_v2_non_live.sh
 ```
 
-Run live OpenRouter tests:
+Run live OpenRouter tests. These cover `supervisor_v2` and `librarian_v2` without MCP:
 
 ```bash
 RUN_V2_LIVE_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
-Run live OpenRouter plus MCP graph smoke tests:
+Run live OpenRouter plus MCP-backed agent tests. These include `scout_v2`, `fuzzer_v2`, and approval-blocked `striker_v2`:
 
 ```bash
 RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 bash tests/v2_live/run_v2_live.sh
+```
+
+Run resident with a seeded session:
+
+```bash
+RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 \
+LIVE_RESIDENT_SESSION_ID=1 LIVE_RESIDENT_TARGET=10.0.0.5 \
+bash tests/v2_live/run_v2_live.sh
+```
+
+Run Striker with actual approved execution only when intentionally validating that behavior:
+
+```bash
+RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 LIVE_STRIKER_EXECUTE=true \
+bash tests/v2_live/run_v2_live.sh
 ```
 
 Run the app through the full v2 graph:
@@ -53,11 +69,22 @@ Run the app through the full v2 graph:
 ```bash
 docker exec -t \
   -e SAIBER_GRAPH_VERSION=v2 \
+  -e V2_TRACE_ENABLED=true \
   -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   -e OPENROUTER_MODEL="$OPENROUTER_MODEL" \
   vt-saiber-agents sh -lc \
   'cd /app && python3 -m src.main --mission-goal "..." --target-scope "..."'
 ```
+
+Enable v2 tracing in Docker logs:
+
+```bash
+V2_TRACE_ENABLED=true
+V2_TRACE_INCLUDE_RAW=false
+V2_TRACE_MAX_CHARS=2000
+```
+
+`V2_TRACE_INCLUDE_RAW=false` is the safe default. It logs structured outcomes, tool names, tool statuses, approval events, and artifact counts while redacting sensitive keys and hiding raw SDK/model payloads.
 
 Run the focused v2 unit slice:
 
@@ -67,9 +94,12 @@ docker exec -t vt-saiber-agents sh -lc 'cd /app && python3 -m pytest tests/agent
 
 ## Replacement Checklist
 - Pass `tests/v2_non_live` locally and in the VM.
-- Pass selected `tests/v2_live` in the VM with `OPENROUTER_API_KEY`.
-- Pass MCP-backed live graph smoke tests with Docker MCP servers reachable.
+- Pass `tests/v2_live` in the VM with `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`.
+- Pass MCP-backed live agent tests with Docker MCP servers reachable.
+- Pass resident live test with an intentionally seeded session fixture.
+- Use `V2_TRACE_ENABLED=true` during VM validation to inspect tool calls, approval blocks, and structured agent outcomes.
 - Verify rollback by switching `SAIBER_GRAPH_VERSION` back to `legacy`.
 - Extract librarian retrieval helpers out of old `LibrarianAgent`.
 - Add captured/live coverage for MCP-backed specialist agents.
-- Only after stable v2 runs should legacy graph, router, agents, tool loop, and MCP bridge be removed.
+- Promote v2 names to regular names after validation: `supervisor_v2` becomes `supervisor`, `scout_v2` becomes `scout`, etc.
+- Only after stable promoted runs should legacy graph, router, agents, tool loop, and MCP bridge be removed.
