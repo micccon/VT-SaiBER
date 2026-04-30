@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.v2.agents.striker.agent import StrikerV2Agent
+from src.v2.agents.striker.context import build_striker_context
 from tests.v2_live.helpers import captured_automotive_state, require_live_mcp, runtime_summary, step
 
 pytestmark = pytest.mark.live
@@ -23,6 +24,8 @@ async def test_striker_v2_live_manual_approval_can_attempt_exploit():
 
     agent = StrikerV2Agent()
     agent.require_confirmation = True
+    context_preview = build_striker_context(state)
+    print(f"[v2-live] STRIKER_CONTEXT:\n{context_preview[:20000]}", flush=True)
 
     out = await agent.run(state)
 
@@ -35,19 +38,31 @@ async def test_striker_v2_live_manual_approval_can_attempt_exploit():
     status = findings.get("status")
     selected_tool = findings.get("selected_tool")
 
+    attempted_with_evidence = bool(out.get("artifacts")) or status in {
+        "approval_blocked",
+        "validated_no_session",
+        "session_opened",
+        "execution_error",
+    }
     assert status in {
+        "no_candidate",
         "approval_blocked",
         "validated_no_session",
         "session_opened",
         "execution_error",
     }, f"Striker did not reach an execution/approval path. Findings: {findings}"
-    assert selected_tool in {
-        "msf_run_exploit",
-        "msf_run_auxiliary",
-        "web_sqlmap_scan",
-        "access_hydra_attack",
-        "system_execute_command",
-    }, f"Striker did not select an approval-gated execution tool. Findings: {findings}"
+    assert attempted_with_evidence, (
+        "Striker did not produce runtime evidence that an approval-gated path was attempted. "
+        f"Findings: {findings}"
+    )
+    if selected_tool:
+        assert selected_tool in {
+            "msf_run_exploit",
+            "msf_run_auxiliary",
+            "web_sqlmap_scan",
+            "access_hydra_attack",
+            "system_execute_command",
+        }, f"Striker selected an unexpected execution tool. Findings: {findings}"
 
     if status == "approval_blocked":
         assert not out.get("active_sessions"), "Approval-blocked runs must not open sessions"

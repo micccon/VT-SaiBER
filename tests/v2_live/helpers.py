@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -29,21 +30,118 @@ CAPTURED_SERVICES = [
     {"port": 9556, "protocol": "tcp", "service_name": "unknown", "version": None, "banner": None},
 ]
 CAPTURED_SCAN_POLICY = {"methods": ["GET", "HEAD"], "max_depth": 3, "request_throttle_ms": 200, "soft_404_detection": True}
+CAPTURED_NMAP_RAW = """
+Starting Nmap 7.95 ( https://nmap.org )
+Nmap scan report for automotive-testbed (172.20.0.5)
+Host is up (0.000041s latency).
+Not shown: 995 closed tcp ports (reset)
+PORT     STATE SERVICE     VERSION
+22/tcp   open  ssh         OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 (Ubuntu Linux; protocol 2.0)
+8000/tcp open  http        Werkzeug httpd 3.1.8 (Python 3.10.12)
+8080/tcp open  http        Werkzeug httpd 3.1.8 (Python 3.10.12)
+9555/tcp open  trispen-sra?
+9556/tcp open  unknown
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+Nmap done: 1 IP address (1 host up) scanned.
+"""
 CAPTURED_GOBUSTER_RAW = {"result": {"status": "success", "raw": {"stdout": """
+===============================================================
+Gobuster v3.8.2
+by OJ Reeves (@TheColonial) & Christian Mehlmauer (@firefart)
+===============================================================
+[+] Url:                     http://172.20.0.5:8000
+[+] Method:                  GET
+[+] Threads:                 10
+[+] Delay:                   200ms
+[+] Wordlist:                /usr/share/wordlists/dirb/common.txt
+[+] Negative Status codes:   404
+[+] User Agent:              gobuster/3.8.2
+[+] Timeout:                 10s
+===============================================================
+Starting gobuster in directory enumeration mode
+===============================================================
 dashboard            (Status: 302) [Size: 199] [--> /login]
 login                (Status: 200) [Size: 1206]
 logout               (Status: 302) [Size: 199] [--> /login]
 search               (Status: 405) [Size: 153]
 settings             (Status: 302) [Size: 199] [--> /login]
 upload               (Status: 405) [Size: 153]
+===============================================================
+Finished
+===============================================================
 """}}}
 CAPTURED_NIKTO_RAW = {"result": {"status": "success", "raw": {"stdout": """
++ Nikto v2.6.0
++ Target IP:          172.20.0.5
++ Target Hostname:    172.20.0.5
++ Target Port:        8000
 + Server: Werkzeug/3.1.8 Python/3.10.12
 + [013587] /: Suggested security header missing: referrer-policy.
++ [013587] /: Suggested security header missing: x-content-type-options.
++ [013587] /: Suggested security header missing: permissions-policy.
 + [013587] /: Suggested security header missing: content-security-policy.
++ [013587] /: Suggested security header missing: strict-transport-security.
 + [600652] Python/3.10.12 appears to be outdated.
 + [999990] OPTIONS: Allowed HTTP Methods: GET, HEAD, OPTIONS .
++ [007342] /: X-Frame-Options header is deprecated and was replaced by CSP frame-ancestors.
++ [007352] /: The X-Content-Type-Options header is not set.
++ 8268 requests: 0 errors and 9 items reported on the remote host
 """}}}
+CAPTURED_RESEARCH_CACHE = {
+    "query": "ssh OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 Linux protocol 2.0 http Werkzeug httpd 3.1.8 Python 3.10.12 trispen-sra? unknown",
+    "database_target_info": json.dumps(
+        {
+            "target": {"ip_address": CAPTURED_TARGET_IP, "os_guess": None, "hostname": None},
+            "services": [
+                {"port": 22, "protocol": "tcp", "service_name": "ssh", "service_version": "OpenSSH 8.9p1 Ubuntu 3ubuntu0.14 (Ubuntu Linux; protocol 2.0)"},
+                {"port": 8000, "protocol": "tcp", "service_name": "http", "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)"},
+                {"port": 8080, "protocol": "tcp", "service_name": "http", "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)"},
+                {"port": 9555, "protocol": "tcp", "service_name": "trispen-sra?", "service_version": None},
+                {"port": 9556, "protocol": "tcp", "service_name": "unknown", "service_version": None},
+            ],
+            "findings": [],
+            "sessions": [],
+        }
+    ),
+    "kb_top_hits": "none",
+    "similar_findings": "none",
+    "cve_top_hits": (
+        "CVE-2025-54424 (cve, score=0.81): 1Panel is a web interface and MCP Server that manages websites, files, "
+        "containers, databases, and LLMs on a Linux server.\n"
+        "CVE-2003-1110 (cve, score=0.75): The Session Initiation Protocol implementation in Columbia SIP User Agent.\n"
+        "CVE-2000-0142 (cve, score=0.5): Timbuktu Pro denial of service.\n"
+        "CVE-2002-1935 (cve, score=0.5): Pingtel Xpressa predictable SIP values.\n"
+        "CVE-2004-2475 (cve, score=0.43): Google Toolbar about.html XSS."
+    ),
+    "degraded_reasons": ["osint enrichment disabled"],
+}
+CAPTURED_INTELLIGENCE_FINDINGS = [
+    {
+        "source": "cve",
+        "cve": "CVE-2025-54424",
+        "description": (
+            "1Panel is a web interface and MCP Server that manages websites, files, containers, databases, and LLMs "
+            "on a Linux server. In versions 2.0.5 and below, incomplete certificate verification can lead to "
+            "unauthorized access and remote code execution."
+        ),
+        "confidence": 0.81,
+        "citations": ["captured-output2"],
+        "source_types": ["cve"],
+        "source_status": {"cve": "captured"},
+        "service_name": "http",
+        "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)",
+    },
+    {
+        "source": "cve",
+        "cve": "CVE-2003-1110",
+        "description": "SIP implementation flaw allowing denial of service or code execution via crafted INVITE messages.",
+        "confidence": 0.75,
+        "citations": ["captured-output2"],
+        "source_types": ["cve"],
+        "source_status": {"cve": "captured"},
+        "service_name": "http",
+    },
+]
 
 
 def step(message: str) -> None:
@@ -164,7 +262,7 @@ def captured_automotive_state(*, mission_id: str = "v2-live-captured") -> CyberS
 
     state = base_state(
         mission_goal=f"Use the precomputed automotive evidence for a bounded v2 live validation on {CAPTURED_TARGET}",
-        target_scope=[live_scope()],
+        target_scope=[live_scope(), CAPTURED_TARGET_IP],
         mission_id=mission_id,
     )
     state["discovered_targets"] = {
@@ -176,21 +274,32 @@ def captured_automotive_state(*, mission_id: str = "v2-live-captured") -> CyberS
     }
     state["web_findings"] = captured_web_findings(CAPTURED_BASE_URL)
     state["fuzzing_runs"] = [
-        {"target": CAPTURED_BASE_URL, "tool": "web_content_enum", "status": "captured"},
-        {"target": CAPTURED_BASE_URL, "tool": "web_nikto_scan", "status": "captured"},
-    ]
-    state["research_cache"] = {"v2_live_captured": research_seed()}
-    state["intelligence_findings"] = [
         {
-            "source": "captured_cve_seed",
-            "description": "Captured automotive context indicates HTTP Werkzeug services and SSH exposure.",
-            "confidence": 0.75,
-            "citations": ["legacy-captured-striker-test"],
-            "source_types": ["captured"],
-            "service_name": "http",
-            "service_version": "Werkzeug httpd 3.1.8 (Python 3.10.12)",
+            "target": CAPTURED_BASE_URL,
+            "tool": "web_content_enum",
+            "status": "captured",
+            "summary": "Loaded normalized gobuster findings from captured output2.txt evidence",
+            "raw_stdout": CAPTURED_GOBUSTER_RAW["result"]["raw"]["stdout"],
+        },
+        {
+            "target": CAPTURED_BASE_URL,
+            "tool": "web_nikto_scan",
+            "status": "captured",
+            "summary": "Loaded normalized Nikto findings from captured output2.txt evidence",
+            "raw_stdout": CAPTURED_NIKTO_RAW["result"]["raw"]["stdout"],
+        },
+    ]
+    state["reconnaissance_runs"] = [
+        {
+            "target": CAPTURED_TARGET,
+            "tool": "recon_service_probe",
+            "status": "captured",
+            "summary": "Loaded captured Nmap service/version evidence from the automotive testbed.",
+            "raw_stdout": CAPTURED_NMAP_RAW,
         }
     ]
+    state["research_cache"] = dict(CAPTURED_RESEARCH_CACHE)
+    state["intelligence_findings"] = [dict(item) for item in CAPTURED_INTELLIGENCE_FINDINGS]
     return state
 
 

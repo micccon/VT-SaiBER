@@ -94,6 +94,28 @@ def _format_web_findings(state: CyberState) -> str:
     return "\n".join(lines) if lines else "- none"
 
 
+def _format_raw_run_evidence(state: CyberState, key: str, title: str, *, max_chars: int = 6000) -> str:
+    """Format captured tool-run evidence such as Nmap, Gobuster, and Nikto output."""
+
+    lines: list[str] = []
+    for run in (state.get(key, []) or [])[:6]:
+        if not isinstance(run, dict):
+            continue
+        tool = str(run.get("tool") or "unknown")
+        target = str(run.get("target") or "unknown")
+        status = str(run.get("status") or "unknown")
+        summary = str(run.get("summary") or "").strip()
+        raw = str(run.get("raw_stdout") or run.get("stdout") or "").strip()
+        lines.append(f"- {title}: tool={tool} target={target} status={status}")
+        if summary:
+            lines.append(f"  summary: {summary}")
+        if raw:
+            snippet = raw[:max_chars]
+            suffix = "\n  ...(truncated)" if len(raw) > max_chars else ""
+            lines.append(f"  raw:\n{snippet}{suffix}")
+    return "\n".join(lines) if lines else "- none"
+
+
 def _format_research_hints(state: CyberState) -> str:
     hints: list[str] = []
     for key, value in list((state.get("research_cache", {}) or {}).items())[:6]:
@@ -251,7 +273,9 @@ def build_striker_context(state: CyberState) -> str:
     return (
         f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
         f"TARGET INTELLIGENCE:\n{_format_targets(state)}\n\n"
+        f"SCOUT / NMAP EVIDENCE:\n{_format_raw_run_evidence(state, 'reconnaissance_runs', 'scout')}\n\n"
         f"RELEVANT WEB FINDINGS:\n{_format_web_findings(state)}\n\n"
+        f"FUZZER RAW SCAN EVIDENCE:\n{_format_raw_run_evidence(state, 'fuzzing_runs', 'fuzzer')}\n\n"
         f"RESEARCH / INTELLIGENCE HINTS:\n{_format_research_hints(state)}\n\n"
         f"{skills_section}"
         f"PRIOR EXPLOIT ATTEMPTS:\n{_format_prior_attempts(state)}\n\n"
