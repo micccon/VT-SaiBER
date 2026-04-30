@@ -45,6 +45,14 @@ def _tool_schema(tool_def: Any) -> dict[str, Any]:
     return schema if isinstance(schema, dict) else {}
 
 
+def _unwrap_tool_payload(payload: Any) -> dict[str, Any]:
+    """Unwrap direct MCP envelopes that nest normalized tool output under result."""
+
+    if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
+        return payload["result"]
+    return payload if isinstance(payload, dict) else {}
+
+
 async def _connect_attackbox():
     pytest.importorskip("agents")
     from agents.mcp import MCPServerStreamableHttp
@@ -94,12 +102,10 @@ async def test_attackbox_mcp_safe_tools_are_callable():
         for tool_name, arguments in SAFE_TOOL_CALLS.items():
             step(f"MCP_CALL {tool_name}({arguments})")
             raw = await server.call_tool(tool_name, arguments)
-            payload = _normalize_mcp_call_result(raw)
+            payload = _unwrap_tool_payload(_normalize_mcp_call_result(raw))
             results[tool_name] = payload
-            status = payload.get("status") if isinstance(payload, dict) else None
+            status = payload.get("status")
             step(f"MCP_RESULT {tool_name}: status={status} payload={payload}")
-            if not isinstance(payload, dict):
-                pytest.fail(f"{tool_name} returned non-dict payload: {payload!r}")
             if status not in {"success", "error"}:
                 pytest.fail(f"{tool_name} returned unexpected status {status!r}: {payload}")
 
