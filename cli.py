@@ -8,11 +8,27 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+
+def is_running_on_linux_vm() -> bool:
+    """Detect if we're running directly on a Linux VM with Docker."""
+    if platform.system() != "Linux":
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "ps"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
 CONFIG_FILE = PROJECT_ROOT / ".vtsaiber_config.json"
@@ -24,6 +40,7 @@ class Config:
     vm_user: str = ""
     vm_path: str = "/mnt/shared/VT-SaiBER"
     setup_complete: bool = False
+    local_mode: bool = False  # True if running directly on VM
 
     def save(self):
         with open(CONFIG_FILE, "w") as f:
@@ -42,7 +59,7 @@ class Config:
 
     @property
     def configured(self) -> bool:
-        return bool(self.vm_host and self.vm_user)
+        return self.local_mode or bool(self.vm_host and self.vm_user)
 
     @property
     def ssh_target(self) -> str:
@@ -116,7 +133,9 @@ def menu(title: str, options: list[tuple[str, str]], back: bool = True) -> Optio
 
 
 def ssh_run(config: Config, cmd: str, interactive: bool = True) -> subprocess.CompletedProcess:
-    """Run a command on the VM via SSH."""
+    """Run a command on the VM via SSH, or locally if in local mode."""
+    if config.local_mode:
+        return subprocess.run(cmd, shell=True)
     ssh_cmd = ["ssh"]
     if interactive:
         ssh_cmd.append("-t")
@@ -126,11 +145,14 @@ def ssh_run(config: Config, cmd: str, interactive: bool = True) -> subprocess.Co
 
 def ssh_check(config: Config, cmd: str) -> tuple[bool, str]:
     """Run a command on VM and return success status and output."""
-    result = subprocess.run(
-        ["ssh", config.ssh_target, cmd],
-        capture_output=True,
-        text=True,
-    )
+    if config.local_mode:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    else:
+        result = subprocess.run(
+            ["ssh", config.ssh_target, cmd],
+            capture_output=True,
+            text=True,
+        )
     return result.returncode == 0, result.stdout.strip()
 
 
@@ -143,68 +165,100 @@ def run_setup_wizard(config: Config) -> bool:
 
     print_header("VT-SaiBER Setup Wizard")
 
-    # Step 1: VM Configuration
-    print("\033[1mStep 1: VM Connection\033[0m\n")
+    # Step 1: Where are you running from?
+    print("\033[1mStep 1: Environment\033[0m\n")
 
     if config.configured:
-        print(f"  Current VM: {config.ssh_target}")
+        if config.local_mode:
+            print("  Mode: Running directly on VM (local mode)")
+        else:
+            print(f"  Mode: SSH to {config.ssh_target}")
         if not confirm("  Use this configuration?"):
             config.vm_host = ""
             config.vm_user = ""
+            config.local_mode = False
 
     if not config.configured:
-        print("  First, we need to connect to your Linux VM.")
-        print("  (The VM where Docker and the testbed will run)\n")
-        print("  To find these values, run these commands inside your VM:")
-        print_cmd("hostname -I      # VM IP address")
-        print_cmd("whoami           # VM username")
-        print()
-        print("  Typical IP ranges:")
-        print("    UTM:       192.168.64.x")
-        print("    Parallels: 10.211.55.x\n")
-        config.vm_host = prompt("  VM IP address")
-        config.vm_user = prompt("  VM username")
-        config.save()
-
-    # Step 2: Test SSH connection
-    print(f"\n\033[1mStep 2: Testing SSH Connection\033[0m\n")
-    print_info(f"Connecting to {config.ssh_target}...")
-
-    try:
-        result = subprocess.run(
-            [
-                "ssh",
-                "-o", "ConnectTimeout=5",
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=accept-new",
-                "-o", "PubkeyAuthentication=yes",
-                config.ssh_target,
-                "echo connected",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            print_success("SSH connection successful!")
+        # Auto-detect Linux VM
+        if is_running_on_linux_vm():
+            print_success("Detected: Running on Linux VM with Docker")
+            print()
+            if confirm("  Use local mode (recommended)?"):
+                config.local_mode = True
+                config.vm_path = os.getcwd()
+                config.save()
+                print_success("Local mode enabled - no SSH needed.")
+            else:
+                config.local_mode = False
         else:
-            print_error("SSH connection failed.")
-            if result.stderr:
-                print(f"  Error: {result.stderr.strip()}")
-            print("\n  Troubleshooting:")
-            print("    1. Test SSH manually:")
-            print_cmd(f"ssh {config.ssh_target}")
-            print("    2. If prompted for password, set up SSH keys:")
-            print_cmd(f"ssh-copy-id {config.ssh_target}")
-            print("    3. If keys still don't work, fix permissions on VM:")
-            print_cmd("chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys")
+            print("  Where are you running this CLI from?\n")
+            print("  [1] Mac/Windows (SSH into VM)")
+            print("  [2] Directly on the Linux VM (local mode)\n")
+            mode = prompt("  Select", "1")
+
+            if mode == "2":
+                config.local_mode = True
+                config.vm_path = os.getcwd()
+                config.save()
+                print_success("Local mode enabled - no SSH needed.")
+            else:
+                config.local_mode = False
+
+        if not config.local_mode:
+            print("\n  To find these values, run these commands inside your VM:")
+            print_cmd("hostname -I      # VM IP address")
+            print_cmd("whoami           # VM username")
+            print()
+            print("  Typical IP ranges:")
+            print("    UTM:       192.168.64.x")
+            print("    Parallels: 10.211.55.x\n")
+            config.vm_host = prompt("  VM IP address")
+            config.vm_user = prompt("  VM username")
+            config.save()
+
+    # Step 2: Test SSH connection (skip in local mode)
+    if config.local_mode:
+        print(f"\n\033[1mStep 2: Skipping SSH (local mode)\033[0m\n")
+        print_success("Running locally - no SSH needed.")
+    else:
+        print(f"\n\033[1mStep 2: Testing SSH Connection\033[0m\n")
+        print_info(f"Connecting to {config.ssh_target}...")
+
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-o", "ConnectTimeout=5",
+                    "-o", "BatchMode=yes",
+                    "-o", "StrictHostKeyChecking=accept-new",
+                    "-o", "PubkeyAuthentication=yes",
+                    config.ssh_target,
+                    "echo connected",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                print_success("SSH connection successful!")
+            else:
+                print_error("SSH connection failed.")
+                if result.stderr:
+                    print(f"  Error: {result.stderr.strip()}")
+                print("\n  Troubleshooting:")
+                print("    1. Test SSH manually:")
+                print_cmd(f"ssh {config.ssh_target}")
+                print("    2. If prompted for password, set up SSH keys:")
+                print_cmd(f"ssh-copy-id {config.ssh_target}")
+                print("    3. If keys still don't work, fix permissions on VM:")
+                print_cmd("chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys")
+                return False
+        except subprocess.TimeoutExpired:
+            print_error("SSH connection timed out.")
             return False
-    except subprocess.TimeoutExpired:
-        print_error("SSH connection timed out.")
-        return False
-    except Exception as e:
-        print_error(f"SSH error: {e}")
-        return False
+        except Exception as e:
+            print_error(f"SSH error: {e}")
+            return False
 
     # Step 3: Check shared folder
     print(f"\n\033[1mStep 3: Shared Folder\033[0m\n")
@@ -282,11 +336,14 @@ def show_status(config: Config):
     print_header("VT-SaiBER Status")
 
     if not config.configured:
-        print_error("VM not configured. Run setup first.")
+        print_error("Not configured. Run setup first.")
         input("\nPress Enter to continue...")
         return
 
-    print(f"VM: {config.ssh_target}\n")
+    if config.local_mode:
+        print("Mode: Local (running on VM)\n")
+    else:
+        print(f"VM: {config.ssh_target}\n")
 
     containers = [
         ("vt-saiber-postgres", "PostgreSQL"),
@@ -466,7 +523,11 @@ def run_utilities_menu(config: Config):
             ssh_run(config, "docker exec -it automotive-testbed /bin/bash")
 
         elif choice == "5":
-            subprocess.run(["ssh", config.ssh_target])
+            if config.local_mode:
+                print_info("Already running on VM - use your terminal directly.")
+                input("\nPress Enter to continue...")
+            else:
+                subprocess.run(["ssh", config.ssh_target])
 
         elif choice == "6":
             print()
@@ -530,7 +591,10 @@ def main():
     while True:
         print_header("VT-SaiBER Main Menu")
 
-        print(f"  VM: {config.ssh_target}")
+        if config.local_mode:
+            print("  Mode: Local (running on VM)")
+        else:
+            print(f"  VM: {config.ssh_target}")
         print()
 
         choice = menu("What would you like to do?", [
