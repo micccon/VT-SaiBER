@@ -122,6 +122,22 @@ def build_initial_state(mission_goal: str, target_scope: List[str], mission_id: 
     }
 
 
+def build_runtime_graph(config: RuntimeConfig, *, checkpointer=None):
+    """Build the configured orchestration graph."""
+
+    graph_version = (config.graph_version or "legacy").strip().lower()
+    if graph_version == "legacy":
+        return build_graph(checkpointer=checkpointer)
+    if graph_version == "v2":
+        from src.v2.graph import build_supervisor_v2_graph
+
+        return build_supervisor_v2_graph(checkpointer=checkpointer)
+    raise ValueError(
+        f"Unsupported SAIBER_GRAPH_VERSION={config.graph_version!r}. "
+        "Expected 'legacy' or 'v2'."
+    )
+
+
 @asynccontextmanager
 async def maybe_checkpointer(config: RuntimeConfig | None = None):
     """Best-effort Postgres checkpointer bootstrap."""
@@ -245,7 +261,7 @@ class CatalystRunner:
 
         async with maybe_checkpointer(self.config) as checkpointer:
             # The catalyst runner is intentionally thin here: graph construction and orchestration stay centralized.
-            graph = build_graph(checkpointer=checkpointer)
+            graph = build_runtime_graph(self.config, checkpointer=checkpointer)
             try:
                 result = await graph.ainvoke(initial_state, config=graph_config)
             except NotImplementedError:
@@ -254,7 +270,7 @@ class CatalystRunner:
                 logger.warning(
                     "Configured checkpointer does not support async graph execution; retrying without checkpointing."
                 )
-                graph = build_graph(checkpointer=None)
+                graph = build_runtime_graph(self.config, checkpointer=None)
                 result = await graph.ainvoke(initial_state, config=graph_config)
             return to_jsonable(result)
 

@@ -1,102 +1,33 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import src.agents.striker as striker_mod
 import src.agents.striker_v2 as striker_v2_mod
-from src.utils.tools import RuntimeTool
+from src.v2.agents.striker.outcome import ArtifactClaim, SessionClaim, StrikerOutcome
+from src.v2.agents.striker.policy import StrikerExecutionPolicy
+from src.v2.contracts.execution import ApprovalEvent, ExecutionResult, ToolEvent, ToolSpec
 
 
-class _FakeFunctionTool:
-    def __init__(self, *, name: str, description: str, params_json_schema: dict[str, Any], on_invoke_tool):
-        self.name = name
-        self.description = description
-        self.params_json_schema = params_json_schema
-        self.on_invoke_tool = on_invoke_tool
+class _FakeExecutionRunner:
+    def __init__(self, result: ExecutionResult[StrikerOutcome]):
+        self.result = result
+        self.last_spec = None
+        self.last_input = None
+        self.last_context = None
+        self.last_policy = None
+
+    async def run(self, spec, *, user_input: str, context=None, policy=None):
+        self.last_spec = spec
+        self.last_input = user_input
+        self.last_context = context
+        self.last_policy = policy
+        return self.result
 
 
-class _FakeMCPServerStreamableHttp:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-
-class _FakeMCPModule:
-    MCPServerStreamableHttp = _FakeMCPServerStreamableHttp
-
-    @staticmethod
-    def create_static_tool_filter(*, allowed_tool_names):
-        return {"allowed_tool_names": list(allowed_tool_names)}
-
-
-class _FakeAsyncOpenAI:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-
-class _FakeChatModel:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-
-class _FakeRunConfig:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-
-class _FakeModelSettings:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-
-class _FakeAgent:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.tools = kwargs.get("tools", [])
-        self.mcp_servers = kwargs.get("mcp_servers", [])
-
-
-class _FakeRunResult:
-    def __init__(self, messages: list[dict[str, Any]], final_output: Any = ""):
-        self._messages = messages
-        self.final_output = final_output
-        self.new_items = []
-        self.raw_responses = [object()]
-
-    def to_input_list(self, mode: str = "preserve_all"):
-        return list(self._messages)
-
-
-class _FakeRunner:
-    result: _FakeRunResult = _FakeRunResult(messages=[])
-
-    @classmethod
-    async def run(cls, agent, input, context=None, max_turns=8, run_config=None):
-        return cls.result
-
-
-class _FakeSDK:
-    Agent = _FakeAgent
-    Runner = _FakeRunner
-    FunctionTool = _FakeFunctionTool
-    AsyncOpenAI = _FakeAsyncOpenAI
-    OpenAIChatCompletionsModel = _FakeChatModel
-    RunConfig = _FakeRunConfig
-    ModelSettings = _FakeModelSettings
-    mcp = _FakeMCPModule()
-
-
-def _base_state() -> Dict[str, Any]:
+def _base_state() -> dict[str, Any]:
     return {
         "mission_goal": "Exploit target and gain initial access",
         "mission_id": "test-mission",
@@ -127,121 +58,7 @@ def _base_state() -> Dict[str, Any]:
     }
 
 
-def _runtime_tool(name: str) -> RuntimeTool:
-    async def executor(**kwargs):
-        return {"status": "success", "invocation": kwargs, "summary": f"{name} executed"}
-
-    return RuntimeTool(
-        name=name,
-        description=name,
-        input_schema={"type": "object", "properties": {}},
-        executor=executor,
-        defaults={},
-    )
-
-
-def _plain(value: Any) -> Any:
-    if hasattr(value, "model_dump"):
-        return value.model_dump()
-    if isinstance(value, list):
-        return [_plain(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _plain(item) for key, item in value.items()}
-    return value
-
-
-def _strip_unstable_fields(update: Dict[str, Any]) -> Dict[str, Any]:
-    plain = _plain(update)
-    for entry in plain.get("agent_log", []) or []:
-        if isinstance(entry, dict):
-            entry.pop("timestamp", None)
-    for entry in plain.get("errors", []) or []:
-        if isinstance(entry, dict):
-            entry.pop("timestamp", None)
-    return plain
-
-
-def _run(coro):
-    return asyncio.run(coro)
-
-
-@pytest.mark.asyncio
-async def test_striker_v2_returns_validation_error_without_targets():
-    agent = striker_v2_mod.StrikerV2Agent(sdk_module=_FakeSDK)
-    state = _base_state()
-
-    out = await agent.call_llm(state)
-    assert out["errors"][0].error_type == "ValidationError"
-    assert out["errors"][0].recoverable is True
-
-
-def _scenario_messages() -> Dict[str, list[dict[str, Any]]]:
-    return {
-        "approval_blocked": [
-            {
-                "role": "tool",
-                "name": "msf_run_exploit",
-                "tool_call_id": "c1",
-                "content": {
-                    "status": "aborted",
-                    "message": "Execution blocked pending manual approval.",
-                    "invocation": {
-                        "module_name": "multi/http/werkzeug_debug_rce",
-                        "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
-                    },
-                },
-            }
-        ],
-        "validated_no_session": [
-            {
-                "role": "tool",
-                "name": "access_hydra_attack",
-                "tool_call_id": "c1",
-                "content": {
-                    "status": "success",
-                    "validation": {"outcome": "positive", "reason": "Hydra confirmed at least one valid credential."},
-                    "invocation": {"target": "192.168.1.10", "service": "ssh"},
-                },
-            }
-        ],
-        "session_opened": [
-            {
-                "role": "tool",
-                "name": "msf_run_exploit",
-                "tool_call_id": "c1",
-                "content": {
-                    "status": "success",
-                    "module": "multi/http/apache_demo",
-                    "session_id": 7,
-                    "invocation": {
-                        "module_name": "multi/http/apache_demo",
-                        "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
-                    },
-                },
-            },
-            {
-                "role": "tool",
-                "name": "msf_list_sessions",
-                "tool_call_id": "c2",
-                "content": {"status": "success", "sessions": {"7": {"target_host": "192.168.1.10"}}},
-            },
-        ],
-        "search_only": [
-            {
-                "role": "tool",
-                "name": "msf_search_modules",
-                "tool_call_id": "c1",
-                "content": {
-                    "status": "success",
-                    "result": ["multi/http/werkzeug_debug_rce"],
-                    "invocation": {"search_term": "werkzeug"},
-                },
-            }
-        ],
-    }
-
-
-def _build_state() -> Dict[str, Any]:
+def _build_state() -> dict[str, Any]:
     state = _base_state()
     state["discovered_targets"] = {
         "192.168.1.10": {
@@ -251,36 +68,286 @@ def _build_state() -> Dict[str, Any]:
     return state
 
 
-def _fake_runtime_tools(monkeypatch):
-    monkeypatch.setattr(striker_v2_mod, "load_filtered_tools", lambda allowed: [_runtime_tool("msf_run_exploit"), _runtime_tool("msf_list_sessions"), _runtime_tool("access_hydra_attack"), _runtime_tool("msf_search_modules")])
+def _tool_event(
+    name: str,
+    result: dict[str, Any],
+    *,
+    invocation: dict[str, Any] | None = None,
+    status: str | None = None,
+) -> ToolEvent:
+    payload = dict(result)
+    payload.setdefault("invocation", invocation or {})
+    return ToolEvent(
+        tool_name=name,
+        invocation=invocation or {},
+        source="mcp",
+        server_name="attackbox",
+        approval_required=False,
+        approved=True,
+        result=payload,
+        status=status or str(payload.get("status", "success")),
+    )
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def test_striker_v2_exposes_run_entrypoint():
+    agent = striker_v2_mod.StrikerV2Agent(
+        execution_runner=_FakeExecutionRunner(
+            ExecutionResult(outcome=StrikerOutcome(status="no_candidate"))
+        )
+    )
+    assert hasattr(agent, "run")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["approval_blocked", "validated_no_session", "session_opened", "search_only"])
-async def test_striker_v2_matches_old_contract_on_mocked_scenarios(monkeypatch, scenario):
-    _fake_runtime_tools(monkeypatch)
-    _FakeRunner.result = _FakeRunResult(messages=_scenario_messages()[scenario])
+async def test_striker_v2_returns_validation_error_without_targets():
+    agent = striker_v2_mod.StrikerV2Agent(
+        execution_runner=_FakeExecutionRunner(
+            ExecutionResult(outcome=StrikerOutcome(status="no_candidate"))
+        )
+    )
+    state = _base_state()
 
-    state = _build_state()
-    context = striker_v2_mod.build_striker_context(state)
+    out = await agent.run(state)
+    assert out["errors"][0].error_type == "ValidationError"
+    assert out["errors"][0].recoverable is True
+    assert out["current_agent"] == "striker_v2"
 
-    expected = striker_mod.StrikerAgent()._extract_updates(_scenario_messages()[scenario], state, context)
-    result = await striker_v2_mod.StrikerV2Agent(sdk_module=_FakeSDK).call_llm(state)
 
-    expected_plain = _strip_unstable_fields(expected)
-    result_plain = _strip_unstable_fields(result)
+@pytest.mark.asyncio
+async def test_striker_v2_preserves_model_status_by_default():
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=StrikerOutcome(
+                status="execution_error",
+                target="192.168.1.10",
+                selected_tool="msf_run_exploit",
+                selected_module="multi/http/werkzeug_debug_rce",
+                attempt_summary="The exploit path failed cleanly.",
+                operator_summary="No access was obtained.",
+            ),
+            tool_events=[
+                _tool_event(
+                    "msf_run_exploit",
+                    {"status": "error", "message": "exploit failed"},
+                    invocation={
+                        "module_name": "multi/http/werkzeug_debug_rce",
+                        "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
+                    },
+                )
+            ],
+        )
+    )
+    result = await striker_v2_mod.StrikerV2Agent(execution_runner=runner).run(_build_state())
 
-    assert result_plain["current_agent"] == "striker"
-    assert result_plain["iteration_count"] == expected_plain["iteration_count"]
-    assert result_plain.get("critical_findings", []) == expected_plain.get("critical_findings", [])
-    assert result_plain.get("active_sessions", {}) == expected_plain.get("active_sessions", {})
-    assert result_plain.get("exploited_services", []) == expected_plain.get("exploited_services", [])
-    assert result_plain.get("exploit_attempts", []) == expected_plain.get("exploit_attempts", [])
+    findings = result["agent_log"][0].findings
+    assert findings == {
+        "status": "execution_error",
+        "target": "192.168.1.10",
+        "selected_tool": "msf_run_exploit",
+        "selected_module": "multi/http/werkzeug_debug_rce",
+        "session_opened": False,
+        "verified_session_ids": [],
+        "stop_reason": "The exploit path failed cleanly.",
+    }
+    assert result["exploit_attempts"][0]["status"] == "execution_error"
+    assert result["exploited_services"][0]["selected_tool"] == "msf_run_exploit"
 
-    expected_findings = expected_plain["agent_log"][0]["findings"]
-    result_findings = result_plain["agent_log"][0]["findings"]
-    assert result_findings["status"] == expected_findings["status"]
-    assert result_findings.get("module") == expected_findings.get("module")
-    assert result_findings.get("selected_module") == expected_findings.get("selected_module")
-    assert result_findings.get("session_opened") == expected_findings.get("session_opened")
 
+@pytest.mark.asyncio
+async def test_striker_v2_approval_blocked_overrides_model_claim():
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=StrikerOutcome(
+                status="session_opened",
+                target="192.168.1.10",
+                selected_tool="msf_run_exploit",
+                selected_module="multi/http/werkzeug_debug_rce",
+                stop_reason="Execution blocked pending manual approval.",
+                operator_summary="Approval prevented exploitation.",
+            ),
+            approval_events=[
+                ApprovalEvent(
+                    tool_name="msf_run_exploit",
+                    approved=False,
+                    reason="approval_rejected",
+                    server_name="attackbox",
+                )
+            ],
+        )
+    )
+
+    result = await striker_v2_mod.StrikerV2Agent(execution_runner=runner).run(_build_state())
+    findings = result["agent_log"][0].findings
+    assert findings["status"] == "approval_blocked"
+    assert result["exploit_attempts"][0]["status"] == "approval_blocked"
+
+
+@pytest.mark.asyncio
+async def test_striker_v2_session_opened_requires_verified_session_evidence():
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=StrikerOutcome(
+                status="session_opened",
+                target="192.168.1.10",
+                selected_path_type="exploit",
+                selected_tool="msf_run_exploit",
+                selected_module="multi/http/apache_demo",
+                session_claim=SessionClaim(session_id=7, target="192.168.1.10"),
+                attempt_summary="Exploit claimed a session but verification never confirmed it.",
+                operator_summary="Access claim was not verified.",
+            ),
+            tool_events=[
+                _tool_event(
+                    "msf_run_exploit",
+                    {
+                        "status": "success",
+                        "module": "multi/http/apache_demo",
+                        "session_id": 7,
+                    },
+                    invocation={
+                        "module_name": "multi/http/apache_demo",
+                        "options": {"RHOSTS": "192.168.1.10", "RPORT": 80},
+                    },
+                )
+            ],
+        )
+    )
+
+    result = await striker_v2_mod.StrikerV2Agent(execution_runner=runner).run(_build_state())
+    findings = result["agent_log"][0].findings
+    assert findings["status"] == "validated_no_session"
+    assert findings["session_opened"] is False
+    assert result.get("active_sessions") is None or result.get("active_sessions") == {}
+
+
+@pytest.mark.asyncio
+async def test_striker_v2_verified_session_updates_machine_state():
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=StrikerOutcome(
+                status="session_opened",
+                target="192.168.1.10",
+                selected_path_type="exploit",
+                selected_tool="msf_run_exploit",
+                selected_module="multi/http/apache_demo",
+                session_claim=SessionClaim(session_id=7, target="192.168.1.10"),
+                attempt_summary="Exploit returned a session and session listing confirmed it.",
+                operator_summary="Initial access established.",
+            ),
+            tool_events=[
+                _tool_event(
+                    "msf_list_sessions",
+                    {"status": "success", "sessions": {"7": {"target_host": "192.168.1.10"}}},
+                ),
+            ],
+        )
+    )
+
+    result = await striker_v2_mod.StrikerV2Agent(execution_runner=runner).run(_build_state())
+    findings = result["agent_log"][0].findings
+    assert findings["status"] == "session_opened"
+    assert findings["verified_session_ids"] == ["7"]
+    assert result["active_sessions"]["192.168.1.10"]["session_id"] == 7
+    assert result["critical_findings"]
+
+
+@pytest.mark.asyncio
+async def test_striker_v2_only_persists_verified_artifacts():
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=StrikerOutcome(
+                status="validated_no_session",
+                target="192.168.1.10",
+                selected_tool="web_sqlmap_scan",
+                artifact_claims=[ArtifactClaim(name="sqlmap_report.txt", source_tool="web_sqlmap_scan")],
+                attempt_summary="Validation created a report artifact.",
+                operator_summary="Artifacts captured successfully.",
+            ),
+            artifacts=[{"name": "sqlmap_report.txt", "path": "/tmp/sqlmap_report.txt"}],
+        )
+    )
+
+    result = await striker_v2_mod.StrikerV2Agent(execution_runner=runner).run(_build_state())
+    assert result["artifacts"] == [{"name": "sqlmap_report.txt", "path": "/tmp/sqlmap_report.txt"}]
+    assert result["agent_log"][0].findings["status"] == "validated_no_session"
+
+
+@pytest.mark.asyncio
+async def test_striker_v2_writes_compact_machine_state_for_supervisor_and_resident():
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=StrikerOutcome(
+                status="validated_no_session",
+                target="192.168.1.10",
+                service="ssh",
+                port=22,
+                selected_tool="access_hydra_attack",
+                attempt_summary="Validated a credential path without session creation.",
+                operator_summary="Fallback validation succeeded.",
+            ),
+        )
+    )
+
+    result = await striker_v2_mod.StrikerV2Agent(execution_runner=runner).run(_build_state())
+    findings = result["agent_log"][0].findings
+
+    assert "agent_log" in result and result["agent_log"]
+    assert "exploit_attempts" in result and result["exploit_attempts"]
+    assert "exploited_services" in result and result["exploited_services"]
+    assert "critical_findings" in result and result["critical_findings"]
+    assert findings.keys() == {
+        "status",
+        "target",
+        "selected_tool",
+        "session_opened",
+        "verified_session_ids",
+        "stop_reason",
+        "service",
+        "port",
+    }
+
+
+def test_striker_policy_only_gates_approval_required_tools(monkeypatch):
+    approval_calls: list[dict[str, Any]] = []
+
+    def fake_require_manual_approval(**kwargs):
+        approval_calls.append(dict(kwargs))
+        return False
+
+    monkeypatch.setattr("src.v2.agents.striker.policy.require_manual_approval", fake_require_manual_approval)
+    policy = StrikerExecutionPolicy(require_confirmation=True, max_attempts=3)
+
+    allowed = _run(
+        policy.approve_tool_call(
+            ToolSpec(
+                name="msf_search_modules",
+                description="",
+                input_schema={},
+                executor=lambda **kwargs: None,  # pragma: no cover - not executed
+                source="mcp",
+                approval_required=False,
+            ),
+            {"search_term": "werkzeug"},
+        )
+    )
+    blocked = _run(
+        policy.approve_tool_call(
+            ToolSpec(
+                name="msf_run_exploit",
+                description="",
+                input_schema={},
+                executor=lambda **kwargs: None,  # pragma: no cover - not executed
+                source="mcp",
+                approval_required=True,
+            ),
+            {"module_name": "multi/http/demo", "options": {"RHOSTS": "192.168.1.10"}},
+        )
+    )
+
+    assert allowed is True
+    assert blocked is False
+    assert approval_calls[0]["tool_name"] == "msf_run_exploit"

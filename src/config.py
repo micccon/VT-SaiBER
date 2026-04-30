@@ -73,6 +73,7 @@ class RuntimeConfig:
     supervisor_max_reasoning_messages: int
 
     # Graph and checkpointing controls.
+    graph_version: str
     max_iterations: int
     checkpoint_enabled: bool
     checkpoint_database_url: Optional[str]
@@ -116,6 +117,7 @@ def get_runtime_config() -> RuntimeConfig:
         supervisor_timeout_seconds=_env_int("SUPERVISOR_TIMEOUT_SECONDS", 90),
         supervisor_reasoning_enabled=_env_bool("SUPERVISOR_REASONING_ENABLED", True),
         supervisor_max_reasoning_messages=_env_int("SUPERVISOR_MAX_REASONING_MESSAGES", 12),
+        graph_version=(os.getenv("SAIBER_GRAPH_VERSION") or "legacy").strip().lower() or "legacy",
         max_iterations=_env_int("MAX_ITERATIONS", 20),
         checkpoint_enabled=_env_bool("CHECKPOINT_ENABLED", True),
         checkpoint_database_url=_build_database_url(),
