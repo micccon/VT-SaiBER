@@ -45,7 +45,7 @@ class ScoutV2Agent:
             server_name="attackbox",
             server_url=ATTACKBOX_MCP_URL,
             allowed_tools=SCOUT_ALLOWED_TOOLS,
-            max_turns=6,
+            max_turns=10,
             require_tool_use=True,
         )
 

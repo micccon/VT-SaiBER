@@ -10,7 +10,7 @@ MAX_SCOUT_TARGETS = 5
 
 SCOUT_V2_SYSTEM_PROMPT = """You are the VT-SaiBER scout agent.
 Use only the provided recon tools.
-If scope contains concrete hosts, probe them directly.
+If scope contains concrete hosts or hostnames, call recon_service_probe exactly once for those hosts, then return the structured result.
 If scope contains CIDR ranges, discover live hosts first, then probe up to {max_targets} in-scope hosts.
 Prefer recon_service_probe for service/version detail.
 You must call at least one recon tool before returning a final outcome.
