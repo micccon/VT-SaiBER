@@ -115,6 +115,26 @@ def test_resident_v2_exposes_run_entrypoint():
     assert hasattr(agent, "run")
 
 
+def test_resident_v2_marks_always_dangerous_tools_approval_required():
+    spec = ResidentV2Agent(
+        execution_runner=_FakeExecutionRunner(
+            ExecutionResult(
+                outcome=ResidentOutcome(
+                    objective="Verify session",
+                    objective_status="in_progress",
+                )
+            )
+        )
+    ).build_execution_spec()
+
+    assert spec.mcp_servers[0].approval_required_tools == {
+        "msf_terminate_session",
+        "system_execute_command",
+    }
+    assert "msf_list_sessions" not in spec.mcp_servers[0].approval_required_tools
+    assert "msf_session_command" not in spec.mcp_servers[0].approval_required_tools
+
+
 @pytest.mark.asyncio
 async def test_resident_v2_returns_validation_error_without_sessions():
     state = _base_state()

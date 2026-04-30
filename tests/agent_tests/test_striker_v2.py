@@ -102,6 +102,24 @@ def test_striker_v2_exposes_run_entrypoint():
     assert hasattr(agent, "run")
 
 
+def test_striker_v2_marks_only_high_impact_tools_approval_required():
+    spec = striker_v2_mod.StrikerV2Agent(
+        execution_runner=_FakeExecutionRunner(
+            ExecutionResult(outcome=StrikerOutcome(status="no_candidate"))
+        )
+    ).build_execution_spec()
+
+    assert spec.mcp_servers[0].approval_required_tools == {
+        "msf_run_exploit",
+        "msf_run_auxiliary",
+        "web_sqlmap_scan",
+        "access_hydra_attack",
+        "system_execute_command",
+    }
+    assert "msf_search_modules" not in spec.mcp_servers[0].approval_required_tools
+    assert "msf_list_sessions" not in spec.mcp_servers[0].approval_required_tools
+
+
 @pytest.mark.asyncio
 async def test_striker_v2_returns_validation_error_without_targets():
     agent = striker_v2_mod.StrikerV2Agent(

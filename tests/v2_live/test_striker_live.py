@@ -16,8 +16,9 @@ async def test_striker_v2_live_manual_approval_can_attempt_exploit():
     state = captured_automotive_state(mission_id="v2-live-striker")
     state["mission_goal"] = (
         "Attempt exactly one evidence-backed exploitation path against the seeded automotive target. "
-        "Use safe reconnaissance/search first if needed, then request manual approval before any exploit "
-        "or high-impact action. After any Metasploit execution attempt, call msf_list_sessions."
+        "Use safe reconnaissance/search first if needed, then call the chosen approval-gated tool so "
+        "the runtime can ask the human operator for manual approval. Do not finish by merely saying "
+        "approval is needed. After any Metasploit execution attempt, call msf_list_sessions."
     )
 
     agent = StrikerV2Agent()

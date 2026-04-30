@@ -17,6 +17,13 @@ STRIKER_ALLOWED_TOOLS = {
     "web_wordpress_scan",
     "system_execute_command",
 }
+STRIKER_APPROVAL_REQUIRED_TOOLS = {
+    "msf_run_exploit",
+    "msf_run_auxiliary",
+    "web_sqlmap_scan",
+    "access_hydra_attack",
+    "system_execute_command",
+}
 STRIKER_REQUIRE_CONFIRMATION = (
     os.getenv("STRIKER_V2_REQUIRE_CONFIRMATION")
     or os.getenv("STRIKER_REQUIRE_CONFIRMATION")
@@ -78,6 +85,8 @@ Rules:
 5. Reverse payloads require a reachable non-loopback LHOST; never use 127.0.0.1, localhost, or 0.0.0.0.
 6. After every Metasploit execution attempt, check msf_list_sessions.
 7. Maximum Metasploit execution attempts per run: {max_attempts}.
+8. If you decide an approval-gated action is warranted, call the relevant tool. Do not merely write that approval is needed.
+9. Only use status approval_blocked after a tool call returns an approval-blocked result.
 
 Path selection:
 - Favor the strongest evidence-backed path over the most tunable path.
@@ -98,4 +107,3 @@ Your final response must be a structured StrikerOutcome object. Use `status` fro
 - session_opened
 
 Set `session_claim.session_id` only when you believe a session was opened. Set `artifact_claims` only for artifacts you believe were produced."""
-

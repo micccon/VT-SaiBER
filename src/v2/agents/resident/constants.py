@@ -14,6 +14,10 @@ RESIDENT_ALLOWED_TOOLS = {
     "msf_terminate_session",
     "system_execute_command",
 }
+RESIDENT_APPROVAL_REQUIRED_TOOLS = {
+    "msf_terminate_session",
+    "system_execute_command",
+}
 
 RESIDENT_REQUIRE_CONFIRMATION = os.getenv("RESIDENT_REQUIRE_CONFIRMATION", "true").lower() == "true"
 RESIDENT_OBJECTIVE_STATUSES = {"completed", "in_progress", "blocked", "needs_approval", "failed"}

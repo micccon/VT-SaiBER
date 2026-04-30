@@ -14,6 +14,7 @@ from src.v2.agents.common import (
 from src.v2.agents.resident.constants import (
     ATTACKBOX_MCP_URL,
     RESIDENT_ALLOWED_TOOLS,
+    RESIDENT_APPROVAL_REQUIRED_TOOLS,
     RESIDENT_REQUIRE_CONFIRMATION,
     RESIDENT_V2_SYSTEM_PROMPT,
 )
@@ -52,6 +53,7 @@ class ResidentV2Agent:
             server_name="attackbox",
             server_url=ATTACKBOX_MCP_URL,
             allowed_tools=RESIDENT_ALLOWED_TOOLS,
+            approval_required_tools=RESIDENT_APPROVAL_REQUIRED_TOOLS,
             max_turns=6,
         )
 

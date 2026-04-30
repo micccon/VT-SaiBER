@@ -45,6 +45,8 @@ def _effective_status(
 
     if any(not approval.approved for approval in result.approval_events):
         return "approval_blocked"
+    if outcome.status == "approval_blocked":
+        return "no_candidate"
     if outcome.status == "session_opened" and not session_opened:
         return "validated_no_session"
     return outcome.status

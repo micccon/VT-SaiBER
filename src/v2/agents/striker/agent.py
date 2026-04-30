@@ -15,6 +15,7 @@ from src.v2.agents.striker.constants import (
     ATTACKBOX_MCP_URL,
     MAX_EXPLOIT_ATTEMPTS,
     STRIKER_ALLOWED_TOOLS,
+    STRIKER_APPROVAL_REQUIRED_TOOLS,
     STRIKER_REQUIRE_CONFIRMATION,
     STRIKER_V2_SYSTEM_PROMPT,
 )
@@ -54,13 +55,7 @@ class StrikerV2Agent:
             server_name="attackbox",
             server_url=ATTACKBOX_MCP_URL,
             allowed_tools=STRIKER_ALLOWED_TOOLS,
-            approval_required_tools={
-                "msf_run_exploit",
-                "msf_run_auxiliary",
-                "web_sqlmap_scan",
-                "access_hydra_attack",
-                "system_execute_command",
-            },
+            approval_required_tools=STRIKER_APPROVAL_REQUIRED_TOOLS,
             max_turns=8,
         )
 
