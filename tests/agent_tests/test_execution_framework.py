@@ -3,12 +3,24 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
-from src.agents.execution import AgentsExecutionEngine, MCPServerSpec, normalize_run_result_messages
-from src.utils.tools import BaseToolPolicy, RuntimeTool, ToolInterception
+from src.runtime.contracts import (
+    AgentExecutionSpec,
+    LocalToolSpec,
+    MCPServerConfig,
+    ModelConfig,
+    ToolCallInterception,
+)
+from src.runtime import AgentsSDKExecutionRunner
+from src.runtime.execution import ExecutionPolicy, _sanitize_tool_schema
+
+
+class _SampleOutcome(BaseModel):
+    status: str
 
 
 class _FakeFunctionTool:
@@ -19,9 +31,39 @@ class _FakeFunctionTool:
         self.on_invoke_tool = on_invoke_tool
 
 
+class _FakeToolDef:
+    def __init__(self, name: str, description: str = "", input_schema: dict[str, Any] | None = None):
+        self.name = name
+        self.description = description or name
+        self.inputSchema = input_schema or {"type": "object", "properties": {}}
+
+
 class _FakeMCPServerStreamableHttp:
+    registry: dict[str, dict[str, Any]] = {}
+    instances: list["_FakeMCPServerStreamableHttp"] = []
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.url = kwargs["params"]["url"]
+        self.config = self.registry[self.url]
+        self.instances.append(self)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def list_tools(self):
+        return SimpleNamespace(tools=self.config["tools"])
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]):
+        self.calls.append((tool_name, dict(args)))
+        response = self.config["results"][tool_name]
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class _FakeMCPModule:
@@ -42,6 +84,11 @@ class _FakeChatModel:
         self.kwargs = kwargs
 
 
+class _FakeOpenAIProvider:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 class _FakeRunConfig:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -56,23 +103,23 @@ class _FakeAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.tools = kwargs.get("tools", [])
-        self.mcp_servers = kwargs.get("mcp_servers", [])
+
+
+class _FakeAgentOutputSchema:
+    def __init__(self, output_type, *, strict_json_schema: bool = True):
+        self.output_type = output_type
+        self.strict_json_schema = strict_json_schema
 
 
 class _FakeRunResult:
-    def __init__(self, *, messages: list[dict[str, Any]], final_output: Any = "", new_items: list[Any] | None = None):
-        self._messages = messages
+    def __init__(self, final_output: Any):
         self.final_output = final_output
-        self.new_items = new_items or []
-        self.raw_responses = [object()]
-
-    def to_input_list(self, mode: str = "preserve_all"):
-        return list(self._messages)
 
 
 class _FakeRunner:
-    result: _FakeRunResult = _FakeRunResult(messages=[])
-    last_call: Dict[str, Any] = {}
+    script: list[tuple[str, dict[str, Any]]] = []
+    final_output: Any = {"status": "done"}
+    last_call: dict[str, Any] = {}
 
     @classmethod
     async def run(cls, agent, input, context=None, max_turns=8, run_config=None):
@@ -83,144 +130,250 @@ class _FakeRunner:
             "max_turns": max_turns,
             "run_config": run_config,
         }
-        return cls.result
+        for tool_name, arguments in cls.script:
+            tool = next(item for item in agent.tools if item.name == tool_name)
+            await tool.on_invoke_tool(SimpleNamespace(context=context), json.dumps(arguments))
+        return _FakeRunResult(cls.final_output)
 
 
 class _FakeSDK:
     Agent = _FakeAgent
     Runner = _FakeRunner
     FunctionTool = _FakeFunctionTool
+    AgentOutputSchema = _FakeAgentOutputSchema
     AsyncOpenAI = _FakeAsyncOpenAI
     OpenAIChatCompletionsModel = _FakeChatModel
+    OpenAIProvider = _FakeOpenAIProvider
     RunConfig = _FakeRunConfig
     ModelSettings = _FakeModelSettings
     mcp = _FakeMCPModule()
+    tracing_disabled: bool | None = None
+
+    @classmethod
+    def set_tracing_disabled(cls, disabled=True):
+        cls.tracing_disabled = disabled
 
 
-def _runtime_tool(name: str, executor, *, description: str | None = None, schema: dict[str, Any] | None = None) -> RuntimeTool:
-    return RuntimeTool(
-        name=name,
-        description=description or name,
-        input_schema=schema or {"type": "object", "properties": {}},
-        executor=executor,
-        defaults={},
-    )
-
-
-class _BlockingPolicy(BaseToolPolicy):
-    def __init__(self, blocked_tool: str):
-        self.blocked_tool = blocked_tool
-
-    async def before_call(self, tool: RuntimeTool, arguments: dict[str, Any]) -> ToolInterception | None:
-        if tool.name == self.blocked_tool:
-            return ToolInterception({"status": "aborted", "message": "blocked by policy", "tool": tool.name})
-        return None
-
-
-class _RecordingPolicy(BaseToolPolicy):
-    def __init__(self):
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def before_call(self, tool: RuntimeTool, arguments: dict[str, Any]) -> ToolInterception | None:
-        self.calls.append((tool.name, dict(arguments)))
-        return None
-
-
-def test_local_tool_wrapper_applies_policy_and_blocks(monkeypatch):
-    engine = AgentsExecutionEngine(
-        agent_name="striker",
-        instructions="test",
-        model_name="test-model",
+def _model_config() -> ModelConfig:
+    return ModelConfig(
+        model="test-model",
         api_key="test-key",
         base_url="https://example.invalid",
-        runtime_tools=[],
-        policy=_BlockingPolicy("msf_run_exploit"),
     )
 
-    called = {"count": 0}
+
+class _DenyApprovalPolicy(ExecutionPolicy):
+    async def approve_tool_call(self, tool, arguments: dict[str, Any]) -> bool:
+        return False
+
+
+class _InterceptPolicy(ExecutionPolicy):
+    async def before_tool_call(self, tool, arguments: dict[str, Any]) -> ToolCallInterception | None:
+        return ToolCallInterception({"status": "blocked", "message": "blocked by policy", "tool": tool.name})
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def test_local_tool_execution_records_telemetry_and_artifacts():
+    called: list[dict[str, Any]] = []
 
     async def executor(**kwargs):
-        called["count"] += 1
-        return {"status": "success", "output": "should not happen", "invocation": kwargs}
+        called.append(dict(kwargs))
+        return {
+            "status": "success",
+            "summary": "done",
+            "artifacts": [{"name": "note.txt"}],
+        }
 
-    tool = _runtime_tool("msf_run_exploit", executor, schema={"type": "object", "properties": {"target": {"type": "string"}}})
-    wrapped = engine._build_function_tool(_FakeSDK, tool)
-
-    payload = asyncio.run(wrapped.on_invoke_tool(SimpleNamespace(), json.dumps({"target": "10.0.0.5"})))
-    parsed = json.loads(payload)
-
-    assert parsed["status"] == "aborted"
-    assert parsed["message"] == "blocked by policy"
-    assert called["count"] == 0
-
-
-def test_local_tool_wrapper_runs_executor_and_records_args():
-    policy = _RecordingPolicy()
-    engine = AgentsExecutionEngine(
-        agent_name="striker",
+    spec = AgentExecutionSpec(
+        agent_name="demo",
         instructions="test",
-        model_name="test-model",
-        api_key="test-key",
-        base_url="https://example.invalid",
-        runtime_tools=[],
-        policy=policy,
-    )
-
-    async def executor(**kwargs):
-        return {"status": "success", "summary": "done", "invocation": kwargs}
-
-    tool = _runtime_tool("msf_search_modules", executor)
-    wrapped = engine._build_function_tool(_FakeSDK, tool)
-
-    payload = asyncio.run(wrapped.on_invoke_tool(SimpleNamespace(), json.dumps({"search_term": "werkzeug"})))
-    parsed = json.loads(payload)
-
-    assert parsed["status"] == "success"
-    assert parsed["summary"] == "done"
-    assert parsed["invocation"]["search_term"] == "werkzeug"
-    assert policy.calls == [("msf_search_modules", {"search_term": "werkzeug"})]
-
-
-def test_mcp_server_spec_builds_allowlist_and_approval_policy():
-    engine = AgentsExecutionEngine(
-        agent_name="striker",
-        instructions="test",
-        model_name="test-model",
-        api_key="test-key",
-        base_url="https://example.invalid",
-        runtime_tools=[],
-        mcp_servers=[
-            MCPServerSpec(
-                name="attackbox",
-                url="http://attackbox.invalid/mcp",
-                allowed_tools={"msf_search_modules", "msf_run_exploit"},
-                approval_tools={"msf_run_exploit"},
+        model=_model_config(),
+        output_type=_SampleOutcome,
+        local_tools=[
+            LocalToolSpec(
+                name="echo",
+                description="echo",
+                input_schema={"type": "object", "properties": {"target": {"type": "string"}}},
+                executor=executor,
             )
         ],
     )
 
-    server = engine._build_mcp_server(_FakeSDK, engine.mcp_servers[0])
-    assert server.kwargs["name"] == "attackbox"
-    assert server.kwargs["params"] == {"url": "http://attackbox.invalid/mcp"}
-    assert server.kwargs["cache_tools_list"] is True
-    assert server.kwargs["tool_filter"] == {"allowed_tool_names": ["msf_run_exploit", "msf_search_modules"]}
-    assert server.kwargs["require_approval"] == {"always": {"tool_names": ["msf_run_exploit"]}}
+    _FakeRunner.script = [("echo", {"target": "10.0.0.5"})]
+    _FakeRunner.final_output = {"status": "ok"}
+    result = _run(AgentsSDKExecutionRunner(sdk_module=_FakeSDK).run(spec, user_input="hello"))
+
+    assert called == [{"target": "10.0.0.5"}]
+    assert result.outcome.status == "ok"
+    assert _FakeRunner.last_call["agent"].kwargs["output_type"].output_type is _SampleOutcome
+    assert _FakeRunner.last_call["agent"].kwargs["output_type"].strict_json_schema is False
+    assert _FakeRunner.last_call["run_config"].kwargs["tracing_disabled"] is True
+    assert _FakeSDK.tracing_disabled is True
+    assert len(result.tool_events) == 1
+    assert result.tool_events[0].tool_name == "echo"
+    assert result.tool_events[0].status == "success"
+    assert result.artifacts == [{"name": "note.txt"}]
 
 
-def test_normalize_run_result_messages_prefers_input_items():
-    result = _FakeRunResult(
-        messages=[
-            {"role": "assistant", "content": "Working"},
-            {
-                "role": "tool",
-                "name": "msf_list_sessions",
-                "tool_call_id": "abc",
-                "content": {"status": "success", "sessions": {"7": {"type": "shell"}}},
-            },
-        ]
+def test_mcp_tool_allowlist_uses_direct_sdk_server():
+    _FakeMCPServerStreamableHttp.instances.clear()
+    _FakeMCPServerStreamableHttp.registry = {
+        "http://attackbox.invalid/mcp": {
+            "tools": [
+                _FakeToolDef("allowed_tool"),
+                _FakeToolDef("blocked_tool"),
+            ],
+            "results": {"allowed_tool": {"status": "success", "summary": "allowed"}},
+        }
+    }
+
+    spec = AgentExecutionSpec(
+        agent_name="demo",
+        instructions="test",
+        model=_model_config(),
+        output_type=_SampleOutcome,
+        mcp_servers=[
+            MCPServerConfig(
+                name="attackbox",
+                url="http://attackbox.invalid/mcp",
+                allowed_tools={"allowed_tool"},
+            )
+        ],
     )
 
-    messages = normalize_run_result_messages(result)
-    assert messages[0]["role"] == "assistant"
-    assert messages[1]["role"] == "tool"
-    assert messages[1]["content"]["status"] == "success"
+    _FakeRunner.script = [("allowed_tool", {})]
+    _FakeRunner.final_output = {"status": "ok"}
+    result = _run(AgentsSDKExecutionRunner(sdk_module=_FakeSDK).run(spec, user_input="hello"))
+
+    server = _FakeMCPServerStreamableHttp.instances[0]
+    assert server.kwargs["params"] == {"url": "http://attackbox.invalid/mcp"}
+    assert server.kwargs["tool_filter"] == {"allowed_tool_names": ["allowed_tool"]}
+    assert [tool.name for tool in _FakeRunner.last_call["agent"].tools] == ["allowed_tool"]
+    assert server.calls == [("allowed_tool", {})]
+    assert result.tool_events[0].source == "mcp"
+
+
+def test_tool_schema_sanitizer_removes_additional_properties():
+    schema = {
+        "type": "object",
+        "properties": {
+            "options": {
+                "anyOf": [
+                    {"type": "object", "additionalProperties": True},
+                    {"type": "null"},
+                ]
+            }
+        },
+        "additionalProperties": False,
+    }
+
+    sanitized = _sanitize_tool_schema(schema)
+
+    assert "additionalProperties" not in sanitized
+    assert "additionalProperties" not in sanitized["properties"]["options"]["anyOf"][0]
+
+
+def test_approval_gating_aborts_tool_call():
+    _FakeMCPServerStreamableHttp.instances.clear()
+    _FakeMCPServerStreamableHttp.registry = {
+        "http://attackbox.invalid/mcp": {
+            "tools": [_FakeToolDef("dangerous_tool")],
+            "results": {"dangerous_tool": {"status": "success", "summary": "should not run"}},
+        }
+    }
+
+    spec = AgentExecutionSpec(
+        agent_name="demo",
+        instructions="test",
+        model=_model_config(),
+        output_type=_SampleOutcome,
+        mcp_servers=[
+            MCPServerConfig(
+                name="attackbox",
+                url="http://attackbox.invalid/mcp",
+                allowed_tools={"dangerous_tool"},
+                approval_required_tools={"dangerous_tool"},
+            )
+        ],
+    )
+
+    _FakeRunner.script = [("dangerous_tool", {"target": "10.0.0.8"})]
+    _FakeRunner.final_output = {"status": "ok"}
+    result = _run(
+        AgentsSDKExecutionRunner(sdk_module=_FakeSDK).run(
+            spec,
+            user_input="hello",
+            policy=_DenyApprovalPolicy(),
+        )
+    )
+
+    server = _FakeMCPServerStreamableHttp.instances[0]
+    assert server.calls == []
+    assert result.approval_events[0].approved is False
+    assert result.tool_events[0].status == "aborted"
+
+
+def test_failure_normalization_records_error():
+    async def executor(**kwargs):
+        raise RuntimeError("boom")
+
+    spec = AgentExecutionSpec(
+        agent_name="demo",
+        instructions="test",
+        model=_model_config(),
+        output_type=_SampleOutcome,
+        local_tools=[
+            LocalToolSpec(
+                name="explode",
+                description="explode",
+                input_schema={"type": "object", "properties": {}},
+                executor=executor,
+            )
+        ],
+    )
+
+    _FakeRunner.script = [("explode", {})]
+    _FakeRunner.final_output = {"status": "ok"}
+    result = _run(AgentsSDKExecutionRunner(sdk_module=_FakeSDK).run(spec, user_input="hello"))
+
+    assert result.tool_events[0].status == "error"
+    assert "boom" in str(result.tool_events[0].result.get("message"))
+
+
+def test_policy_interception_blocks_before_local_execution():
+    called = {"count": 0}
+
+    async def executor(**kwargs):
+        called["count"] += 1
+        return {"status": "success"}
+
+    spec = AgentExecutionSpec(
+        agent_name="demo",
+        instructions="test",
+        model=_model_config(),
+        output_type=_SampleOutcome,
+        local_tools=[
+            LocalToolSpec(
+                name="blocked",
+                description="blocked",
+                input_schema={"type": "object", "properties": {}},
+                executor=executor,
+            )
+        ],
+    )
+
+    _FakeRunner.script = [("blocked", {})]
+    _FakeRunner.final_output = {"status": "ok"}
+    result = _run(
+        AgentsSDKExecutionRunner(sdk_module=_FakeSDK).run(
+            spec,
+            user_input="hello",
+            policy=_InterceptPolicy(),
+        )
+    )
+
+    assert called["count"] == 0
+    assert result.tool_events[0].status == "blocked"

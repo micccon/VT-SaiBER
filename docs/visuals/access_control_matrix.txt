@@ -100,8 +100,8 @@ METASPLOIT TOOLS
 3) REACT ALLOWLIST PATTERN
 ══════════════════════════
 
-Bridge filtering implementation:
-- `src/mcp/mcp_tool_bridge.py`
+Execution-runner filtering implementation:
+- `src/execution/runner.py`
 
 Example ReAct tool allowlists:
 - `src/agents/striker.py`
@@ -128,7 +128,7 @@ Allowlist can be written using native names:
 At runtime, actual registered tool names are prefixed:
 - `msf_run_exploit`
 
-Both forms are accepted by bridge filtering.
+Both forms are accepted by Execution-runner filtering.
 
 
 5) RUNTIME GUARDRAILS (CURRENT IMPLEMENTATION)
@@ -136,7 +136,7 @@ Both forms are accepted by bridge filtering.
 
 Guardrail stack:
 1. Graph router checks: iteration cap, scope, valid routing (`src/graph/router.py`)
-2. Bridge filtering: per-agent tool allowlists (`src/mcp/mcp_tool_bridge.py`)
+2. Execution-runner filtering: per-agent tool allowlists (`src/execution/runner.py`)
 3. Tool call rules: pre/post rule chains (`src/utils/tool_guard.py`, `src/utils/tool_guard_profiles.py`)
 4. MCP server-side validations (`src/mcp/msf_mcp_server.py`, `src/mcp/kali_mcp_server.py`)
 

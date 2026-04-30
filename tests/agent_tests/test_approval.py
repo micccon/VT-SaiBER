@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from src.utils.approval import derive_command_target, require_manual_approval
+from src.runtime.approval import derive_command_target, require_manual_approval
 
 
 class _InteractiveInput(io.StringIO):

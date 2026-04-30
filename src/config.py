@@ -73,14 +73,13 @@ class RuntimeConfig:
     supervisor_max_reasoning_messages: int
 
     # Graph and checkpointing controls.
-    graph_version: str
     max_iterations: int
     checkpoint_enabled: bool
     checkpoint_database_url: Optional[str]
     default_thread_prefix: str
-    v2_trace_enabled: bool
-    v2_trace_include_raw: bool
-    v2_trace_max_chars: int
+    trace_enabled: bool
+    trace_include_raw: bool
+    trace_max_chars: int
 
     # RAG tuning knobs used by librarian and persistence helpers.
     rag_kb_top_k: int
@@ -120,14 +119,13 @@ def get_runtime_config() -> RuntimeConfig:
         supervisor_timeout_seconds=_env_int("SUPERVISOR_TIMEOUT_SECONDS", 90),
         supervisor_reasoning_enabled=_env_bool("SUPERVISOR_REASONING_ENABLED", True),
         supervisor_max_reasoning_messages=_env_int("SUPERVISOR_MAX_REASONING_MESSAGES", 12),
-        graph_version=(os.getenv("SAIBER_GRAPH_VERSION") or "legacy").strip().lower() or "legacy",
         max_iterations=_env_int("MAX_ITERATIONS", 20),
         checkpoint_enabled=_env_bool("CHECKPOINT_ENABLED", True),
         checkpoint_database_url=_build_database_url(),
         default_thread_prefix=os.getenv("THREAD_ID_PREFIX", "mission").strip() or "mission",
-        v2_trace_enabled=_env_bool("V2_TRACE_ENABLED", False),
-        v2_trace_include_raw=_env_bool("V2_TRACE_INCLUDE_RAW", False),
-        v2_trace_max_chars=_env_int("V2_TRACE_MAX_CHARS", 2000),
+        trace_enabled=_env_bool("SAIBER_TRACE_ENABLED", False),
+        trace_include_raw=_env_bool("SAIBER_TRACE_INCLUDE_RAW", False),
+        trace_max_chars=_env_int("SAIBER_TRACE_MAX_CHARS", 2000),
         rag_kb_top_k=_env_int("RAG_KB_TOP_K", 8),
         rag_kb_fetch_k=_env_int("RAG_KB_FETCH_K", 24),
         rag_findings_top_k=_env_int("RAG_FINDINGS_TOP_K", 5),

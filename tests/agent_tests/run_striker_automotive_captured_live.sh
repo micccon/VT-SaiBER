@@ -20,7 +20,7 @@ fi
 echo "======================================"
 echo "STRIKER CAPTURED-STATE LIVE TEST"
 echo "======================================"
-echo "Target source: pre-given evidence from output2.txt"
+echo "Target source: pre-given captured evidence"
 MODE_LABEL="planning-only"
 if [ "${LIVE_STRIKER_INTERACTIVE_APPROVAL:-false}" = "true" ]; then
     MODE_LABEL="interactive approval"

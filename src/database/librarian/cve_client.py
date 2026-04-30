@@ -263,7 +263,7 @@ class CVEClient:
     def _extract_cvss(self, metrics: Dict[str, Any]) -> tuple[str | None, float | None]:
         """Return the first available CVSS severity/score across supported versions."""
 
-        for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+        for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetric"):
             values = metrics.get(key) or []
             if not values:
                 continue

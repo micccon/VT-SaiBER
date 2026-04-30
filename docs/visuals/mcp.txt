@@ -21,7 +21,7 @@ Before actual MCP execution, runtime guard rules may run:
 (`src/utils/tool_guard.py`, `src/utils/tool_guard_profiles.py`)
 
 
-MCP TOOLBRIDGE LAYER (`src/mcp/mcp_tool_bridge.py`)
+AGENTS SDK EXECUTION LAYER (`src/execution/runner.py`)
 ═══════════════════════════════════════════════════
 
 Startup sequence:

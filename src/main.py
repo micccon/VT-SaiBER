@@ -7,6 +7,7 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,13 +16,23 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
 from src.config import RuntimeConfig, get_runtime_config
+from src.core.parsers import to_jsonable
 from src.database.connection import ensure_runtime_indexes
 from src.graph.builder import build_graph
 from src.state.cyber_state import CyberState
-from src.utils.logging_config import setup_logging
-from src.utils.parsers import to_jsonable
 
 logger = logging.getLogger(__name__)
+
+
+def setup_logging(default_level: str = "INFO") -> None:
+    """Configure process-wide logging once from LOG_LEVEL or the provided default."""
+
+    level_name = os.getenv("LOG_LEVEL", default_level).upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 
 @dataclass(frozen=True)
@@ -122,20 +133,10 @@ def build_initial_state(mission_goal: str, target_scope: List[str], mission_id: 
     }
 
 
-def build_runtime_graph(config: RuntimeConfig, *, checkpointer=None):
-    """Build the configured orchestration graph."""
+def build_runtime_graph(*, checkpointer=None):
+    """Build the production orchestration graph."""
 
-    graph_version = (config.graph_version or "legacy").strip().lower()
-    if graph_version == "legacy":
-        return build_graph(checkpointer=checkpointer)
-    if graph_version == "v2":
-        from src.v2.graph import build_supervisor_v2_graph
-
-        return build_supervisor_v2_graph(checkpointer=checkpointer)
-    raise ValueError(
-        f"Unsupported SAIBER_GRAPH_VERSION={config.graph_version!r}. "
-        "Expected 'legacy' or 'v2'."
-    )
+    return build_graph(checkpointer=checkpointer)
 
 
 @asynccontextmanager
@@ -261,7 +262,7 @@ class CatalystRunner:
 
         async with maybe_checkpointer(self.config) as checkpointer:
             # The catalyst runner is intentionally thin here: graph construction and orchestration stay centralized.
-            graph = build_runtime_graph(self.config, checkpointer=checkpointer)
+            graph = build_runtime_graph(checkpointer=checkpointer)
             try:
                 result = await graph.ainvoke(initial_state, config=graph_config)
             except NotImplementedError:
@@ -270,7 +271,7 @@ class CatalystRunner:
                 logger.warning(
                     "Configured checkpointer does not support async graph execution; retrying without checkpointing."
                 )
-                graph = build_runtime_graph(self.config, checkpointer=None)
+                graph = build_runtime_graph(checkpointer=None)
                 result = await graph.ainvoke(initial_state, config=graph_config)
             return to_jsonable(result)
 

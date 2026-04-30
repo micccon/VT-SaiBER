@@ -4,7 +4,7 @@
 This file is a requirements/specification document, not a strict implementation mirror.
 
 Current implementation reference points:
-- Dynamic MCP bridge: `src/mcp/mcp_tool_bridge.py`
+- Direct MCP execution runner: `src/execution/runner.py`
 - Supervisor routing + safety checks: `src/agents/supervisor.py`, `src/graph/router.py`
 - Embedded/IoT agent: removed from active project scope
 
