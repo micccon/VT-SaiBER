@@ -19,6 +19,7 @@ from src.v2.execution.runner import _normalize_mcp_call_result
 
 
 CAPTURED_TARGET = "automotive-testbed"
+CAPTURED_TARGET_IP = "172.20.0.5"
 CAPTURED_BASE_URL = f"http://{CAPTURED_TARGET}:8000"
 CAPTURED_SERVICES = [
     {"port": 22, "protocol": "tcp", "service_name": "ssh", "version": "OpenSSH 8.9p1 Ubuntu 3ubuntu0.14", "banner": None},

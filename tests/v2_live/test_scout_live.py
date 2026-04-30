@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.v2.agents.scout.agent import ScoutV2Agent
-from tests.v2_live.helpers import base_state, live_scope, require_live_mcp, runtime_summary, step
+from tests.v2_live.helpers import CAPTURED_TARGET_IP, base_state, live_scope, require_live_mcp, runtime_summary, step
 
 pytestmark = pytest.mark.live
 
@@ -15,7 +15,7 @@ async def test_scout_v2_live_discovers_or_probes_target():
 
     state = base_state(
         mission_goal="Discover and fingerprint the authorized live target",
-        target_scope=[live_scope()],
+        target_scope=[live_scope(), CAPTURED_TARGET_IP],
         mission_id="v2-live-scout",
     )
     out = await ScoutV2Agent().run(state)
