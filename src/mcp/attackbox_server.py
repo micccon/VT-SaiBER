@@ -30,6 +30,25 @@ ATTACKBOX_HOST = os.getenv("ATTACKBOX_MCP_HOST", "0.0.0.0")
 ATTACKBOX_PORT = int(os.getenv("ATTACKBOX_MCP_PORT", "8080"))
 mcp = FastMCP("vt-saiber-attackbox", host=ATTACKBOX_HOST, port=ATTACKBOX_PORT)
 
+KNOWN_WORDLISTS = {
+    "password_files": [
+        "/usr/share/seclists/Passwords/Common-Credentials/top-passwords-shortlist.txt",
+        "/usr/share/seclists/Passwords/Common-Credentials/top-20-common-SSH-passwords.txt",
+        "/usr/share/seclists/Passwords/Common-Credentials/500-worst-passwords.txt",
+        "/usr/share/wordlists/rockyou.txt",
+    ],
+    "username_files": [
+        "/usr/share/seclists/Usernames/top-usernames-shortlist.txt",
+        "/usr/share/seclists/Usernames/xato-net-10-million-usernames.txt",
+    ],
+    "web_wordlists": [
+        "/usr/share/seclists/Discovery/Web-Content/common.txt",
+        "/usr/share/seclists/Discovery/Web-Content/raft-small-words.txt",
+        "/usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt",
+        "/usr/share/seclists/Discovery/Web-Content/api/api-endpoints.txt",
+    ],
+}
+
 
 def _timestamp() -> str:
     """Generate a stable UTC timestamp for artifact filenames."""
@@ -111,6 +130,31 @@ def _which_any(*names: str) -> Optional[str]:
         found = shutil.which(name)
         if found:
             return found
+    return None
+
+
+def _validate_existing_file_arg(tool: str, field: str, path: str) -> Optional[Dict[str, Any]]:
+    """Block file-based tool calls that reference unavailable paths."""
+
+    if path and not os.path.exists(path):
+        return {
+            "status": "blocked",
+            "tool": tool,
+            "message": f"{field} does not exist: {path}",
+            "suggestion": "Use a known existing path from this tool description, or omit the file argument.",
+        }
+    return None
+
+
+def _validate_msf_file_options(tool: str, options: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Validate Metasploit options that conventionally point at local files."""
+
+    file_keys = {"USER_FILE", "PASS_FILE", "USERPASS_FILE", "RHOSTS_FILE", "RHOST_FILE"}
+    for key, value in (options or {}).items():
+        if str(key).upper() in file_keys:
+            blocked = _validate_existing_file_arg(tool, str(key), str(value or ""))
+            if blocked:
+                return blocked
     return None
 
 
@@ -369,14 +413,25 @@ async def recon_http_fingerprint(url: str, additional_args: str = "") -> Dict[st
 @mcp.tool(name="web_content_enum")
 async def web_content_enum(
     url: str,
-    wordlist: str = "/usr/share/wordlists/dirb/common.txt",
+    wordlist: str = "/usr/share/seclists/Discovery/Web-Content/common.txt",
     additional_args: str = "",
 ) -> Dict[str, Any]:
-    """Run gobuster directory enumeration against a target URL."""
+    """
+    Run gobuster directory enumeration against a target URL.
+
+    Known web wordlists include:
+    - /usr/share/seclists/Discovery/Web-Content/common.txt
+    - /usr/share/seclists/Discovery/Web-Content/raft-small-words.txt
+    - /usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt
+    - /usr/share/seclists/Discovery/Web-Content/api/api-endpoints.txt
+    """
 
     gobuster = _which_any("gobuster")
     if not gobuster:
         return _envelope(status="error", summary="gobuster is not installed", metadata={"tool": "web_content_enum"})
+    blocked = _validate_existing_file_arg("web_content_enum", "wordlist", wordlist)
+    if blocked:
+        return blocked
     command = (
         f"{shlex.quote(gobuster)} dir -u {shlex.quote(url)} -w {shlex.quote(wordlist)} "
         f"--no-error {additional_args}"
@@ -390,12 +445,22 @@ async def web_content_enum(
 @mcp.tool(name="web_vhost_enum")
 async def web_vhost_enum(
     url: str,
-    wordlist: str = "/usr/share/wordlists/dirb/common.txt",
+    wordlist: str = "/usr/share/seclists/Discovery/Web-Content/common.txt",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """
+    Run gobuster virtual-host enumeration.
+
+    Use known web wordlists such as /usr/share/seclists/Discovery/Web-Content/common.txt
+    or /usr/share/seclists/Discovery/Web-Content/raft-small-words.txt.
+    """
+
     gobuster = _which_any("gobuster")
     if not gobuster:
         return _envelope(status="error", summary="gobuster is not installed", metadata={"tool": "web_vhost_enum"})
+    blocked = _validate_existing_file_arg("web_vhost_enum", "wordlist", wordlist)
+    if blocked:
+        return blocked
     host = urlparse(url).hostname or url
     command = (
         f"{shlex.quote(gobuster)} vhost -u {shlex.quote(_build_http_url(host))} "
@@ -648,6 +713,31 @@ async def access_hydra_attack(
     password_file: str = "",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """
+    Run Hydra against a network service.
+
+    Use only with evidence-backed credentials or known existing wordlist paths.
+    Do not invent username_file or password_file paths.
+
+    Known password files:
+    - /usr/share/seclists/Passwords/Common-Credentials/top-passwords-shortlist.txt
+    - /usr/share/seclists/Passwords/Common-Credentials/top-20-common-SSH-passwords.txt
+    - /usr/share/seclists/Passwords/Common-Credentials/500-worst-passwords.txt
+    - /usr/share/wordlists/rockyou.txt
+
+    Known username files:
+    - Usernames: /usr/share/seclists/Usernames/top-usernames-shortlist.txt
+    - Usernames: /usr/share/seclists/Usernames/xato-net-10-million-usernames.txt
+
+    Prefer targeted credentials over broad brute force.
+    """
+    blocked = _validate_existing_file_arg("access_hydra_attack", "username_file", username_file)
+    if blocked:
+        return blocked
+    blocked = _validate_existing_file_arg("access_hydra_attack", "password_file", password_file)
+    if blocked:
+        return blocked
+
     parts = ["hydra"]
     if username:
         parts.extend(["-l", shlex.quote(username)])
@@ -670,6 +760,19 @@ async def access_john_crack(
     format_type: str = "",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """
+    Run John the Ripper against a hash file.
+
+    Known password wordlists include /usr/share/wordlists/rockyou.txt and
+    /usr/share/seclists/Passwords/Common-Credentials/top-passwords-shortlist.txt.
+    """
+
+    blocked = _validate_existing_file_arg("access_john_crack", "wordlist", wordlist)
+    if blocked:
+        return blocked
+    blocked = _validate_existing_file_arg("access_john_crack", "hash_file", hash_file)
+    if blocked:
+        return blocked
     command = f"john --wordlist={shlex.quote(wordlist)} {shlex.quote(hash_file)}"
     if format_type:
         command += f" --format={shlex.quote(format_type)}"
@@ -716,6 +819,15 @@ async def access_ssh_login(
     identity_file: str = "",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """
+    Validate SSH login with a password or an existing identity_file path.
+
+    Do not invent identity_file paths; omit identity_file unless the key path is known to exist.
+    """
+
+    blocked = _validate_existing_file_arg("access_ssh_login", "identity_file", identity_file)
+    if blocked:
+        return blocked
     command = _ssh_base_command(host, username, port, password, identity_file, additional_args) + " true"
     result = await asyncio.to_thread(_run_shell_command, "access_ssh_login", command)
     result["summary"] = f"SSH login {'succeeded' if result['status'] == 'success' else 'failed'} for {username}@{host}:{port}"
@@ -732,6 +844,15 @@ async def access_ssh_command(
     identity_file: str = "",
     additional_args: str = "",
 ) -> Dict[str, Any]:
+    """
+    Run one SSH command with a password or an existing identity_file path.
+
+    Do not invent identity_file paths; omit identity_file unless the key path is known to exist.
+    """
+
+    blocked = _validate_existing_file_arg("access_ssh_command", "identity_file", identity_file)
+    if blocked:
+        return blocked
     remote = _ssh_base_command(host, username, port, password, identity_file, additional_args)
     full_command = f"{remote} {shlex.quote(command)}"
     return await asyncio.to_thread(_run_shell_command, "access_ssh_command", full_command)
@@ -812,7 +933,16 @@ async def msf_run_exploit(
     payload_name: str = "",
     payload_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Execute a Metasploit exploit via the shared RPC wrapper."""
+    """
+    Execute a Metasploit exploit via the shared RPC wrapper.
+
+    File options such as USER_FILE, PASS_FILE, USERPASS_FILE, and RHOSTS_FILE
+    must use known existing attackbox paths; do not invent file paths.
+    """
+
+    blocked = _validate_msf_file_options("msf_run_exploit", options or {})
+    if blocked:
+        return blocked
 
     payload = await metasploit_rpc.run_exploit(
         module_name=module_name,
@@ -834,7 +964,16 @@ async def msf_run_exploit(
 
 @mcp.tool(name="msf_run_auxiliary")
 async def msf_run_auxiliary(module_name: str, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Execute a Metasploit auxiliary module via the shared RPC wrapper."""
+    """
+    Execute a Metasploit auxiliary module via the shared RPC wrapper.
+
+    File options such as USER_FILE, PASS_FILE, USERPASS_FILE, and RHOSTS_FILE
+    must use known existing attackbox paths; do not invent file paths.
+    """
+
+    blocked = _validate_msf_file_options("msf_run_auxiliary", options or {})
+    if blocked:
+        return blocked
 
     payload = await metasploit_rpc.run_auxiliary_module(module_name=module_name, options=options or {})
     return _normalize_msf_payload(

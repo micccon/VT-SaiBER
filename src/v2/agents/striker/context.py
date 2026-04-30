@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from src.skills import match_skills, render_skill_matches
 from src.state.cyber_state import CyberState
 from src.v2.agents.striker.constants import METASPLOIT_DEFAULT_SERVICES
 
@@ -267,9 +266,6 @@ def _format_candidates(candidates: list[dict[str, Any]]) -> str:
 def build_striker_context(state: CyberState) -> str:
     """Build the full exploitation context block shown to Striker v2."""
 
-    skill_matches = match_skills(state, "striker", limit=2)
-    skills_block = render_skill_matches(skill_matches)
-    skills_section = f"RELEVANT SKILLS:\n{skills_block}\n\n" if skills_block else ""
     return (
         f"MISSION: {state.get('mission_goal') or '(not specified)'}\n\n"
         f"TARGET INTELLIGENCE:\n{_format_targets(state)}\n\n"
@@ -277,7 +273,6 @@ def build_striker_context(state: CyberState) -> str:
         f"RELEVANT WEB FINDINGS:\n{_format_web_findings(state)}\n\n"
         f"FUZZER RAW SCAN EVIDENCE:\n{_format_raw_run_evidence(state, 'fuzzing_runs', 'fuzzer')}\n\n"
         f"RESEARCH / INTELLIGENCE HINTS:\n{_format_research_hints(state)}\n\n"
-        f"{skills_section}"
         f"PRIOR EXPLOIT ATTEMPTS:\n{_format_prior_attempts(state)}\n\n"
         f"CANDIDATE PATHS:\n{_format_candidates(rank_candidates(state))}\n"
     )
