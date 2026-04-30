@@ -22,12 +22,17 @@ RUN apt-get update && \
     hydra \
     john \
     wordlists \
+    seclists \
     wpscan \
     enum4linux \
     enum4linux-ng \
     whatweb \
     metasploit-framework \
     && rm -rf /var/lib/apt/lists/*
+
+RUN if [ -f /usr/share/wordlists/rockyou.txt.gz ] && [ ! -f /usr/share/wordlists/rockyou.txt ]; then \
+        gzip -dk /usr/share/wordlists/rockyou.txt.gz; \
+    fi
 
 WORKDIR /app
 
