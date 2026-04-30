@@ -35,6 +35,8 @@ Live OpenRouter:
 RUN_V2_LIVE_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
+The live runner now streams redacted v2 trace logs by default. For direct pytest runs, use `--log-cli-level=INFO`.
+
 Live OpenRouter plus MCP-backed agent tests:
 
 ```bash

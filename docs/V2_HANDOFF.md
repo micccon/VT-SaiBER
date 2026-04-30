@@ -43,6 +43,8 @@ Run live OpenRouter tests. These cover `supervisor_v2` and `librarian_v2` withou
 RUN_V2_LIVE_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
+The live runner streams v2 trace logs by default with `V2_TRACE_ENABLED=true` and `V2_TRACE_INCLUDE_RAW=false`, so successful tests should show redacted agent outcomes, tool calls, approvals, and artifact counts.
+
 Run live OpenRouter plus MCP-backed agent tests. These include `scout_v2`, `fuzzer_v2`, and approval-blocked `striker_v2`:
 
 ```bash
@@ -85,6 +87,13 @@ V2_TRACE_MAX_CHARS=2000
 ```
 
 `V2_TRACE_INCLUDE_RAW=false` is the safe default. It logs structured outcomes, tool names, tool statuses, approval events, and artifact counts while redacting sensitive keys and hiding raw SDK/model payloads.
+
+If you run pytest directly instead of the shell script, add log streaming flags:
+
+```bash
+RUN_V2_LIVE_TESTS=1 V2_TRACE_ENABLED=true V2_TRACE_INCLUDE_RAW=false \
+python3 -m pytest tests/v2_live -q --log-cli-level=INFO
+```
 
 Run the focused v2 unit slice:
 

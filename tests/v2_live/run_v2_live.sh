@@ -37,6 +37,10 @@ fi
 docker exec -t \
     -e RUN_V2_LIVE_TESTS="${RUN_V2_LIVE_TESTS:-1}" \
     -e RUN_V2_LIVE_MCP_TESTS="${RUN_V2_LIVE_MCP_TESTS:-0}" \
+    -e V2_TRACE_ENABLED="${V2_TRACE_ENABLED:-true}" \
+    -e V2_TRACE_INCLUDE_RAW="${V2_TRACE_INCLUDE_RAW:-false}" \
+    -e V2_TRACE_MAX_CHARS="${V2_TRACE_MAX_CHARS:-2000}" \
+    -e LOG_LEVEL="${LOG_LEVEL:-INFO}" \
     -e OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
     -e OPENROUTER_BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" \
     -e OPENROUTER_MODEL="${OPENROUTER_MODEL:-}" \
@@ -63,4 +67,4 @@ docker exec -t \
     -e DB_USER="${DB_USER:-vtsaiber}" \
     -e DB_PASSWORD="${DB_PASSWORD:-}" \
     vt-saiber-agents sh -lc \
-    "cd /app && python3 -m pytest tests/v2_live -q"
+    "cd /app && python3 -m pytest tests/v2_live -q --log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
