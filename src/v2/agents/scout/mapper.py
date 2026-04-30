@@ -11,6 +11,31 @@ from src.v2.agents.scout.constants import MAX_SCOUT_TARGETS
 from src.v2.agents.scout.outcome import ScoutOutcome
 from src.v2.contracts.execution import ExecutionResult
 
+SCOUT_RECON_TOOLS = {"recon_host_discovery", "recon_port_scan", "recon_service_probe"}
+
+
+def _validation_error(state: CyberState, *, agent_name: str, message: str) -> dict[str, Any]:
+    """Return Scout's standard recoverable validation error update."""
+
+    return {
+        "current_agent": agent_name,
+        "iteration_count": int(state.get("iteration_count", 0)) + 1,
+        "errors": [
+            AgentError(
+                agent=agent_name,
+                error_type="ValidationError",
+                error=message,
+                recoverable=True,
+            )
+        ],
+    }
+
+
+def _used_recon_tool(result: ExecutionResult[ScoutOutcome]) -> bool:
+    """Verify Scout actually ran a reconnaissance tool before trusting output."""
+
+    return any(event.tool_name in SCOUT_RECON_TOOLS for event in result.tool_events)
+
 
 def map_execution_result_to_state(
     state: CyberState,
@@ -24,6 +49,13 @@ def map_execution_result_to_state(
     outcome = result.outcome
     target_scope = state.get("target_scope", []) or []
     discovered_targets: dict[str, dict[str, Any]] = {}
+
+    if not _used_recon_tool(result):
+        return _validation_error(
+            state,
+            agent_name=agent_name,
+            message="Scout v2 did not execute a reconnaissance tool.",
+        )
 
     for target in outcome.targets:
         ip_address = str(target.ip_address).strip()
@@ -43,18 +75,11 @@ def map_execution_result_to_state(
             ).model_dump()
 
     if not discovered_targets:
-        return {
-            "current_agent": agent_name,
-            "iteration_count": int(state.get("iteration_count", 0)) + 1,
-            "errors": [
-                AgentError(
-                    agent=agent_name,
-                    error_type="ValidationError",
-                    error="Scout v2 did not produce any in-scope targets or services.",
-                    recoverable=True,
-                )
-            ],
-        }
+        return _validation_error(
+            state,
+            agent_name=agent_name,
+            message="Scout v2 did not produce any in-scope targets or services.",
+        )
 
     total_ports = sorted(
         {
@@ -90,4 +115,3 @@ def map_execution_result_to_state(
             )
         ],
     }
-

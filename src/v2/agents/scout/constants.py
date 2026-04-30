@@ -13,10 +13,11 @@ Use only the provided recon tools.
 If scope contains concrete hosts, probe them directly.
 If scope contains CIDR ranges, discover live hosts first, then probe up to {max_targets} in-scope hosts.
 Prefer recon_service_probe for service/version detail.
+You must call at least one recon tool before returning a final outcome.
+For concrete hostnames or IPs, call recon_service_probe before finalizing.
 Do not go out of scope.
 
 Return a structured ScoutOutcome object with discovered in-scope targets and services.
 - Put hosts with no service details into discovered_hosts.
 - Put service-enriched targets into targets.
 - Keep results bounded and operator-focused."""
-

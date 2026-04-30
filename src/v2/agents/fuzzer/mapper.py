@@ -11,6 +11,14 @@ from src.v2.agents.fuzzer.constants import MAX_RECURSION_DEPTH, REQUEST_THROTTLE
 from src.v2.agents.fuzzer.outcome import FuzzerOutcome
 from src.v2.contracts.execution import ExecutionResult
 
+FUZZER_WEB_TOOLS = {"web_content_enum", "web_nikto_scan"}
+
+
+def _used_web_tool(result: ExecutionResult[FuzzerOutcome]) -> bool:
+    """Verify Fuzzer actually ran a web enumeration tool before trusting output."""
+
+    return any(event.tool_name in FUZZER_WEB_TOOLS for event in result.tool_events)
+
 
 def _fallback_finding(base_url: str) -> dict[str, Any]:
     """Build the minimal fallback finding when the model returns none."""
@@ -44,6 +52,20 @@ def map_execution_result_to_state(
     """Convert a Fuzzer v2 execution result into CyberState updates."""
 
     outcome = result.outcome
+    if not _used_web_tool(result):
+        return {
+            "current_agent": agent_name,
+            "iteration_count": int(state.get("iteration_count", 0)) + 1,
+            "errors": [
+                AgentError(
+                    agent=agent_name,
+                    error_type="ValidationError",
+                    error="Fuzzer v2 did not execute a web enumeration tool.",
+                    recoverable=True,
+                )
+            ],
+        }
+
     findings = [finding.model_dump() for finding in outcome.web_findings]
     findings = dedupe_web_findings(findings)[:100]
     if not findings:
@@ -71,4 +93,3 @@ def map_execution_result_to_state(
             )
         ],
     }
-

@@ -6,7 +6,7 @@ import pytest
 
 from src.v2.agents.fuzzer.agent import FuzzerV2Agent
 from src.v2.agents.fuzzer.outcome import FuzzerOutcome, WebFinding
-from src.v2.contracts.execution import ExecutionResult
+from src.v2.contracts.execution import ExecutionResult, ToolEvent
 
 
 class _FakeExecutionRunner:
@@ -21,6 +21,16 @@ class _FakeExecutionRunner:
         self.last_input = user_input
         self.last_context = context
         return self.result
+
+
+def _tool_event(name: str = "web_content_enum") -> ToolEvent:
+    return ToolEvent(
+        tool_name=name,
+        invocation={"base_url": "http://192.168.1.10"},
+        source="mcp",
+        status="success",
+        result={"status": "success"},
+    )
 
 
 def _base_state() -> dict[str, Any]:
@@ -102,6 +112,8 @@ async def test_fuzzer_v2_persists_structured_findings():
                 ],
                 operator_summary="Found one interesting admin endpoint.",
             )
+            ,
+            tool_events=[_tool_event()],
         )
     )
     out = await FuzzerV2Agent(execution_runner=runner).run(state)
@@ -126,10 +138,37 @@ async def test_fuzzer_v2_uses_normalized_fallback_when_sparse():
                 base_url="https://192.168.1.10",
                 web_findings=[],
                 operator_summary="No normalized findings were produced.",
-            )
+            ),
+            tool_events=[_tool_event("web_nikto_scan")],
         )
     )
     out = await FuzzerV2Agent(execution_runner=runner).run(state)
 
     assert out["web_findings"][0]["path"] == "/"
     assert out["web_findings"][0]["rationale"] == "Fallback finding while MCP scan is unavailable"
+
+
+@pytest.mark.asyncio
+async def test_fuzzer_v2_rejects_model_output_without_web_tool_use():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "ports": [80],
+            "services": {"80": {"service_name": "http"}},
+        }
+    }
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=FuzzerOutcome(
+                base_url="http://192.168.1.10",
+                web_findings=[
+                    WebFinding(url="http://192.168.1.10/admin", path="/admin", status_code=200)
+                ],
+            )
+        )
+    )
+
+    out = await FuzzerV2Agent(execution_runner=runner).run(state)
+
+    assert out["errors"][0].error_type == "ValidationError"
+    assert "did not execute" in out["errors"][0].error

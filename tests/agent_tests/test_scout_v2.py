@@ -8,7 +8,7 @@ import pytest
 from src.state.models import DiscoveredTarget, ServiceInfo
 from src.v2.agents.scout.agent import ScoutV2Agent
 from src.v2.agents.scout.outcome import ScoutOutcome
-from src.v2.contracts.execution import ExecutionResult
+from src.v2.contracts.execution import ExecutionResult, ToolEvent
 
 
 class _FakeExecutionRunner:
@@ -23,6 +23,16 @@ class _FakeExecutionRunner:
         self.last_input = user_input
         self.last_context = context
         return self.result
+
+
+def _tool_event(name: str = "recon_service_probe") -> ToolEvent:
+    return ToolEvent(
+        tool_name=name,
+        invocation={"targets": "192.168.1.20"},
+        source="mcp",
+        status="success",
+        result={"status": "success"},
+    )
 
 
 def _base_state() -> dict[str, Any]:
@@ -79,7 +89,8 @@ async def test_scout_v2_persists_in_scope_discovered_hosts():
             outcome=ScoutOutcome(
                 discovered_hosts=["192.168.1.20", "10.0.0.8"],
                 operator_summary="Discovered one in-scope live host.",
-            )
+            ),
+            tool_events=[_tool_event("recon_host_discovery")],
         )
     )
     out = await ScoutV2Agent(execution_runner=runner).run(_base_state())
@@ -114,7 +125,8 @@ async def test_scout_v2_persists_service_probe_targets():
                     ),
                 ],
                 operator_summary="Probed one in-scope SSH service.",
-            )
+            ),
+            tool_events=[_tool_event()],
         )
     )
     out = await ScoutV2Agent(execution_runner=runner).run(_base_state())
@@ -123,3 +135,20 @@ async def test_scout_v2_persists_service_probe_targets():
     service_22 = out["discovered_targets"]["192.168.1.15"]["services"].get("22") or out["discovered_targets"]["192.168.1.15"]["services"].get(22)
     assert service_22["service_name"] == "ssh"
     assert out["agent_log"][0].findings["services_found"] == 1
+
+
+@pytest.mark.asyncio
+async def test_scout_v2_rejects_model_output_without_recon_tool_use():
+    runner = _FakeExecutionRunner(
+        ExecutionResult(
+            outcome=ScoutOutcome(
+                discovered_hosts=["192.168.1.20"],
+                operator_summary="Claimed host without tool use.",
+            )
+        )
+    )
+
+    out = await ScoutV2Agent(execution_runner=runner).run(_base_state())
+
+    assert out["errors"][0].error_type == "ValidationError"
+    assert "did not execute" in out["errors"][0].error
