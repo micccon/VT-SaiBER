@@ -46,11 +46,11 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     "pymetasploit3>=0.2.17" \
     "pydantic>=2.6.0"
 
-COPY scripts/docker/patch_metasploit_http_cookie_jar.sh /app/patch_metasploit_http_cookie_jar.sh
+COPY scripts/setup/docker/patch_metasploit_http_cookie_jar.sh /app/patch_metasploit_http_cookie_jar.sh
 RUN chmod +x /app/patch_metasploit_http_cookie_jar.sh && \
     /app/patch_metasploit_http_cookie_jar.sh
 
-COPY scripts/docker/start_attackbox.sh /app/start_attackbox.sh
+COPY scripts/setup/docker/start_attackbox.sh /app/start_attackbox.sh
 RUN chmod +x /app/start_attackbox.sh
 
 EXPOSE 55553 8080

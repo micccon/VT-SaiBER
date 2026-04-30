@@ -287,12 +287,12 @@ def run_setup_wizard(config: Config) -> bool:
     if not ok:
         print("  Run these commands on your VM:\n")
         print_cmd(f"cd {config.vm_path}")
-        print_cmd("bash scripts/docker/full_reset_startup.sh")
+        print_cmd("bash scripts/setup/docker/full_reset_startup.sh")
         print()
 
         if confirm("  Run these commands now via SSH?"):
             print()
-            ssh_run(config, f"cd {config.vm_path} && bash scripts/docker/full_reset_startup.sh")
+            ssh_run(config, f"cd {config.vm_path} && bash scripts/setup/docker/full_reset_startup.sh")
             print()
         else:
             input("\n  Press Enter when done...")
@@ -306,12 +306,12 @@ def run_setup_wizard(config: Config) -> bool:
     else:
         print("  Run these commands on your VM:\n")
         print_cmd(f"cd {config.vm_path}")
-        print_cmd("bash scripts/testbed/setup_testbed.sh")
+        print_cmd("bash scripts/setup/testbed/setup_testbed.sh")
         print()
 
         if confirm("  Run these commands now via SSH?"):
             print()
-            ssh_run(config, f"cd {config.vm_path} && bash scripts/testbed/setup_testbed.sh")
+            ssh_run(config, f"cd {config.vm_path} && bash scripts/setup/testbed/setup_testbed.sh")
             print()
         else:
             input("\n  Press Enter when done...")
@@ -457,19 +457,17 @@ def run_test_menu(config: Config):
             return
 
         test_map = {
-            "1": "tests/agent_tests/run_striker_minimal_live.sh",
-            "2": "tests/agent_tests/run_striker_automotive_live.sh",
-            "3": "docker exec vt-saiber-agents pytest /app/tests/agent_tests/test_supervisor_routing_demo.py -v",
-            "4": "docker exec vt-saiber-agents pytest /app/tests/agent_tests/test_fuzzer.py -v",
-            "5": "docker exec vt-saiber-agents pytest /app/tests/agent_tests/test_librarian.py -v",
-            "6": "docker exec vt-saiber-agents pytest /app/tests/agent_tests/ -v",
-            "7": "bash tests/docker_tests/agents_test.sh && bash tests/docker_tests/postgres_test.sh",
+            "1": "cd {root} && bash scripts/tests/agents/live/run_striker_live.sh",
+            "2": "docker exec vt-saiber-agents pytest /app/tests/agents/live/test_striker_live.py -v -m live",
+            "3": "docker exec vt-saiber-agents pytest /app/tests/agents/unit/test_supervisor.py -v",
+            "4": "docker exec vt-saiber-agents pytest /app/tests/agents/unit/test_fuzzer.py -v",
+            "5": "docker exec vt-saiber-agents pytest /app/tests/agents/unit/test_librarian.py -v",
+            "6": "docker exec vt-saiber-agents pytest /app/tests -v",
+            "7": "cd {root} && bash scripts/tests/infrastructure/live/agents_test.sh && bash scripts/tests/infrastructure/live/postgres_test.sh",
         }
 
         if choice in test_map:
-            cmd = test_map[choice]
-            if cmd.startswith("tests/"):
-                cmd = f"cd {config.vm_path} && bash {cmd}"
+            cmd = test_map[choice].format(root=config.vm_path)
 
             print()
             ssh_run(config, cmd)
@@ -559,8 +557,8 @@ def run_utilities_menu(config: Config):
             print()
             print_warning("This will stop and rebuild all containers!")
             if confirm("Continue?", default=False):
-                ssh_run(config, f"cd {config.vm_path} && bash scripts/docker/full_reset_startup.sh")
-                ssh_run(config, f"cd {config.vm_path} && bash scripts/testbed/setup_testbed.sh")
+                ssh_run(config, f"cd {config.vm_path} && bash scripts/setup/docker/full_reset_startup.sh")
+                ssh_run(config, f"cd {config.vm_path} && bash scripts/setup/testbed/setup_testbed.sh")
                 input("\nPress Enter to continue...")
 
 

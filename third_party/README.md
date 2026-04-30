@@ -14,7 +14,7 @@ This directory vendors external projects used by VT-SaiBER images.
   - Runtime customization: local modifications are applied directly in this vendored copy.
 
 - `automotive_testbed`
-  - Local VT-SaiBER testbed content used by `scripts/testbed/*.sh`.
+  - Local VT-SaiBER testbed content used by `scripts/setup/testbed/*.sh`.
 
 ## Notes
 

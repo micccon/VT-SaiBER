@@ -121,7 +121,7 @@ services:
     volumes:
       - msf_data:/root/.msf4
       - ./src:/app/src:ro
-      - ./scripts/docker/start_attackbox.sh:/app/start_attackbox.sh:ro
+      - ./scripts/setup/docker/start_attackbox.sh:/app/start_attackbox.sh:ro
 
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "8080"]
@@ -163,7 +163,7 @@ services:
     volumes:
       - ./src:/app/src:rw      # Read-write access
       - ./data:/app/data:rw
-      - ./tests:/app/tests:rw
+      - ./scripts/tests:/app/tests:rw
       - ./exports:/app/exports:rw
     
     networks:
