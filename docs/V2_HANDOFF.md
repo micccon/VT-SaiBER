@@ -31,42 +31,26 @@ The CLI command shape does not change. `SAIBER_GRAPH_VERSION=legacy` or an unset
 - `tests/v2_live/`: opt-in live tests that run real OpenRouter-backed v2 agents, with MCP-backed graph smoke tests behind an extra MCP opt-in.
 
 ## VM Commands
+Run one live agent directly:
+
+```bash
+bash tests/v2_live/run_supervisor_live.sh
+bash tests/v2_live/run_librarian_live.sh
+bash tests/v2_live/run_scout_live.sh
+bash tests/v2_live/run_fuzzer_live.sh
+bash tests/v2_live/run_striker_live.sh
+bash tests/v2_live/run_resident_live.sh
+```
+
 Run non-live promotion tests:
 
 ```bash
 bash tests/v2_non_live/run_v2_non_live.sh
 ```
 
-Run live OpenRouter tests. These cover `supervisor_v2` and `librarian_v2` without MCP:
+Each live runner streams v2 trace logs by default with `V2_TRACE_ENABLED=true` and `V2_TRACE_INCLUDE_RAW=false`, so successful tests should show redacted agent outcomes, tool calls, approvals, and artifact counts.
 
-```bash
-RUN_V2_LIVE_TESTS=1 bash tests/v2_live/run_v2_live.sh
-```
-
-The live runner streams v2 trace logs by default with `V2_TRACE_ENABLED=true` and `V2_TRACE_INCLUDE_RAW=false`, so successful tests should show redacted agent outcomes, tool calls, approvals, and artifact counts.
-
-Run live OpenRouter plus MCP-backed agent tests. These include `scout_v2`, `fuzzer_v2`, and approval-blocked `striker_v2`:
-
-```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 bash tests/v2_live/run_v2_live.sh
-```
-
-If `RUN_V2_LIVE_MCP_TESTS` is not set by the caller, the live runner auto-enables MCP-backed tests when `vt-saiber-attackbox` is already running. Set `RUN_V2_LIVE_MCP_TESTS=0` explicitly to force OpenRouter-only live tests.
-
-Run resident with a seeded session:
-
-```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 \
-LIVE_RESIDENT_SESSION_ID=1 LIVE_RESIDENT_TARGET=10.0.0.5 \
-bash tests/v2_live/run_v2_live.sh
-```
-
-Run Striker with actual approved execution only when intentionally validating that behavior:
-
-```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 LIVE_STRIKER_EXECUTE=true \
-bash tests/v2_live/run_v2_live.sh
-```
+`resident_v2` auto-detects an existing Metasploit session and skips cleanly if none exists.
 
 Run the app through the full v2 graph:
 
@@ -93,8 +77,8 @@ V2_TRACE_MAX_CHARS=2000
 If you run pytest directly instead of the shell script, add log streaming flags:
 
 ```bash
-RUN_V2_LIVE_TESTS=1 V2_TRACE_ENABLED=true V2_TRACE_INCLUDE_RAW=false \
-python3 -m pytest tests/v2_live -q --log-cli-level=INFO
+V2_TRACE_ENABLED=true V2_TRACE_INCLUDE_RAW=false \
+python3 -m pytest tests/v2_live/test_fuzzer_live.py -q --log-cli-level=INFO
 ```
 
 Run the focused v2 unit slice:

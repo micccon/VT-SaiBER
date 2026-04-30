@@ -1,4 +1,4 @@
-"""Shared helpers for opt-in v2 live tests."""
+"""Shared helpers for directly runnable v2 live tests."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from src.v2.agents.scout.constants import ATTACKBOX_MCP_URL
 from src.v2.execution.runner import _normalize_mcp_call_result
 
 
-CAPTURED_TARGET = os.getenv("LIVE_STRIKER_TARGET") or os.getenv("TARGET_HOST") or "automotive-testbed"
-CAPTURED_BASE_URL = os.getenv("LIVE_FUZZER_BASE_URL") or f"http://{CAPTURED_TARGET}:8000"
+CAPTURED_TARGET = "automotive-testbed"
+CAPTURED_BASE_URL = f"http://{CAPTURED_TARGET}:8000"
 CAPTURED_SERVICES = [
     {"port": 22, "protocol": "tcp", "service_name": "ssh", "version": "OpenSSH 8.9p1 Ubuntu 3ubuntu0.14", "banner": None},
     {"port": 8000, "protocol": "tcp", "service_name": "http", "version": "Werkzeug httpd 3.1.8 (Python 3.10.12)", "banner": None},
@@ -52,10 +52,8 @@ def step(message: str) -> None:
 
 
 def require_live_openrouter() -> None:
-    """Skip unless live OpenRouter-backed v2 tests are explicitly enabled."""
+    """Skip unless the production OpenRouter config is available."""
 
-    if os.getenv("RUN_V2_LIVE_TESTS") != "1":
-        pytest.skip("Set RUN_V2_LIVE_TESTS=1 to run live v2 tests")
     if not os.getenv("OPENROUTER_API_KEY"):
         pytest.skip("OPENROUTER_API_KEY is required for live v2 tests")
     if not os.getenv("OPENROUTER_MODEL"):
@@ -63,12 +61,10 @@ def require_live_openrouter() -> None:
 
 
 def require_live_mcp() -> None:
-    """Skip unless direct attackbox MCP live tests are explicitly enabled and reachable."""
+    """Skip unless direct attackbox MCP is reachable."""
 
     require_live_openrouter()
     pytest.importorskip("agents")
-    if os.getenv("RUN_V2_LIVE_MCP_TESTS") != "1":
-        pytest.skip("Set RUN_V2_LIVE_MCP_TESTS=1 to run MCP-backed v2 live tests")
     try:
         with urlopen(Request(ATTACKBOX_MCP_URL, method="GET"), timeout=3):
             return
@@ -93,28 +89,20 @@ def base_state(
 
 
 def live_target() -> str:
-    """Return the configured live target host."""
+    """Return the fixed automotive live target host."""
 
-    return (
-        os.getenv("LIVE_SCOUT_TARGET")
-        or os.getenv("LIVE_STRIKER_TARGET")
-        or os.getenv("TARGET_HOST")
-        or "automotive-testbed"
-    ).strip()
+    return CAPTURED_TARGET
 
 
 def live_scope() -> str:
-    """Return the configured live target scope."""
+    """Return the fixed automotive live target scope."""
 
-    return (os.getenv("TARGET_SCOPE") or os.getenv("LIVE_TARGET_SCOPE") or live_target()).strip()
+    return CAPTURED_TARGET
 
 
 def fuzzer_base_url() -> str:
-    """Return the configured web base URL for fuzzer live tests."""
+    """Return the fixed automotive web base URL for fuzzer live tests."""
 
-    configured = (os.getenv("LIVE_FUZZER_BASE_URL") or "").strip()
-    if configured:
-        return configured
     return CAPTURED_BASE_URL
 
 
@@ -139,7 +127,7 @@ def discovered_http_state(base_url: str | None = None) -> CyberState:
                     "port": port,
                     "protocol": "tcp",
                     "service_name": service_name,
-                    "version": os.getenv("LIVE_FUZZER_SERVICE_VERSION", ""),
+                    "version": "Werkzeug httpd 3.1.8 (Python 3.10.12)" if service_name == "http" else "",
                     "banner": "",
                 }
             },
@@ -213,7 +201,7 @@ async def auto_detect_live_session() -> tuple[str, str] | None:
     except Exception:
         return None
 
-    url = os.getenv("MCP_ATTACKBOX_URL") or os.getenv("ATTACKBOX_MCP_URL") or ATTACKBOX_MCP_URL
+    url = ATTACKBOX_MCP_URL
     server = MCPServerStreamableHttp(name="attackbox", params={"url": url}, cache_tools_list=False)
     try:
         if hasattr(server, "__aenter__"):

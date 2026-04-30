@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from src.v2.agents.resident.agent import ResidentV2Agent
@@ -14,10 +12,10 @@ pytestmark = pytest.mark.live
 async def test_resident_v2_live_validates_seeded_session():
     require_live_mcp()
     detected = await auto_detect_live_session()
-    session_id = (os.getenv("LIVE_RESIDENT_SESSION_ID") or (detected[0] if detected else "")).strip()
-    target = (os.getenv("LIVE_RESIDENT_TARGET") or (detected[1] if detected else "") or os.getenv("LIVE_STRIKER_TARGET") or "").strip()
+    session_id = (detected[0] if detected else "").strip()
+    target = (detected[1] if detected else "").strip()
     if not session_id or not target:
-        pytest.skip("No live Metasploit session available for resident_v2; run Striker execution or set LIVE_RESIDENT_SESSION_ID/LIVE_RESIDENT_TARGET")
+        pytest.skip("No live Metasploit session available for resident_v2")
 
     step(f"Running resident_v2 live session validation for session {session_id}: {runtime_summary()}")
     state = base_state(

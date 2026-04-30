@@ -23,39 +23,30 @@ Legacy remains the default path until v2 passes non-live and selected live valid
 - Production v2 tracing is available through `V2_TRACE_ENABLED=true`, with raw payloads hidden unless `V2_TRACE_INCLUDE_RAW=true`.
 
 ## Test Commands
+Single live agent:
+
+```bash
+bash tests/v2_live/run_fuzzer_live.sh
+```
+
 Non-live:
 
 ```bash
 bash tests/v2_non_live/run_v2_non_live.sh
 ```
 
-Live OpenRouter:
+Live agent runners:
 
 ```bash
-RUN_V2_LIVE_TESTS=1 bash tests/v2_live/run_v2_live.sh
+bash tests/v2_live/run_supervisor_live.sh
+bash tests/v2_live/run_librarian_live.sh
+bash tests/v2_live/run_scout_live.sh
+bash tests/v2_live/run_fuzzer_live.sh
+bash tests/v2_live/run_striker_live.sh
+bash tests/v2_live/run_resident_live.sh
 ```
 
-The live runner now streams redacted v2 trace logs by default. For direct pytest runs, use `--log-cli-level=INFO`.
-
-Live OpenRouter plus MCP-backed agent tests:
-
-```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 bash tests/v2_live/run_v2_live.sh
-```
-
-If the caller does not set `RUN_V2_LIVE_MCP_TESTS`, the live runner enables MCP-backed tests automatically when `vt-saiber-attackbox` is running.
-
-Resident seeded-session live validation:
-
-```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 LIVE_RESIDENT_SESSION_ID=1 LIVE_RESIDENT_TARGET=10.0.0.5 bash tests/v2_live/run_v2_live.sh
-```
-
-Striker approved execution validation:
-
-```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 LIVE_STRIKER_EXECUTE=true bash tests/v2_live/run_v2_live.sh
-```
+The live runners stream redacted v2 trace logs by default. For direct pytest runs, use `--log-cli-level=INFO`.
 
 Focused v2 unit slice:
 
