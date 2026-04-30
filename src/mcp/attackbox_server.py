@@ -331,12 +331,20 @@ async def recon_host_discovery(targets: str, additional_args: str = "") -> Dict[
 @mcp.tool(name="recon_port_scan")
 async def recon_port_scan(
     target: str,
-    ports: str = "1-1024",
+    ports: str = "",
+    top_ports: int = 1000,
     additional_args: str = "",
 ) -> Dict[str, Any]:
-    """Run a basic nmap port scan and normalize open-service evidence."""
+    """
+    Run a basic nmap port scan and normalize open-service evidence.
 
-    command = f"nmap -Pn -p {shlex.quote(ports)} {additional_args} {shlex.quote(target)}".strip()
+    Defaults to Nmap's top 1000 ports when ports is omitted. Use ports for exact
+    ports/ranges such as "22,80,443,8000,8080" or "1-10000". Use top_ports to
+    request a different Nmap top-port count.
+    """
+
+    port_args = f"-p {shlex.quote(ports)}" if ports else f"--top-ports {max(1, int(top_ports))}"
+    command = f"nmap -Pn {port_args} {additional_args} {shlex.quote(target)}".strip()
     result = await asyncio.to_thread(_run_shell_command, "recon_port_scan", command)
     services = _parse_nmap_services(str(result["raw"].get("stdout", "")))
     result["summary"] = f"Identified {len(services)} open service(s)"
@@ -347,12 +355,20 @@ async def recon_port_scan(
 @mcp.tool(name="recon_service_probe")
 async def recon_service_probe(
     target: str,
-    ports: str = "1-1024",
+    ports: str = "",
+    top_ports: int = 1000,
     additional_args: str = "",
 ) -> Dict[str, Any]:
-    """Run nmap version probing and normalize service/version evidence."""
+    """
+    Run nmap version probing and normalize service/version evidence.
 
-    command = f"nmap -Pn -sV -p {shlex.quote(ports)} {additional_args} {shlex.quote(target)}".strip()
+    Defaults to Nmap's top 1000 ports when ports is omitted. Use ports for exact
+    ports/ranges such as "22,80,443,8000,8080" or "1-10000". Use top_ports to
+    request a different Nmap top-port count.
+    """
+
+    port_args = f"-p {shlex.quote(ports)}" if ports else f"--top-ports {max(1, int(top_ports))}"
+    command = f"nmap -Pn -sV {port_args} {additional_args} {shlex.quote(target)}".strip()
     result = await asyncio.to_thread(_run_shell_command, "recon_service_probe", command)
     services = _parse_nmap_services(str(result["raw"].get("stdout", "")))
     result["summary"] = f"Probed {len(services)} service(s)"

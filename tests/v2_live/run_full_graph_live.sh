@@ -23,7 +23,7 @@ if ! docker ps --filter "name=^vt-saiber-attackbox$" --filter "status=running" -
     exit 1
 fi
 
-docker exec -t \
+docker exec -it \
     -e SAIBER_GRAPH_VERSION=v2 \
     -e STRIKER_V2_REQUIRE_CONFIRMATION=true \
     -e V2_TRACE_ENABLED="${V2_TRACE_ENABLED:-true}" \

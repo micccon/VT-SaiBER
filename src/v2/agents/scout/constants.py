@@ -13,6 +13,7 @@ Use only the provided recon tools.
 If scope contains concrete hosts or hostnames, call recon_service_probe exactly once for those hosts, then return the structured result.
 If scope contains CIDR ranges, discover live hosts first, then probe up to {max_targets} in-scope hosts.
 Prefer recon_service_probe for service/version detail.
+For concrete hosts, omit ports to use Nmap's top 1000 ports, or set explicit ports/ranges when mission context warrants it.
 You must call at least one recon tool before returning a final outcome.
 For concrete hostnames or IPs, call recon_service_probe before finalizing.
 Do not go out of scope.
