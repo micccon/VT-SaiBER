@@ -217,34 +217,6 @@ def test_local_tool_execution_records_telemetry_and_artifacts():
     assert result.artifacts == [{"name": "note.txt"}]
 
 
-def test_required_tool_use_reaches_model_settings():
-    async def executor(**kwargs):
-        return {"status": "success"}
-
-    spec = AgentExecutionSpec(
-        agent_name="demo",
-        instructions="test",
-        model=_model_config(),
-        output_type=_SampleOutcome,
-        local_tools=[
-            LocalToolSpec(
-                name="echo",
-                description="echo",
-                input_schema={"type": "object", "properties": {}},
-                executor=executor,
-            )
-        ],
-        require_tool_use=True,
-    )
-
-    _FakeRunner.script = [("echo", {})]
-    _FakeRunner.final_output = {"status": "ok"}
-    _run(AgentsSDKExecutionRunner(sdk_module=_FakeSDK).run(spec, user_input="hello"))
-
-    settings = _FakeRunner.last_call["run_config"].kwargs["model_settings"]
-    assert settings.kwargs["tool_choice"] == "required"
-
-
 def test_mcp_tool_allowlist_uses_direct_sdk_server():
     _FakeMCPServerStreamableHttp.instances.clear()
     _FakeMCPServerStreamableHttp.registry = {

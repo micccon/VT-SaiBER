@@ -557,12 +557,9 @@ class AgentsSDKExecutionRunner:
         kwargs: dict[str, Any] = {}
         model_settings_cls = getattr(sdk, "ModelSettings", None)
         if model_settings_cls is not None:
-            model_settings_kwargs: dict[str, Any] = {"temperature": spec.model.temperature}
-            if spec.require_tool_use:
-                model_settings_kwargs["tool_choice"] = "required"
             kwargs["model_settings"] = self._build_model_settings_instance(
                 model_settings_cls,
-                model_settings_kwargs,
+                {"temperature": spec.model.temperature},
             )
 
         provider_cls = getattr(sdk, "OpenAIProvider", None)
@@ -609,8 +606,4 @@ class AgentsSDKExecutionRunner:
             supported = set()
         if supported and not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
             kwargs = {key: value for key, value in kwargs.items() if key in supported}
-        try:
-            return model_settings_cls(**kwargs)
-        except TypeError:
-            kwargs.pop("tool_choice", None)
-            return model_settings_cls(**kwargs)
+        return model_settings_cls(**kwargs)

@@ -10,17 +10,19 @@ from src.v2.contracts.execution import ExecutionResult, ToolEvent
 
 
 class _FakeExecutionRunner:
-    def __init__(self, result: ExecutionResult[FuzzerOutcome]):
-        self.result = result
+    def __init__(self, result: ExecutionResult[FuzzerOutcome] | list[ExecutionResult[FuzzerOutcome]]):
+        self.results = list(result) if isinstance(result, list) else [result]
         self.last_spec = None
         self.last_input = None
         self.last_context = None
+        self.calls: list[str] = []
 
     async def run(self, spec, *, user_input: str, context=None, policy=None):
         self.last_spec = spec
         self.last_input = user_input
         self.last_context = context
-        return self.result
+        self.calls.append(user_input)
+        return self.results.pop(0)
 
 
 def _tool_event(name: str = "web_content_enum") -> ToolEvent:
@@ -158,17 +160,59 @@ async def test_fuzzer_v2_rejects_model_output_without_web_tool_use():
         }
     }
     runner = _FakeExecutionRunner(
-        ExecutionResult(
-            outcome=FuzzerOutcome(
-                base_url="http://192.168.1.10",
-                web_findings=[
-                    WebFinding(url="http://192.168.1.10/admin", path="/admin", status_code=200)
-                ],
-            )
-        )
+        [
+            ExecutionResult(
+                outcome=FuzzerOutcome(
+                    base_url="http://192.168.1.10",
+                    web_findings=[
+                        WebFinding(url="http://192.168.1.10/admin", path="/admin", status_code=200)
+                    ],
+                )
+            ),
+            ExecutionResult(
+                outcome=FuzzerOutcome(
+                    base_url="http://192.168.1.10",
+                    web_findings=[
+                        WebFinding(url="http://192.168.1.10/admin", path="/admin", status_code=200)
+                    ],
+                )
+            ),
+        ]
     )
 
     out = await FuzzerV2Agent(execution_runner=runner).run(state)
 
     assert out["errors"][0].error_type == "ValidationError"
     assert "did not execute" in out["errors"][0].error
+    assert len(runner.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_fuzzer_v2_retries_once_when_model_skips_web_tool():
+    state = _base_state()
+    state["discovered_targets"] = {
+        "192.168.1.10": {
+            "ports": [80],
+            "services": {"80": {"service_name": "http"}},
+        }
+    }
+    runner = _FakeExecutionRunner(
+        [
+            ExecutionResult(outcome=FuzzerOutcome(base_url="http://192.168.1.10")),
+            ExecutionResult(
+                outcome=FuzzerOutcome(
+                    base_url="http://192.168.1.10",
+                    web_findings=[
+                        WebFinding(url="http://192.168.1.10/admin", path="/admin", status_code=200)
+                    ],
+                ),
+                tool_events=[_tool_event("web_content_enum")],
+            ),
+        ]
+    )
+
+    out = await FuzzerV2Agent(execution_runner=runner).run(state)
+
+    assert out["web_findings"][0]["path"] == "/admin"
+    assert len(runner.calls) == 2
+    assert "CORRECTION" in runner.calls[1]

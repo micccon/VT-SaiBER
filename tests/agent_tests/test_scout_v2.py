@@ -12,17 +12,19 @@ from src.v2.contracts.execution import ExecutionResult, ToolEvent
 
 
 class _FakeExecutionRunner:
-    def __init__(self, result: ExecutionResult[ScoutOutcome]):
-        self.result = result
+    def __init__(self, result: ExecutionResult[ScoutOutcome] | list[ExecutionResult[ScoutOutcome]]):
+        self.results = list(result) if isinstance(result, list) else [result]
         self.last_spec = None
         self.last_input = None
         self.last_context = None
+        self.calls: list[str] = []
 
     async def run(self, spec, *, user_input: str, context=None, policy=None):
         self.last_spec = spec
         self.last_input = user_input
         self.last_context = context
-        return self.result
+        self.calls.append(user_input)
+        return self.results.pop(0)
 
 
 def _tool_event(name: str = "recon_service_probe") -> ToolEvent:
@@ -140,15 +142,51 @@ async def test_scout_v2_persists_service_probe_targets():
 @pytest.mark.asyncio
 async def test_scout_v2_rejects_model_output_without_recon_tool_use():
     runner = _FakeExecutionRunner(
-        ExecutionResult(
-            outcome=ScoutOutcome(
-                discovered_hosts=["192.168.1.20"],
-                operator_summary="Claimed host without tool use.",
-            )
-        )
+        [
+            ExecutionResult(
+                outcome=ScoutOutcome(
+                    discovered_hosts=["192.168.1.20"],
+                    operator_summary="Claimed host without tool use.",
+                )
+            ),
+            ExecutionResult(
+                outcome=ScoutOutcome(
+                    discovered_hosts=["192.168.1.20"],
+                    operator_summary="Still skipped tool use.",
+                )
+            ),
+        ]
     )
 
     out = await ScoutV2Agent(execution_runner=runner).run(_base_state())
 
     assert out["errors"][0].error_type == "ValidationError"
     assert "did not execute" in out["errors"][0].error
+    assert len(runner.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_scout_v2_retries_once_when_model_skips_recon_tool():
+    runner = _FakeExecutionRunner(
+        [
+            ExecutionResult(
+                outcome=ScoutOutcome(
+                    discovered_hosts=["192.168.1.20"],
+                    operator_summary="Claimed host without tool use.",
+                )
+            ),
+            ExecutionResult(
+                outcome=ScoutOutcome(
+                    discovered_hosts=["192.168.1.20"],
+                    operator_summary="Retried with recon tool.",
+                ),
+                tool_events=[_tool_event("recon_service_probe")],
+            ),
+        ]
+    )
+
+    out = await ScoutV2Agent(execution_runner=runner).run(_base_state())
+
+    assert sorted(out["discovered_targets"].keys()) == ["192.168.1.20"]
+    assert len(runner.calls) == 2
+    assert "CORRECTION" in runner.calls[1]

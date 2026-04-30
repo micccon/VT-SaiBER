@@ -69,7 +69,6 @@ class AgentExecutionSpec(Generic[TOutcome]):
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     local_tools: list[LocalToolSpec] = field(default_factory=list)
     max_turns: int = 8
-    require_tool_use: bool = False
 
 
 @dataclass(frozen=True)
