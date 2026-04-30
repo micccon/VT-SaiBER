@@ -25,25 +25,25 @@ Legacy remains the default path until v2 passes non-live and selected live valid
 Non-live:
 
 ```bash
-python -m pytest tests/v2_non_live -q
+bash tests/v2_non_live/run_v2_non_live.sh
 ```
 
 Live OpenRouter:
 
 ```bash
-RUN_V2_LIVE_TESTS=1 python -m pytest tests/v2_live -q
+RUN_V2_LIVE_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
 Live OpenRouter plus MCP graph smoke:
 
 ```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 python -m pytest tests/v2_live -q
+RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
 Focused v2 unit slice:
 
 ```bash
-python -m pytest tests/agent_tests/test_supervisor_v2.py tests/agent_tests/test_v2_router.py tests/agent_tests/test_v2_graph.py tests/agent_tests/test_v2_chat_synthesis.py tests/agent_tests/test_librarian_v2.py tests/agent_tests/test_v2_agent_helpers.py tests/agent_tests/test_v2_execution_framework.py tests/agent_tests/test_scout_v2.py tests/agent_tests/test_fuzzer_v2.py tests/agent_tests/test_striker_v2.py tests/agent_tests/test_resident_v2.py -q
+docker exec -t vt-saiber-agents sh -lc 'cd /app && python3 -m pytest tests/agent_tests/test_supervisor_v2.py tests/agent_tests/test_v2_router.py tests/agent_tests/test_v2_graph.py tests/agent_tests/test_v2_chat_synthesis.py tests/agent_tests/test_librarian_v2.py tests/agent_tests/test_v2_agent_helpers.py tests/agent_tests/test_v2_execution_framework.py tests/agent_tests/test_scout_v2.py tests/agent_tests/test_fuzzer_v2.py tests/agent_tests/test_striker_v2.py tests/agent_tests/test_resident_v2.py -q'
 ```
 
 ## VM Handoff

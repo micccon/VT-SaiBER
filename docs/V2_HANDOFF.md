@@ -33,31 +33,36 @@ The CLI command shape does not change. `SAIBER_GRAPH_VERSION=legacy` or an unset
 Run non-live promotion tests:
 
 ```bash
-python -m pytest tests/v2_non_live -q
+bash tests/v2_non_live/run_v2_non_live.sh
 ```
 
 Run live OpenRouter tests:
 
 ```bash
-RUN_V2_LIVE_TESTS=1 python -m pytest tests/v2_live -q
+RUN_V2_LIVE_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
 Run live OpenRouter plus MCP graph smoke tests:
 
 ```bash
-RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 python -m pytest tests/v2_live -q
+RUN_V2_LIVE_TESTS=1 RUN_V2_LIVE_MCP_TESTS=1 bash tests/v2_live/run_v2_live.sh
 ```
 
 Run the app through the full v2 graph:
 
 ```bash
-SAIBER_GRAPH_VERSION=v2 python -m src.main --mission-goal "..." --target-scope "..."
+docker exec -t \
+  -e SAIBER_GRAPH_VERSION=v2 \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -e OPENROUTER_MODEL="$OPENROUTER_MODEL" \
+  vt-saiber-agents sh -lc \
+  'cd /app && python3 -m src.main --mission-goal "..." --target-scope "..."'
 ```
 
 Run the focused v2 unit slice:
 
 ```bash
-python -m pytest tests/agent_tests/test_supervisor_v2.py tests/agent_tests/test_v2_router.py tests/agent_tests/test_v2_graph.py tests/agent_tests/test_v2_chat_synthesis.py tests/agent_tests/test_librarian_v2.py tests/agent_tests/test_v2_agent_helpers.py tests/agent_tests/test_v2_execution_framework.py tests/agent_tests/test_scout_v2.py tests/agent_tests/test_fuzzer_v2.py tests/agent_tests/test_striker_v2.py tests/agent_tests/test_resident_v2.py -q
+docker exec -t vt-saiber-agents sh -lc 'cd /app && python3 -m pytest tests/agent_tests/test_supervisor_v2.py tests/agent_tests/test_v2_router.py tests/agent_tests/test_v2_graph.py tests/agent_tests/test_v2_chat_synthesis.py tests/agent_tests/test_librarian_v2.py tests/agent_tests/test_v2_agent_helpers.py tests/agent_tests/test_v2_execution_framework.py tests/agent_tests/test_scout_v2.py tests/agent_tests/test_fuzzer_v2.py tests/agent_tests/test_striker_v2.py tests/agent_tests/test_resident_v2.py -q'
 ```
 
 ## Replacement Checklist
