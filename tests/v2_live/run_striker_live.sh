@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the live striker_v2 planning test inside the agents container.
+# Run the live striker_v2 manual-approval exploit-attempt test inside the agents container.
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ if ! docker ps --filter "name=^vt-saiber-attackbox$" --filter "status=running" -
     exit 1
 fi
 
-docker exec -t \
+docker exec -it \
     -e SAIBER_GRAPH_VERSION=v2 \
     -e V2_TRACE_ENABLED="${V2_TRACE_ENABLED:-true}" \
     -e V2_TRACE_INCLUDE_RAW="${V2_TRACE_INCLUDE_RAW:-false}" \
@@ -34,4 +34,4 @@ docker exec -t \
     -e ATTACKBOX_MCP_URL="${ATTACKBOX_MCP_URL:-http://attackbox:8080/mcp}" \
     -e MCP_ATTACKBOX_URL="${MCP_ATTACKBOX_URL:-${ATTACKBOX_MCP_URL:-http://attackbox:8080/mcp}}" \
     vt-saiber-agents sh -lc \
-    "cd /app && python3 -m pytest tests/v2_live/test_striker_live.py -q --log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
+    "cd /app && python3 -m pytest tests/v2_live/test_striker_live.py -q -s --log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
