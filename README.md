@@ -1,178 +1,74 @@
 # VT-SaiBER
 
-VT-SaiBER is a Dockerized multi-agent cyber security application for running modular reconnaissance, vulnerability research, exploitation, and post-exploitation workflows on a VM or a local machine.
+VT-SaiBER is a multi-agent offensive security orchestration framework for scoped, repeatable cyber-physical security workflows. It combines a supervisor-led graph, specialized agents, PostgreSQL-backed persistence, RAG-assisted research, and a unified attackbox MCP surface for Kali and Metasploit tooling.
 
-The system is built around:
-- `LangGraph` for orchestration
-- `PostgreSQL + pgvector` for persistence and RAG
-- a unified `attackbox` MCP server for Kali and Metasploit tool access
-- a shared mission state passed between specialized agents
+## What It Does
 
-## What Starts Automatically
+- Orchestrates reconnaissance, web testing, exploit research, exploitation, and post-exploitation through specialized agents.
+- Persists mission state, findings, sessions, agent logs, and attack-chain history in PostgreSQL.
+- Uses a knowledge base plus external enrichment to support research-heavy decisions through the Librarian agent.
+- Produces structured export bundles for mission review, reporting, and downstream analysis.
 
-When you start the stack with Docker Compose, these pieces work together:
-- `postgres`: mission data, findings, sessions, attack chain, and knowledge base storage
-- `knowledge_base`: ingests and syncs `src/database/testbed_docs` into `knowledge_base`
-- `attackbox`: exposes the unified offensive tool surface
-- `agents`: runs the VT-SaiBER application environment
+## Core Components
 
-Important behavior:
-- Testbed documentation is automatically synced into the KB from `src/database/testbed_docs`
-- Mission reports default to `exports/<mission_id>/`
-- Report export can be triggered from the main orchestrator or from the exporter CLI
-
-## Project Layout
-
-```text
-VT-SaiBER/
-|- docker-compose.yml
-|- .env.example
-|- README.md
-|- exports/                  # Generated mission reports
-|- src/
-|  |- main.py               # Orchestrator entry point
-|  |- agents/               # Supervisor, Scout, Fuzzer, Librarian, Striker, Resident
-|  |- database/
-|  |  |- manager.py         # DB APIs and persistence helpers
-|  |  |- persistence.py     # Runtime state -> DB sync hooks
-|  |  |- reporting/         # Report export and attack-path graph generation
-|  |  |- rag/               # Embedding, indexing, retrieval, orchestration
-|  |  |- schema.sql
-|  |  `- testbed_docs/      # Documentation corpus indexed into the KB
-|  |- graph/                # LangGraph workflow assembly and routing
-|  `- mcp/                  # Attackbox bridge and MCP servers
-`- tests/
-```
+- `src/main.py`: main orchestration entrypoint
+- `src/graph/`: LangGraph workflow assembly and routing
+- `src/runtime/`: promoted runtime surface for chat, execution, approvals, and tracing
+- `src/agents/`: supervisor, scout, fuzzer, librarian, striker, and resident agents
+- `src/database/`: persistence, reporting, and RAG subsystems
+- `src/mcp/`: unified attackbox MCP server and Metasploit integration
+- `scripts/setup/`: Docker and automotive testbed setup helpers
+- `scripts/tests/`: test suites
 
 ## Quick Start
 
-### 1. Configure environment
-
-Create your local `.env` from the template:
+1. Copy the environment template.
 
 ```bash
 cp .env.example .env
 ```
 
-At minimum, set:
-- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
-- `OPENROUTER_API_KEY`
-- `ATTACKBOX_MCP_URL`
-
-Optional but useful:
-- `REPORT_EXPORT_DIR=exports`
-- `RAG_KB_TOP_K`, `RAG_KB_FETCH_K`
-- `RAG_MIN_DOCS`, `RAG_MIN_SCORE`
-
-### 2. Start the stack
+2. Start the main stack.
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-On startup:
-- PostgreSQL initializes schema and indexes
-- the `knowledge_base` service waits for Postgres
-- `src/database/testbed_docs` is indexed into the KB
-- the agents environment becomes ready for mission execution
+3. Start the automotive testbed if you want the full demo environment.
 
-## Running a Mission
+```bash
+bash scripts/setup/testbed/setup_testbed.sh
+```
 
-You can run the orchestrator from the repo environment:
+4. Run a mission.
 
 ```bash
 python -m src.main \
-  --mission-goal "Research and exploit the target" \
-  --target-scope "192.168.56.101"
+  --mission-id demo-001 \
+  --mission-goal "Perform scoped reconnaissance and exploit-path analysis" \
+  --target-scope "automotive-testbed"
 ```
 
-If you also want a report bundle after the mission:
+5. Export a report bundle for an existing mission.
 
 ```bash
-python -m src.main \
-  --mission-goal "Research and exploit the target" \
-  --target-scope "192.168.56.101" \
-  --export-dir exports
+python -m src.database.reporting.exporter --mission-id demo-001
 ```
 
-If `--export-dir` is omitted, VT-SaiBER uses `REPORT_EXPORT_DIR`, which defaults to `exports`.
+## Where To Go Next
 
-## Reports and Exported Artifacts
+- [Docs Hub](docs/README.md)
+- [Getting Started](docs/GETTING_STARTED.md)
+- [Operations](docs/OPERATIONS.md)
+- [Testing](docs/TESTING.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development](docs/DEVELOPMENT.md)
+- [Reference](docs/REFERENCE.md)
+- [Contributing](CONTRIBUTING.md)
 
-To export a report bundle for an existing mission:
+## Current Workflow Defaults
 
-```bash
-python -m src.database.reporting.exporter --mission-id <mission_id>
-```
-
-By default, artifacts are written to:
-
-```text
-exports/<mission_id>/
-```
-
-The export bundle includes:
-- `summary.json`
-- `snapshot.json`
-- `report.md`
-- `report.html`
-- `targets.csv`
-- `services.csv`
-- `findings.csv`
-- `sessions.csv`
-- `agent_logs.csv`
-- `attack_chain.csv`
-- `attack_path.json`
-- `attack_path.mmd`
-- `attack_path.dot`
-- `attack_path.svg` if Graphviz is available
-
-## Knowledge Base Behavior
-
-The RAG layer indexes files from:
-
-```text
-src/database/testbed_docs/
-```
-
-This includes text, markdown, and PDF files. The KB sync service is intended to make local/VM usage simple:
-- users do not need to run a separate ingest script
-- the documentation corpus is refreshed automatically through Docker Compose
-
-Manual maintenance is still available when needed:
-
-```bash
-python -m src.database.rag.rag_engine sync
-python -m src.database.rag.rag_engine rebuild
-```
-
-## Retrieval Tuning
-
-RAG retrieval behavior is configurable from environment variables:
-- `RAG_KB_TOP_K`
-- `RAG_KB_FETCH_K`
-- `RAG_FINDINGS_TOP_K`
-- `RAG_FINDINGS_FETCH_K`
-- `RAG_KB_SIMILARITY_THRESHOLD`
-- `RAG_FINDINGS_SIMILARITY_THRESHOLD`
-- `RAG_MIN_DOCS`
-- `RAG_MIN_SCORE`
-- `RAG_MAX_CHUNKS_PER_DOC`
-
-These values affect Librarian confidence checks and KB/findings retrieval quality.
-
-## Safety Notes
-
-- All agent activity is expected to stay within the declared mission scope
-- Exploit execution is guarded through the supervisor/striker flow
-- Session state, findings, attack chain, and agent logs are persisted to PostgreSQL
-
-## Current Practical Defaults
-
-For local and VM usage, the current intended workflow is:
-1. `docker compose up --build`
-2. let the KB sync complete automatically
-3. run missions through `src.main`
-4. collect reports from `exports/<mission_id>/`
-
-This keeps the user workflow simple without requiring manual ingest or manual report path selection.
+- The Compose stack provisions `postgres`, `knowledge_base`, `attackbox`, and `agents`.
+- The knowledge base ingests `src/database/testbed_docs` through the `knowledge_base` service.
+- Mission export bundles default to `exports/<mission_id>/` through `REPORT_EXPORT_DIR` unless overridden.
+- Live tests and MCP-dependent flows assume the attackbox endpoint at `ATTACKBOX_MCP_URL`.
