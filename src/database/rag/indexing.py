@@ -191,40 +191,6 @@ class IndexingPipeline:
             metadata_base=base_metadata,
         )
 
-    async def ingest_into_knowledge_base(
-        self,
-        source_paths: List[str],
-        *,
-        embedding_client: EmbeddingClient,
-        reset: bool = False,
-        batch_size: int | None = None,
-        metadata_base: Dict[str, Any] | None = None,
-    ) -> IngestionResult:
-        """Compatibility wrapper for the old ingestion method name."""
-        return await self.index_sources_into_knowledge_base(
-            source_paths,
-            embedding_client=embedding_client,
-            reset=reset,
-            batch_size=batch_size,
-            metadata_base=metadata_base,
-        )
-
-    async def ingest_incremental_into_knowledge_base(
-        self,
-        source_paths: List[str],
-        *,
-        embedding_client: EmbeddingClient,
-        batch_size: int | None = None,
-        metadata_base: Dict[str, Any] | None = None,
-    ) -> IngestionResult:
-        """Compatibility wrapper for the old incremental ingestion name."""
-        return await self.sync_sources_into_knowledge_base_incrementally(
-            source_paths,
-            embedding_client=embedding_client,
-            batch_size=batch_size,
-            metadata_base=metadata_base,
-        )
-
     def _is_supported_file(self, file_path: str) -> bool:
         return file_path.lower().endswith(SUPPORTED_EXTENSIONS)
 

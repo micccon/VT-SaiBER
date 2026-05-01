@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from src.database.attack_chain_repository import create_attack_chain_step
-from src.database.findings_store import create_finding
+from src.database.findings_repository import create_finding
 from src.database.reporting.exporter import export_mission_bundle
 from src.database.sessions_repository import upsert_session
 from src.database.targets_repository import replace_services_for_target, upsert_target

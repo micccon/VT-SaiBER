@@ -11,8 +11,8 @@ from dotenv import load_dotenv
 from src.config import get_runtime_config
 from src.database.activity_repository import get_agent_logs_by_mission
 from src.database.attack_chain_repository import get_attack_chain_by_mission
-from src.database.connection import ensure_runtime_indexes
-from src.database.findings_store import get_findings_by_mission
+from src.database.connection import ensure_database_ready
+from src.database.findings_repository import get_findings_by_mission
 from src.database.sessions_repository import get_sessions_by_mission
 from src.database.targets_repository import get_services_by_mission, get_targets_by_mission
 from .attack_graph import (
@@ -25,7 +25,7 @@ from .attack_graph import (
 
 
 def export_mission_bundle(mission_id: str, output_dir: str) -> Dict[str, str]:
-    ensure_runtime_indexes()
+    ensure_database_ready()
 
     output_path = Path(output_dir).expanduser().resolve() / mission_id
     output_path.mkdir(parents=True, exist_ok=True)

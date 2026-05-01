@@ -21,7 +21,7 @@ from src.database.activity_repository import (
 from src.database.attack_chain_repository import (
     create_attack_chain_step,
 )
-from src.database.findings_store import (
+from src.database.findings_repository import (
     create_finding,
     finding_exists_by_persistence_key,
 )
@@ -32,7 +32,7 @@ from src.database.targets_repository import (
     replace_services_for_target,
     upsert_target,
 )
-from src.database.connection import ensure_runtime_indexes
+from src.database.connection import ensure_database_ready
 from src.state.cyber_state import CyberState
 
 logger = logging.getLogger(__name__)
@@ -46,8 +46,8 @@ def persist_state_update(previous_state: CyberState, updates: Dict[str, Any]) ->
         return
 
     try:
-        # Bootstrap indexes before writing, but never let persistence stop the graph.
-        ensure_runtime_indexes()
+        # Ensure the schema/extensions/indexes exist before best-effort writes.
+        ensure_database_ready()
         merged_targets = _merge_dict_state(previous_state, updates, "discovered_targets")
         merged_active_sessions = _merge_dict_state(previous_state, updates, "active_sessions")
     except Exception:

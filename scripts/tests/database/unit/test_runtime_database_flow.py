@@ -3,7 +3,7 @@ from __future__ import annotations
 from src.database.activity_repository import get_agent_logs_by_mission
 from src.database.attack_chain_repository import get_attack_chain_by_mission
 from src.database.connection import test_connection as db_test_connection
-from src.database.findings_store import create_finding, get_findings_by_mission
+from src.database.findings_repository import create_finding, get_findings_by_mission
 from src.database.persistence import persist_state_update
 from src.database.sessions_repository import get_sessions_by_mission, upsert_session
 from src.database.targets_repository import (

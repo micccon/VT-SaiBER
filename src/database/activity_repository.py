@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from psycopg2.extras import RealDictCursor
 
@@ -24,16 +23,6 @@ def create_agent_log(mission_id, agent_name, action, reasoning, result_summary, 
             row = cur.fetchone()
         conn.commit()
         return row
-    finally:
-        conn.close()
-
-
-def get_agent_logs():
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM agent_logs ORDER BY created_at DESC;")
-            return cur.fetchall()
     finally:
         conn.close()
 

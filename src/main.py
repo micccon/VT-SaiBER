@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 from src.config import RuntimeConfig, get_runtime_config
 from src.core.parsers import to_jsonable
-from src.database.connection import ensure_runtime_indexes
+from src.database.connection import ensure_database_ready
 from src.graph.builder import build_graph
 from src.state.cyber_state import CyberState
 
@@ -256,7 +256,7 @@ class CatalystRunner:
     async def _invoke_graph(self, request: MissionRequest) -> Dict[str, Any]:
         """Run the compiled graph and normalize the final state to plain JSONable objects."""
 
-        ensure_runtime_indexes()
+        ensure_database_ready()
         initial_state = self.build_initial_state_for_request(request)
         graph_config = self.build_graph_config(request)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from src.config import get_runtime_config
-from src.database.findings_store import create_finding
+from src.database.findings_repository import create_finding
 from src.database.rag.embedding import EmbeddingClient
 from src.database.rag.models import Chunk
 from src.database.rag.rag_manager import insert_kb_chunk

@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
 
-from src.database.connection import ensure_runtime_indexes
+from src.database.connection import ensure_database_ready
 
 from .embedding import EmbeddingClient
 from .indexing import IndexingPipeline
@@ -29,7 +29,7 @@ class RAGOrchestrator:
     def __init__(self):
         """Initialize all RAG components."""
         try:
-            ensure_runtime_indexes()
+            ensure_database_ready()
         except Exception:
             pass
         self.embedding_client = EmbeddingClient()
@@ -143,62 +143,6 @@ class RAGOrchestrator:
                 f"{result_dict['inserted_count']} chunks processed"
             )
         return result_dict
-
-    async def ingest_sources(
-        self,
-        source_dirs: Optional[List[str]] = None,
-        *,
-        reset: bool = False,
-        max_chars: int = 800,
-        overlap: int = 100,
-        batch_size: Optional[int] = None,
-        metadata_base: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Compatibility wrapper for the old generic ingestion name."""
-        return await self.index_sources(
-            source_dirs=source_dirs,
-            reset=reset,
-            max_chars=max_chars,
-            overlap=overlap,
-            batch_size=batch_size,
-            metadata_base=metadata_base,
-        )
-
-    async def index_knowledge_base_full(
-        self,
-        source_dirs: Optional[List[str]] = None,
-        *,
-        max_chars: int = 800,
-        overlap: int = 100,
-        batch_size: Optional[int] = None,
-        metadata_base: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Compatibility wrapper for the old full indexing name."""
-        return await self.rebuild_knowledge_base(
-            source_dirs=source_dirs,
-            max_chars=max_chars,
-            overlap=overlap,
-            batch_size=batch_size,
-            metadata_base=metadata_base,
-        )
-
-    async def index_knowledge_base_incremental(
-        self,
-        source_dirs: Optional[List[str]] = None,
-        *,
-        max_chars: int = 800,
-        overlap: int = 100,
-        batch_size: Optional[int] = None,
-        metadata_base: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Compatibility wrapper for the old incremental indexing name."""
-        return await self.sync_knowledge_base_incrementally(
-            source_dirs=source_dirs,
-            max_chars=max_chars,
-            overlap=overlap,
-            batch_size=batch_size,
-            metadata_base=metadata_base,
-        )
 
     # ===== Online Pipeline =====
 

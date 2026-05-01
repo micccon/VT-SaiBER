@@ -7,25 +7,6 @@ from psycopg2.extras import RealDictCursor
 from src.database.connection import get_connection
 
 
-def get_session_by_mission_and_session_id(mission_id: str, session_id: int):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT *
-                FROM sessions
-                WHERE mission_id = %s AND session_id = %s
-                ORDER BY established_at DESC NULLS LAST, id DESC
-                LIMIT 1;
-                """,
-                (mission_id, session_id),
-            )
-            return cur.fetchone()
-    finally:
-        conn.close()
-
-
 def upsert_session(
     mission_id: str,
     session_id: int,
@@ -38,7 +19,7 @@ def upsert_session(
     established_at: Optional[str] = None,
     notes: Optional[str] = None,
 ):
-    existing = get_session_by_mission_and_session_id(mission_id, session_id)
+    existing = _get_session_by_mission_and_session_id(mission_id, session_id)
     if existing is None:
         conn = get_connection()
         try:
@@ -130,28 +111,6 @@ def get_sessions_by_mission(mission_id: str, include_closed: bool = True):
         conn.close()
 
 
-def close_session(mission_id: str, session_id: int, notes: Optional[str] = None):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                UPDATE sessions
-                SET
-                    closed_at = NOW(),
-                    notes = COALESCE(%s, notes)
-                WHERE mission_id = %s AND session_id = %s AND closed_at IS NULL
-                RETURNING *;
-                """,
-                (notes, mission_id, session_id),
-            )
-            row = cur.fetchone()
-        conn.commit()
-        return row
-    finally:
-        conn.close()
-
-
 def sync_sessions_for_mission(
     mission_id: str,
     active_sessions: Dict[str, Dict[str, Any]],
@@ -187,4 +146,45 @@ def sync_sessions_for_mission(
     open_sessions = get_sessions_by_mission(mission_id, include_closed=False)
     for session in open_sessions:
         if int(session["session_id"]) not in current_session_ids:
-            close_session(mission_id, int(session["session_id"]), notes="Closed by state sync")
+            _close_session(mission_id, int(session["session_id"]), notes="Closed by state sync")
+
+
+def _get_session_by_mission_and_session_id(mission_id: str, session_id: int):
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM sessions
+                WHERE mission_id = %s AND session_id = %s
+                ORDER BY established_at DESC NULLS LAST, id DESC
+                LIMIT 1;
+                """,
+                (mission_id, session_id),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def _close_session(mission_id: str, session_id: int, notes: Optional[str] = None):
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE sessions
+                SET
+                    closed_at = NOW(),
+                    notes = COALESCE(%s, notes)
+                WHERE mission_id = %s AND session_id = %s AND closed_at IS NULL
+                RETURNING *;
+                """,
+                (notes, mission_id, session_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return row
+    finally:
+        conn.close()

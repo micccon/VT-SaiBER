@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.config import get_runtime_config
-from src.database.connection import ensure_runtime_indexes, get_connection
+from src.database.connection import ensure_database_ready, get_connection
 
 
 def _resolve_test_db_host() -> None:
@@ -29,7 +29,7 @@ def _resolve_test_db_host() -> None:
 @pytest.fixture(scope="session", autouse=True)
 def _db_ready() -> None:
     _resolve_test_db_host()
-    ensure_runtime_indexes()
+    ensure_database_ready()
 
 
 @pytest.fixture(autouse=True)

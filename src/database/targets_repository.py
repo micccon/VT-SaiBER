@@ -7,46 +7,6 @@ from psycopg2.extras import RealDictCursor
 from src.database.connection import get_connection
 
 
-def create_target(mission_id, ip_address, mac_address=None, os_guess=None, hostname=None, discovered_at=None):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                INSERT INTO targets (mission_id, ip_address, mac_address,
-                                     os_guess, hostname, discovered_at)
-                VALUES (%s, %s, %s, %s, %s, COALESCE(%s, NOW()))
-                RETURNING *;
-                """,
-                (mission_id, ip_address, mac_address, os_guess, hostname, discovered_at),
-            )
-            row = cur.fetchone()
-        conn.commit()
-        return row
-    finally:
-        conn.close()
-
-
-def get_target_by_id(target_id):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM targets WHERE id = %s;", (target_id,))
-            return cur.fetchone()
-    finally:
-        conn.close()
-
-
-def get_targets():
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM targets ORDER BY id;")
-            return cur.fetchall()
-    finally:
-        conn.close()
-
-
 def get_targets_by_mission(mission_id):
     conn = get_connection()
     try:
@@ -123,7 +83,89 @@ def get_target_info(mission_id, target_ip):
         conn.close()
 
 
-def update_target(target_id, mission_id=None, ip_address=None, mac_address=None, os_guess=None, hostname=None, discovered_at=None):
+def upsert_target(mission_id, ip_address, mac_address=None, os_guess=None, hostname=None, discovered_at=None):
+    existing = _get_target_by_mission_ip(mission_id, ip_address)
+    if existing is None:
+        return _create_target(
+            mission_id=mission_id,
+            ip_address=ip_address,
+            mac_address=mac_address,
+            os_guess=os_guess,
+            hostname=hostname,
+            discovered_at=discovered_at,
+        )
+    return _update_target(
+        existing["id"],
+        mission_id=mission_id,
+        ip_address=ip_address,
+        mac_address=mac_address if mac_address is not None else existing.get("mac_address"),
+        os_guess=os_guess if os_guess is not None else existing.get("os_guess"),
+        hostname=hostname if hostname is not None else existing.get("hostname"),
+        discovered_at=discovered_at,
+    )
+
+
+def replace_services_for_target(target_id: int, services: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    _delete_services_by_target(target_id)
+    created: List[Dict[str, Any]] = []
+    for service in services:
+        created.append(
+            _create_service(
+                target_id=target_id,
+                port=int(service.get("port", 0) or 0),
+                protocol=str(service.get("protocol", "tcp") or "tcp"),
+                service_name=str(service.get("service_name", "unknown") or "unknown"),
+                service_version=str(service.get("service_version") or service.get("version") or "") or None,
+                banner=str(service.get("banner") or "") or None,
+            )
+        )
+    return created
+
+
+def get_services_by_mission(mission_id: str):
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    s.*,
+                    t.ip_address,
+                    t.hostname,
+                    t.mission_id
+                FROM services s
+                JOIN targets t ON s.target_id = t.id
+                WHERE t.mission_id = %s
+                ORDER BY t.ip_address, s.port;
+                """,
+                (mission_id,),
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def _create_target(mission_id, ip_address, mac_address=None, os_guess=None, hostname=None, discovered_at=None):
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO targets (mission_id, ip_address, mac_address,
+                                     os_guess, hostname, discovered_at)
+                VALUES (%s, %s, %s, %s, %s, COALESCE(%s, NOW()))
+                RETURNING *;
+                """,
+                (mission_id, ip_address, mac_address, os_guess, hostname, discovered_at),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+
+def _update_target(target_id, mission_id=None, ip_address=None, mac_address=None, os_guess=None, hostname=None, discovered_at=None):
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -164,22 +206,7 @@ def update_target(target_id, mission_id=None, ip_address=None, mac_address=None,
         conn.close()
 
 
-def delete_target(target_id):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "DELETE FROM targets WHERE id = %s RETURNING *;",
-                (target_id,),
-            )
-            row = cur.fetchone()
-        conn.commit()
-        return row
-    finally:
-        conn.close()
-
-
-def create_service(target_id, port, protocol, service_name, service_version, banner, discovered_at=None):
+def _create_service(target_id, port, protocol, service_name, service_version, banner, discovered_at=None):
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -198,45 +225,7 @@ def create_service(target_id, port, protocol, service_name, service_version, ban
         conn.close()
 
 
-def get_services():
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM services ORDER BY id;")
-            return cur.fetchall()
-    finally:
-        conn.close()
-
-
-def get_services_by_target(target_id):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT * FROM services WHERE target_id = %s ORDER BY discovered_at DESC;",
-                (target_id,),
-            )
-            return cur.fetchall()
-    finally:
-        conn.close()
-
-
-def delete_service(service_id):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "DELETE FROM services WHERE id = %s RETURNING *;",
-                (service_id,),
-            )
-            row = cur.fetchone()
-        conn.commit()
-        return row
-    finally:
-        conn.close()
-
-
-def delete_services_by_target(target_id):
+def _delete_services_by_target(target_id):
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -251,7 +240,7 @@ def delete_services_by_target(target_id):
         conn.close()
 
 
-def get_target_by_mission_ip(mission_id, ip_address):
+def _get_target_by_mission_ip(mission_id, ip_address):
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -266,67 +255,5 @@ def get_target_by_mission_ip(mission_id, ip_address):
                 (mission_id, ip_address),
             )
             return cur.fetchone()
-    finally:
-        conn.close()
-
-
-def upsert_target(mission_id, ip_address, mac_address=None, os_guess=None, hostname=None, discovered_at=None):
-    existing = get_target_by_mission_ip(mission_id, ip_address)
-    if existing is None:
-        return create_target(
-            mission_id=mission_id,
-            ip_address=ip_address,
-            mac_address=mac_address,
-            os_guess=os_guess,
-            hostname=hostname,
-            discovered_at=discovered_at,
-        )
-    return update_target(
-        existing["id"],
-        mission_id=mission_id,
-        ip_address=ip_address,
-        mac_address=mac_address if mac_address is not None else existing.get("mac_address"),
-        os_guess=os_guess if os_guess is not None else existing.get("os_guess"),
-        hostname=hostname if hostname is not None else existing.get("hostname"),
-        discovered_at=discovered_at,
-    )
-
-
-def replace_services_for_target(target_id: int, services: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    delete_services_by_target(target_id)
-    created: List[Dict[str, Any]] = []
-    for service in services:
-        created.append(
-            create_service(
-                target_id=target_id,
-                port=int(service.get("port", 0) or 0),
-                protocol=str(service.get("protocol", "tcp") or "tcp"),
-                service_name=str(service.get("service_name", "unknown") or "unknown"),
-                service_version=str(service.get("service_version") or service.get("version") or "") or None,
-                banner=str(service.get("banner") or "") or None,
-            )
-        )
-    return created
-
-
-def get_services_by_mission(mission_id: str):
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT
-                    s.*,
-                    t.ip_address,
-                    t.hostname,
-                    t.mission_id
-                FROM services s
-                JOIN targets t ON s.target_id = t.id
-                WHERE t.mission_id = %s
-                ORDER BY t.ip_address, s.port;
-                """,
-                (mission_id,),
-            )
-            return cur.fetchall()
     finally:
         conn.close()
