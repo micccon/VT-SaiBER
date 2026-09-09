@@ -78,22 +78,31 @@ class ScoutAgent(BaseAgent):
         discovered_targets: Dict[str, Dict[str, Any]] = {}
         discovered_hosts: List[str] = []
 
+        # Track IPs discovered from in-scope hostnames
+        resolved_ips: set[str] = set()
+
         for message, data in iter_tool_messages(messages):
             name = str(message.get("name", "") or "")
             invocation = data.get("invocation", {}) if isinstance(data.get("invocation"), dict) else {}
 
             if name == "recon_host_discovery":
-                # Host discovery can come back either as normalized evidence or raw parser-friendly output.
+                # Check if the original targets argument was in scope
+                scan_targets = str(invocation.get("targets") or "").strip()
+                original_in_scope = any(target_in_scope(t.strip(), target_scope) for t in scan_targets.split(",") if t.strip())
+
                 evidence = data.get("evidence", {}) if isinstance(data, dict) else {}
                 if isinstance(evidence, dict) and isinstance(evidence.get("hosts"), list):
                     for host in evidence["hosts"]:
                         host_text = str(host)
-                        if target_in_scope(host_text, target_scope) and host_text not in discovered_hosts:
+                        # Accept if original target was in scope OR the IP itself is in scope
+                        if (original_in_scope or target_in_scope(host_text, target_scope)) and host_text not in discovered_hosts:
                             discovered_hosts.append(host_text)
+                            resolved_ips.add(host_text)
                 else:
                     for host in parse_host_discovery_output(data, max_hosts=MAX_SCOUT_TARGETS):
-                        if target_in_scope(host, target_scope) and host not in discovered_hosts:
+                        if (original_in_scope or target_in_scope(host, target_scope)) and host not in discovered_hosts:
                             discovered_hosts.append(host)
+                            resolved_ips.add(host)
                 continue
 
             if name not in {"recon_service_probe", "recon_port_scan"}:
@@ -101,7 +110,8 @@ class ScoutAgent(BaseAgent):
 
             # Only persist service data for validated in-scope targets.
             target = str(invocation.get("target") or "").strip()
-            if not target or not target_in_scope(target, target_scope):
+            # Accept if target is in scope OR was resolved from an in-scope hostname
+            if not target or not (target_in_scope(target, target_scope) or target in resolved_ips):
                 continue
 
             evidence = data.get("evidence", {}) if isinstance(data, dict) else {}

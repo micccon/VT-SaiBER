@@ -316,6 +316,25 @@ def run_setup_wizard(config: Config) -> bool:
         else:
             input("\n  Press Enter when done...")
 
+    # Step 6: Connect testbed to VT-SaiBER network
+    print(f"\n\033[1mStep 6: Network Configuration\033[0m\n")
+
+    # Find the vt-saiber network (docker-compose adds project prefix)
+    ok, network_name = ssh_check(config, "docker network ls --format '{{.Name}}' | grep vt-saiber-network | head -1")
+    if ok and network_name:
+        # Check if testbed is already connected
+        connected, _ = ssh_check(config, f"docker network inspect {network_name} --format '{{{{range .Containers}}}}{{{{.Name}}}} {{{{end}}}}' | grep -q automotive-testbed")
+        if connected:
+            print_success(f"Testbed already connected to {network_name}")
+        else:
+            print_info(f"Connecting testbed to {network_name}...")
+            ssh_run(config, f"docker network connect {network_name} automotive-testbed 2>/dev/null || true", interactive=False)
+            print_success("Testbed connected to VT-SaiBER network")
+    else:
+        print_warning("Could not find VT-SaiBER network. Containers may not communicate.")
+        print("  If scans fail, manually run:")
+        print_cmd("docker network connect <network-name> automotive-testbed")
+
     # Done!
     config.setup_complete = True
     config.save()

@@ -25,48 +25,68 @@ VALID_AGENTS = ["scout", "fuzzer", "striker", "librarian", "resident"]
 def validate_all_targets_in_scope(state: CyberState) -> bool:
     """
     Validate that all discovered targets are within the authorized scope.
-    
+
     This is a safety check, not business logic - it prevents accidentally
     attacking targets that weren't authorized.
-    
+
     Args:
         state: Current CyberState
-        
+
     Returns:
         True if all targets are in scope, False otherwise
     """
+    import socket
     from ipaddress import ip_address, ip_network
-    
+
     target_scope = state.get("target_scope", [])
     discovered_targets = state.get("discovered_targets", {})
-    
+
     if not target_scope:
         # No scope defined - be conservative and block
         logger.warning("No target scope defined")
         return False
-    
+
+    # Pre-resolve scope hostnames to IPs for comparison
+    resolved_scope_ips: set[str] = set()
+    for entry in target_scope:
+        try:
+            ip_address(entry)
+            resolved_scope_ips.add(entry)
+        except ValueError:
+            # Not an IP - try resolving as hostname
+            try:
+                resolved_ip = socket.gethostbyname(entry)
+                resolved_scope_ips.add(resolved_ip)
+            except socket.gaierror:
+                pass  # Hostname resolution failed, skip
+
     for target_ip in discovered_targets.keys():
         try:
             # Try to parse as IP address
             target = ip_address(target_ip)
-            
-            # Check against each scope entry
+
+            # Check against each scope entry (CIDR, IP, or resolved hostname)
             in_scope = False
-            for cidr in target_scope:
-                try:
-                    if target in ip_network(cidr, strict=False):
-                        in_scope = True
-                        break
-                except ValueError:
-                    # Not CIDR, might be exact IP match
-                    if target_ip == cidr:
-                        in_scope = True
-                        break
-            
+
+            # Check if IP is in resolved scope IPs
+            if target_ip in resolved_scope_ips:
+                in_scope = True
+            else:
+                for cidr in target_scope:
+                    try:
+                        if target in ip_network(cidr, strict=False):
+                            in_scope = True
+                            break
+                    except ValueError:
+                        # Not CIDR, might be exact IP match
+                        if target_ip == cidr:
+                            in_scope = True
+                            break
+
             if not in_scope:
                 logger.error(f"Target {target_ip} is out of scope!")
                 return False
-                
+
         except ValueError:
             # Not an IP address - could be hostname
             # For now, allow hostnames if they're in scope list
@@ -74,7 +94,7 @@ def validate_all_targets_in_scope(state: CyberState) -> bool:
                 logger.warning(f"Hostname {target_ip} not in scope")
                 # We'll be lenient here and allow it if it's not clearly out of scope
                 pass
-    
+
     return True
 
 
